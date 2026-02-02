@@ -1,0 +1,10 @@
+{
+  "include": [
+    "packages/conduit/src",
+    "packages/api/src",
+    "packages/shared/src"
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "standard",
+  "reportMissingTypeStubs": false
+}

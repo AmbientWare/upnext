@@ -1,0 +1,727 @@
+"""High-performance async job processor for Conduit.
+
+Architecture:
+    [Queue] → [dequeue()] → [Processors] → [finish()] → [Queue]
+
+Batching optimizations are encapsulated within the queue implementation:
+- RedisQueue uses internal inbox/outbox for batched Redis operations
+
+Note: This is the internal execution engine. Users interact with conduit.sdk.Worker,
+which delegates to JobProcessor for actual job processing.
+"""
+
+import asyncio
+import contextvars
+import logging
+import multiprocessing
+import os
+import queue as thread_queue
+import signal
+import time
+import traceback as tb
+import uuid
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from datetime import UTC, datetime
+from functools import partial
+from typing import Any
+
+from shared.models import Job, JobStatus
+
+from conduit.engine.cron import calculate_next_cron_timestamp
+from conduit.engine.queue.base import BaseQueue
+from conduit.engine.registry import Registry, TaskDefinition
+from conduit.sdk.context import Context, set_current_context
+from conduit.types import SyncExecutor
+
+logger = logging.getLogger(__name__)
+
+
+class JobProcessor:
+    """
+    High-performance async job processor for Conduit.
+
+    This is the internal execution engine that actually processes jobs.
+    Users should use conduit.Worker (the SDK Worker) which provides the
+    decorator-based API and delegates to JobProcessor for execution.
+
+    Features:
+    - Configurable concurrency (default 100 concurrent jobs)
+    - Queue abstraction handles batching internally
+    - Support for both sync and async task functions
+    - Graceful shutdown with job completion
+    - Automatic retry handling with exponential backoff
+
+    Example:
+        processor = JobProcessor(
+            queue=redis_queue,
+            registry=registry,
+            concurrency=100,
+        )
+        await processor.start()
+    """
+
+    def __init__(
+        self,
+        queue: BaseQueue,
+        registry: Registry,
+        *,
+        concurrency: int = 100,
+        functions: list[str] | None = None,
+        sync_executor: SyncExecutor = SyncExecutor.THREAD,
+        sync_pool_size: int | None = None,
+        dequeue_timeout: float = 5.0,
+        status_buffer: Any | None = None,  # StatusBuffer
+        handle_signals: bool = True,
+    ) -> None:
+        """
+        Initialize the processor.
+
+        Args:
+            queue: Queue backend (Redis)
+            registry: Function registry with task definitions
+            concurrency: Maximum concurrent jobs
+            functions: Function names to process
+            sync_executor: Executor type for sync tasks (THREAD or PROCESS)
+            sync_pool_size: Pool size for sync executor. Defaults to min(32, concurrency) for thread, cpu_count for process.
+            dequeue_timeout: Timeout for dequeue operations
+            status_buffer: Status buffer for batched event reporting
+            handle_signals: Whether to set up SIGTERM/SIGINT handlers (default True).
+                Set to False when signals are handled at a higher level.
+        """
+        self._queue = queue
+        self._registry = registry
+        self._concurrency = concurrency
+        self._functions = functions or []
+        self._dequeue_timeout = dequeue_timeout
+        self._status_buffer = status_buffer
+        self._handle_signals = handle_signals
+
+        # Worker identity
+        self._worker_id = f"worker_{uuid.uuid4().hex[:8]}"
+
+        # Executor pool for sync functions
+        if sync_executor == SyncExecutor.PROCESS:
+            pool_size = sync_pool_size or os.cpu_count() or 4
+            self._sync_pool = ProcessPoolExecutor(max_workers=pool_size)
+        else:
+            pool_size = sync_pool_size or min(32, concurrency)
+            self._sync_pool = ThreadPoolExecutor(
+                max_workers=pool_size,
+                thread_name_prefix="conduit-worker-",
+            )
+
+        # Active processor tasks
+        self._tasks: set[asyncio.Task[None]] = set()
+
+        # Active jobs tracked for auto-heartbeating
+        self._active_jobs: dict[str, Job] = {}
+        self._heartbeat_task: asyncio.Task[None] | None = None
+
+        # Shutdown coordination
+        self._stop_event = asyncio.Event()
+        self._shutdown_event = asyncio.Event()
+
+        # Statistics
+        self._jobs_processed = 0
+        self._jobs_failed = 0
+        self._jobs_retried = 0
+
+    @property
+    def worker_id(self) -> str:
+        """Get worker identifier."""
+        return self._worker_id
+
+    @property
+    def is_running(self) -> bool:
+        """Check if worker is running."""
+        return not self._stop_event.is_set()
+
+    @property
+    def active_jobs(self) -> int:
+        """Get number of active jobs."""
+        return len(self._tasks)
+
+    @property
+    def stats(self) -> dict[str, int]:
+        """Get worker statistics."""
+        return {
+            "processed": self._jobs_processed,
+            "failed": self._jobs_failed,
+            "retried": self._jobs_retried,
+            "active": self.active_jobs,
+        }
+
+    @property
+    def active_job_count(self) -> int:
+        """Get number of currently active jobs."""
+        return len(self._tasks)
+
+    @property
+    def jobs_processed(self) -> int:
+        """Get total jobs processed."""
+        return self._jobs_processed
+
+    @property
+    def jobs_failed(self) -> int:
+        """Get total jobs failed."""
+        return self._jobs_failed
+
+    async def start(self) -> None:
+        """
+        Start the processor.
+
+        This method blocks until shutdown is requested.
+        """
+        if self._functions:
+            logger.debug(f"Processing {len(self._functions)} functions")
+        else:
+            logger.debug("No functions specified")
+
+        # Set up signal handlers (only if not handled at a higher level)
+        loop = asyncio.get_running_loop()
+        if self._handle_signals:
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, self._handle_signal)
+
+        try:
+            # Start the queue (initializes batching)
+            await self._queue.start(functions=self._functions)
+
+            # Start auto-heartbeat loop
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+            # Spawn processor tasks
+            for _ in range(self._concurrency):
+                self._spawn_processor()
+
+            # Wait for shutdown
+            await self._stop_event.wait()
+
+            # Stop heartbeat loop
+            if self._heartbeat_task:
+                self._heartbeat_task.cancel()
+                try:
+                    await self._heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Cancel all processor tasks (most are idle, waiting on dequeue)
+            for task in list(self._tasks):
+                task.cancel()
+            if self._tasks:
+                await asyncio.gather(*self._tasks, return_exceptions=True)
+
+        finally:
+            # Close the queue (flushes pending operations and closes connections)
+            await self._queue.close()
+
+            # Cleanup
+            self._sync_pool.shutdown(wait=False)
+            self._shutdown_event.set()
+
+        logger.debug(f"Worker {self._worker_id} stopped. Stats: {self.stats}")
+
+    async def stop(self, timeout: float = 30.0) -> None:
+        """
+        Request graceful shutdown.
+
+        Args:
+            timeout: Maximum time to wait for active jobs to complete
+        """
+        logger.debug(f"Stop requested for worker {self._worker_id}")
+        self._stop_event.set()
+
+        # Wait for shutdown with timeout
+        try:
+            async with asyncio.timeout(timeout):
+                await self._shutdown_event.wait()
+        except TimeoutError:
+            logger.warning(f"Shutdown timeout, {len(self._tasks)} jobs still active")
+            # Cancel remaining tasks
+            for task in self._tasks:
+                task.cancel()
+
+    async def _heartbeat_loop(self) -> None:
+        """Periodically heartbeat active jobs to prevent XAUTOCLAIM from reclaiming them."""
+        # Heartbeat at 1/3 of claim timeout to leave plenty of margin.
+        # Default claim timeout is 30s, so this runs every 10s.
+        interval = getattr(self._queue, "_claim_timeout_ms", 30_000) / 1000 / 3
+
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.sleep(interval)
+
+                jobs = list(self._active_jobs.values())
+                if jobs:
+                    await self._queue.heartbeat_active_jobs(jobs)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Heartbeat loop error: {e}")
+
+    def _handle_signal(self) -> None:
+        """Handle shutdown signal."""
+        logger.debug("Received shutdown signal")
+        self._stop_event.set()
+
+    def _spawn_processor(self, previous: asyncio.Task[None] | None = None) -> None:
+        """
+        Spawn a new processor task.
+
+        Uses done callback for zero-latency respawn.
+        """
+        if previous:
+            self._tasks.discard(previous)
+
+        if not self._stop_event.is_set():
+            task = asyncio.create_task(self._process_one())
+            task.add_done_callback(self._spawn_processor)
+            self._tasks.add(task)
+
+    async def _process_one(self) -> None:
+        """Process a single job from the queue."""
+        try:
+            # Get job directly from queue
+            job = await self._queue.dequeue(
+                self._functions,
+                timeout=self._dequeue_timeout,
+            )
+
+            if not job:
+                return
+
+            # Mark job as started (records state transition)
+            job.mark_started(self._worker_id)
+
+            # Get task definition
+            task_def = self._registry.get_task(job.function)
+            if not task_def:
+                logger.error(f"Unknown task function: {job.function}")
+                await self._queue.finish(
+                    job,
+                    JobStatus.FAILED,
+                    error=f"Unknown task function: {job.function}",
+                )
+                self._jobs_failed += 1
+                return
+
+            # Log and report job started
+            attempt_info = (
+                f" (attempt {job.attempts}/{job.max_retries + 1})"
+                if job.max_retries > 0
+                else ""
+            )
+            logger.debug(f"Starting {job.function}{attempt_info}")
+
+            if self._status_buffer:
+                await self._status_buffer.record_job_started(
+                    job.id, job.function, job.attempts, job.max_retries
+                )
+
+            # Execute job (track for auto-heartbeating)
+            self._active_jobs[job.id] = job
+            start_time = time.time()
+            try:
+                result = await self._execute_job(job, task_def)
+                duration_ms = (time.time() - start_time) * 1000
+                await self._handle_success(job, task_def, result, duration_ms)
+            except Exception as e:
+                await self._handle_failure(job, task_def, e)
+            finally:
+                self._active_jobs.pop(job.id, None)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception(f"Unexpected error in processor: {e}")
+
+    async def _execute_job(self, job: Job, task_def: TaskDefinition) -> Any:
+        """
+        Execute a job with timeout.
+
+        Handles both sync and async functions.
+        Active jobs are auto-heartbeated by the processor to prevent XAUTOCLAIM
+        from reclaiming long-running jobs.
+        """
+        # Create context (no backend — commands flow through _cmd_queue)
+        ctx = Context.from_job(job)
+
+        # Call on_start hook
+        if task_def.on_start:
+            await self._call_hook(task_def.on_start, ctx)
+
+        # Execute with timeout
+        timeout = job.timeout or task_def.timeout
+
+        try:
+            if timeout:
+                async with asyncio.timeout(timeout):
+                    return await self._call_function(task_def, ctx, job)
+            else:
+                return await self._call_function(task_def, ctx, job)
+        except TimeoutError as e:
+            raise TimeoutError(f"Job {job.id} timed out after {timeout}s") from e
+
+    async def _call_function(
+        self,
+        task_def: TaskDefinition,
+        ctx: "Context",
+        job: Job,
+    ) -> Any:
+        """Call the task function, handling sync/async.
+
+        Creates a command queue appropriate for the executor mode, attaches it
+        to the Context, and starts a drain task that dispatches commands to the
+        real backend.  The drain task is awaited after the function returns so
+        all pending commands are flushed.
+
+        Context is always available via get_current_context().
+        If the function signature accepts 'ctx' as first param, we also pass it explicitly.
+        """
+        kwargs = job.kwargs
+
+        # Choose the right queue type for this executor mode
+        if task_def.is_async:
+            cmd_queue = _AsyncQueueWrapper(asyncio.Queue())
+        elif isinstance(self._sync_pool, ProcessPoolExecutor):
+            cmd_queue = multiprocessing.Queue()
+        else:
+            cmd_queue = thread_queue.Queue()
+
+        ctx._cmd_queue = cmd_queue
+
+        # Create backend for drain task
+        backend = self._create_context_backend(job)
+
+        # Start drain task
+        drain = asyncio.create_task(
+            _drain_commands(cmd_queue, backend, is_async_queue=task_def.is_async)
+        )
+
+        # Set context in contextvars so get_current_context() works
+        set_current_context(ctx)
+
+        try:
+            if task_def.is_async:
+                # Async function - call directly
+                result = await task_def.func(**kwargs)
+            else:
+                # Sync function - run in thread/process pool
+                loop = asyncio.get_running_loop()
+                func_with_args = partial(task_def.func, **kwargs)
+                ctx_copy = contextvars.copy_context()
+                result = await loop.run_in_executor(
+                    self._sync_pool, ctx_copy.run, func_with_args
+                )
+
+            return result
+
+        finally:
+            # Signal drain to stop and wait for it to flush
+            cmd_queue.put(None)
+            await drain
+
+            # Clear context
+            set_current_context(None)
+
+    async def _call_hook(
+        self,
+        hook: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Call a hook function, handling sync/async."""
+        try:
+            if asyncio.iscoroutinefunction(hook):
+                await hook(*args, **kwargs)
+            else:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    self._sync_pool,
+                    partial(hook, *args, **kwargs),
+                )
+        except Exception as e:
+            logger.warning(f"Hook {hook.__name__} raised exception: {e}")
+
+    async def _handle_success(
+        self,
+        job: Job,
+        task_def: TaskDefinition,
+        result: Any,
+        duration_ms: float | None = None,
+    ) -> None:
+        """Handle successful job completion."""
+        # Call on_success hook
+        if task_def.on_success:
+            ctx = Context.from_job(job)
+            await self._call_hook(task_def.on_success, ctx, result)
+
+        # Mark job complete
+        await self._queue.finish(job, JobStatus.COMPLETE, result=result)
+        self._jobs_processed += 1
+
+        # Report completion
+        if self._status_buffer:
+            await self._status_buffer.record_job_completed(
+                job.id,
+                job.function,
+                result=result,
+                duration_ms=duration_ms,
+            )
+
+        duration_str = f" in {duration_ms:.0f}ms" if duration_ms else ""
+        logger.debug(f"Completed {job.function}{duration_str}")
+
+        # Reschedule cron jobs for next execution
+        if job.is_cron:
+            next_run_at = self._calculate_next_cron_run(job.schedule)
+            await self._queue.reschedule_cron(job, next_run_at)
+            logger.debug(
+                f"Rescheduled cron {job.function} → {datetime.fromtimestamp(next_run_at, UTC)}"
+            )
+
+        # Call on_complete hook
+        if task_def.on_complete:
+            ctx = Context.from_job(job)
+            await self._call_hook(task_def.on_complete, ctx)
+
+    async def _handle_failure(
+        self,
+        job: Job,
+        task_def: TaskDefinition,
+        error: Exception,
+    ) -> None:
+        """Handle job failure with retry logic."""
+
+        error_msg = str(error)
+        error_traceback = tb.format_exc()
+
+        logger.warning(f"Job {job.id} failed (attempt {job.attempts}): {error_msg}")
+
+        # Check if we can retry
+        max_retries = task_def.retries
+        if job.attempts <= max_retries:
+            # Call on_retry hook
+            if task_def.on_retry:
+                ctx = Context.from_job(job)
+                await self._call_hook(task_def.on_retry, ctx, error)
+
+            # Calculate retry delay with exponential backoff
+            delay = task_def.retry_delay * (
+                task_def.retry_backoff ** (job.attempts - 1)
+            )
+
+            logger.info(
+                f"Retrying job {job.id} in {delay}s (attempt {job.attempts + 1})"
+            )
+
+            # Mark as retrying (records state transition)
+            job.mark_retrying(delay)
+
+            # Report retry
+            if self._status_buffer:
+                await self._status_buffer.record_job_retrying(
+                    job.id,
+                    job.function,
+                    error_msg,
+                    delay,
+                    current_attempt=job.attempts,
+                    next_attempt=job.attempts + 1,
+                )
+
+            # Reschedule job
+            await self._queue.retry(job, delay)
+            self._jobs_retried += 1
+        else:
+            # Max retries exceeded
+            logger.error(
+                f"Job {job.id} failed permanently after {job.attempts} attempts"
+            )
+
+            # Call on_failure hook
+            if task_def.on_failure:
+                ctx = Context.from_job(job)
+                await self._call_hook(task_def.on_failure, ctx, error)
+
+            # Mark job failed
+            await self._queue.finish(job, JobStatus.FAILED, error=error_msg)
+            self._jobs_failed += 1
+
+            # Report failure
+            if self._status_buffer:
+                await self._status_buffer.record_job_failed(
+                    job.id,
+                    job.function,
+                    error_msg,
+                    error_traceback,
+                    will_retry=False,
+                )
+
+            # IMPORTANT: Reschedule cron jobs even on failure
+            # The execution failed, but the schedule must continue
+            if job.is_cron:
+                next_run_at = self._calculate_next_cron_run(job.schedule)
+                await self._queue.reschedule_cron(job, next_run_at)
+                logger.debug(
+                    f"Rescheduled cron {job.function} → {datetime.fromtimestamp(next_run_at, UTC)}"
+                )
+
+            # Call on_complete hook
+            if task_def.on_complete:
+                ctx = Context.from_job(job)
+                await self._call_hook(task_def.on_complete, ctx)
+
+    def _create_context_backend(self, job: Job) -> "JobContextBackend":
+        """Create context backend for a job."""
+        return JobContextBackend(
+            self._queue,
+            job,
+            self._status_buffer,
+        )
+
+    def _calculate_next_cron_run(self, schedule: str | None) -> float:
+        """
+        Calculate the next run time for a cron schedule.
+
+        Supports both 5-field (minute precision) and 6-field (second precision) formats.
+
+        Args:
+            schedule: Cron expression
+
+        Returns:
+            Unix timestamp of next run time
+        """
+        if not schedule:
+            return time.time()
+
+        return calculate_next_cron_timestamp(schedule)
+
+
+class JobContextBackend:
+    """Context backend that delegates to queue and status buffer operations.
+
+    Status events are written to Redis via StatusBuffer for batched API reporting:
+    - Non-blocking writes (Redis is microseconds, HTTP is milliseconds)
+    - Batched API calls (many events in one request)
+    - Fault tolerance (any worker can flush pending events)
+    """
+
+    def __init__(
+        self,
+        queue: BaseQueue,
+        job: Job,
+        status_buffer: Any | None = None,  # StatusBuffer
+    ) -> None:
+        self._queue = queue
+        self._job = job
+        self._status_buffer = status_buffer
+
+    async def set_progress(self, job_id: str, progress: float) -> None:
+        await self._queue.update_progress(job_id, progress)
+        if self._status_buffer:
+            await self._status_buffer.record_job_progress(job_id, progress)
+
+    async def set_metadata(self, job_id: str, key: str, value: Any) -> None:
+        """Store a metadata value for this job."""
+        # Update local job object
+        if self._job.metadata is None:
+            self._job.metadata = {}
+        self._job.metadata[key] = value
+
+        # Persist to queue
+        await self._queue.update_job_metadata(job_id, {key: value})
+
+    async def get_metadata(self, job_id: str, key: str) -> Any:
+        """Get a metadata value for this job."""
+        if self._job.metadata is None:
+            return None
+        return self._job.metadata.get(key)
+
+    async def checkpoint(self, job_id: str, state: dict[str, Any]) -> None:
+        """Store checkpoint state for resumption after failures."""
+        # Store checkpoint in job metadata under special key
+        await self.set_metadata(job_id, "_checkpoint", state)
+        if self._status_buffer:
+            await self._status_buffer.record_job_checkpoint(job_id, state)
+
+    async def log(self, job_id: str, level: str, message: str, **extra: Any) -> None:
+        """Send a log entry for this job."""
+        if self._status_buffer:
+            await self._status_buffer.record_job_log(job_id, level, message, **extra)
+
+    async def check_cancelled(self, job_id: str) -> bool:
+        job = await self._queue.get_job(job_id)
+        return job is not None and job.status == JobStatus.CANCELLED
+
+
+class _AsyncQueueWrapper:
+    """Wraps asyncio.Queue to expose a sync .put() matching queue.Queue / multiprocessing.Queue."""
+
+    __slots__ = ("_q",)
+
+    def __init__(self, q: asyncio.Queue[Any]) -> None:
+        self._q = q
+
+    def put(self, item: Any) -> None:
+        self._q.put_nowait(item)
+
+    async def get(self) -> Any:
+        return await self._q.get()
+
+
+async def _drain_commands(
+    cmd_queue: Any,
+    backend: JobContextBackend,
+    *,
+    is_async_queue: bool = False,
+) -> None:
+    """Drain command queue and dispatch to the real backend.
+
+    Runs as an asyncio task alongside the job.  Reads command tuples pushed
+    by Context methods and calls the corresponding async backend methods.
+    Exits when it receives a ``None`` sentinel.
+
+    For thread-safe / process-safe queues (queue.Queue, multiprocessing.Queue),
+    we poll via ``run_in_executor`` so we don't block the event loop.
+    """
+    loop = asyncio.get_running_loop()
+
+    while True:
+        # Read next command
+        if is_async_queue:
+            cmd = await cmd_queue.get()
+        else:
+            # Blocking get in executor with a short timeout so we stay
+            # responsive to cancellation.
+            try:
+                cmd = await loop.run_in_executor(
+                    None, partial(cmd_queue.get, True, 0.1)
+                )
+            except Exception:
+                # queue.Empty — just loop and try again
+                continue
+
+        if cmd is None:
+            # Sentinel — all commands flushed, exit
+            return
+
+        op = cmd[0]
+        try:
+            if op == "set_progress":
+                _, job_id, progress = cmd
+                await backend.set_progress(job_id, progress)
+            elif op == "set_metadata":
+                _, job_id, key, value = cmd
+                await backend.set_metadata(job_id, key, value)
+            elif op == "checkpoint":
+                _, job_id, state = cmd
+                await backend.checkpoint(job_id, state)
+            elif op == "send_log":
+                _, job_id, level, message, extra = cmd
+                await backend.log(job_id, level, message, **extra)
+            else:
+                logger.warning(f"Unknown drain command: {op}")
+        except Exception as e:
+            logger.warning(f"Drain command {op} failed: {e}")

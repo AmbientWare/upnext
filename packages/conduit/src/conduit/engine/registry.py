@@ -1,0 +1,363 @@
+"""Function registry for Conduit."""
+
+import asyncio
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from shared.patterns import matches_event_pattern
+
+
+@dataclass
+class TaskDefinition:
+    """Metadata for a registered task function."""
+
+    name: str
+    func: Callable[..., Any]
+    is_async: bool
+
+    # Retry configuration
+    retries: int = 0
+    retry_delay: float = 1.0
+    retry_backoff: float = 2.0
+
+    # Timeout
+    timeout: float | None = None
+
+    # Caching
+    cache_key: str | None = None
+    cache_ttl: int | None = None
+
+    # Hooks
+    on_start: Callable[..., Any] | None = None
+    on_success: Callable[..., Any] | None = None
+    on_failure: Callable[..., Any] | None = None
+    on_retry: Callable[..., Any] | None = None
+    on_complete: Callable[..., Any] | None = None
+
+    def __post_init__(self) -> None:
+        """Validate configuration after initialization."""
+        if self.retries < 0:
+            raise ValueError(f"retries must be >= 0, got {self.retries}")
+        if self.retry_delay < 0:
+            raise ValueError(f"retry_delay must be >= 0, got {self.retry_delay}")
+        if self.retry_backoff < 1:
+            raise ValueError(f"retry_backoff must be >= 1, got {self.retry_backoff}")
+        if self.timeout is not None and self.timeout <= 0:
+            raise ValueError(f"timeout must be > 0, got {self.timeout}")
+        if self.cache_ttl is not None and self.cache_ttl <= 0:
+            raise ValueError(f"cache_ttl must be > 0, got {self.cache_ttl}")
+
+
+@dataclass
+class EventDefinition:
+    """Metadata for a registered event."""
+
+    event: str
+    func: Callable[..., Any]
+    is_async: bool
+    name: str | None = None
+    # Retry configuration (propagated to TaskDefinition)
+    retries: int = 0
+    retry_delay: float = 1.0
+    retry_backoff: float = 2.0
+
+
+@dataclass
+class CronDefinition:
+    """Metadata for a registered cron job."""
+
+    schedule: str  # Cron expression
+    func: Callable[..., Any]
+    is_async: bool
+    name: str | None = None
+    timeout: float | None = None  # Execution timeout in seconds
+
+
+@dataclass
+class AppDefinition:
+    """Metadata for a registered long-running app/service."""
+
+    name: str
+    func: Callable[..., Any]
+    is_async: bool
+
+    # Network configuration
+    port: int | None = 8080  # None = no HTTP (background process)
+    external: bool = False  # Expose to public internet
+
+    # Scaling (ignored locally, used in deployment)
+    replicas: int = 1
+
+    # Resources (ignored locally, used in deployment)
+    cpu: float | None = None  # CPU cores
+    memory: str | None = None  # e.g., "512Mi", "1Gi"
+
+    # Health check
+    health_check: str | None = "/health"  # Endpoint path or None
+
+    def __post_init__(self) -> None:
+        """Validate configuration after initialization."""
+        if self.port is not None and (self.port < 0 or self.port > 65535):
+            raise ValueError(f"port must be 0-65535, got {self.port}")
+        if self.replicas < 1:
+            raise ValueError(f"replicas must be >= 1, got {self.replicas}")
+        if self.cpu is not None and self.cpu <= 0:
+            raise ValueError(f"cpu must be > 0, got {self.cpu}")
+
+    @property
+    def is_http(self) -> bool:
+        """Check if this app exposes HTTP."""
+        return self.port is not None
+
+
+class Registry:
+    """
+    Central registry for all Conduit functions.
+
+    Stores metadata for tasks, events, cron jobs, and apps.
+    Used by workers to look up function implementations and configuration.
+
+    Example:
+        registry = Registry()
+
+        @registry.task(retries=3)
+        async def my_task(ctx, data):
+            return process(data)
+
+        # Or register manually
+        registry.register_task("my_task", my_func, retries=3)
+    """
+
+    def __init__(self) -> None:
+        self._tasks: dict[str, TaskDefinition] = {}
+        self._events: dict[str, list[EventDefinition]] = {}  # event -> handlers
+        self._crons: dict[str, CronDefinition] = {}
+        self._apps: dict[str, AppDefinition] = {}
+
+    def register_task(
+        self,
+        name: str,
+        func: Callable[..., Any],
+        *,
+        retries: int = 0,
+        retry_delay: float = 1.0,
+        retry_backoff: float = 2.0,
+        timeout: float | None = None,
+        cache_key: str | None = None,
+        cache_ttl: int | None = None,
+        on_start: Callable[..., Any] | None = None,
+        on_success: Callable[..., Any] | None = None,
+        on_failure: Callable[..., Any] | None = None,
+        on_retry: Callable[..., Any] | None = None,
+        on_complete: Callable[..., Any] | None = None,
+    ) -> TaskDefinition:
+        """
+        Register a task function.
+
+        Args:
+            name: Unique task name
+            func: Task function (sync or async)
+            retries: Number of retry attempts
+            retry_delay: Base delay between retries (seconds)
+            retry_backoff: Exponential backoff multiplier
+            timeout: Execution timeout (seconds)
+            cache_key: Template for cache key (e.g., "user:{user_id}")
+            cache_ttl: Cache TTL in seconds
+            on_start: Hook called before execution
+            on_success: Hook called on success
+            on_failure: Hook called on failure
+            on_retry: Hook called before retry
+            on_complete: Hook called after completion (success or failure)
+
+        Returns:
+            TaskDefinition with all metadata
+        """
+        if name in self._tasks:
+            raise ValueError(f"Task '{name}' is already registered")
+
+        definition = TaskDefinition(
+            name=name,
+            func=func,
+            is_async=asyncio.iscoroutinefunction(func),
+            retries=retries,
+            retry_delay=retry_delay,
+            retry_backoff=retry_backoff,
+            timeout=timeout,
+            cache_key=cache_key,
+            cache_ttl=cache_ttl,
+            on_start=on_start,
+            on_success=on_success,
+            on_failure=on_failure,
+            on_retry=on_retry,
+            on_complete=on_complete,
+        )
+
+        self._tasks[name] = definition
+        return definition
+
+    def register_event(
+        self,
+        name: str,
+        func: Callable[..., Any],
+        *,
+        event: str,
+        retries: int = 0,
+        retry_delay: float = 1.0,
+        retry_backoff: float = 2.0,
+    ) -> EventDefinition:
+        """Register an event."""
+        definition = EventDefinition(
+            event=event,
+            func=func,
+            is_async=asyncio.iscoroutinefunction(func),
+            name=name,
+            retries=retries,
+            retry_delay=retry_delay,
+            retry_backoff=retry_backoff,
+        )
+
+        # Register by name for worker lookup (with retry config)
+        self._tasks[name] = TaskDefinition(
+            name=name,
+            func=func,
+            is_async=asyncio.iscoroutinefunction(func),
+            retries=retries,
+            retry_delay=retry_delay,
+            retry_backoff=retry_backoff,
+        )
+
+        # Register by event pattern for routing
+        if event not in self._events:
+            self._events[event] = []
+        self._events[event].append(definition)
+
+        return definition
+
+    def register_cron(
+        self,
+        schedule: str,
+        func: Callable[..., Any],
+        *,
+        name: str | None = None,
+        timeout: float | None = None,
+    ) -> CronDefinition:
+        """Register a cron job."""
+        job_name = name or func.__name__
+
+        if job_name in self._crons:
+            raise ValueError(f"Cron job '{job_name}' is already registered")
+
+        definition = CronDefinition(
+            schedule=schedule,
+            func=func,
+            is_async=asyncio.iscoroutinefunction(func),
+            name=job_name,
+            timeout=timeout,
+        )
+
+        self._crons[job_name] = definition
+        return definition
+
+    def register_app(
+        self,
+        name: str,
+        func: Callable[..., Any],
+        *,
+        port: int | None = 8080,
+        external: bool = False,
+        replicas: int = 1,
+        cpu: float | None = None,
+        memory: str | None = None,
+        health_check: str | None = "/health",
+    ) -> AppDefinition:
+        """
+        Register a long-running app/service.
+
+        Args:
+            name: Unique app name
+            func: App factory function (returns ASGI/WSGI app or runs forever)
+            port: HTTP port (None = no HTTP, background process)
+            external: Expose to public internet (default: False)
+            replicas: Number of instances (ignored locally)
+            cpu: CPU cores (ignored locally)
+            memory: Memory limit, e.g., "512Mi" (ignored locally)
+            health_check: Health check endpoint path (for HTTP apps)
+
+        Returns:
+            AppDefinition with all metadata
+        """
+        if name in self._apps:
+            raise ValueError(f"App '{name}' is already registered")
+
+        definition = AppDefinition(
+            name=name,
+            func=func,
+            is_async=asyncio.iscoroutinefunction(func),
+            port=port,
+            external=external,
+            replicas=replicas,
+            cpu=cpu,
+            memory=memory,
+            health_check=health_check,
+        )
+
+        self._apps[name] = definition
+        return definition
+
+    def get_task(self, name: str) -> TaskDefinition | None:
+        """Get a registered task by name."""
+        return self._tasks.get(name)
+
+    def get_events_for_event_name(self, name: str) -> list[EventDefinition]:
+        """
+        Get all events matching an event name.
+
+        Supports wildcard patterns (e.g., "user.*" matches "user.signup").
+        """
+        matching: list[EventDefinition] = []
+
+        for pattern, handlers in self._events.items():
+            if matches_event_pattern(name, pattern):
+                matching.extend(handlers)
+
+        return matching
+
+    def get_cron(self, name: str) -> CronDefinition | None:
+        """Get a registered cron job by name."""
+        return self._crons.get(name)
+
+    def get_app(self, name: str) -> AppDefinition | None:
+        """Get a registered app by name."""
+        return self._apps.get(name)
+
+    @property
+    def tasks(self) -> dict[str, TaskDefinition]:
+        """Get all registered tasks."""
+        return dict(self._tasks)
+
+    @property
+    def events(self) -> dict[str, list[EventDefinition]]:
+        """Get all registered events."""
+        return dict(self._events)
+
+    @property
+    def crons(self) -> dict[str, CronDefinition]:
+        """Get all registered cron jobs."""
+        return dict(self._crons)
+
+    @property
+    def apps(self) -> dict[str, AppDefinition]:
+        """Get all registered apps."""
+        return dict(self._apps)
+
+    def clear(self) -> None:
+        """Clear all registrations (useful for testing)."""
+        self._tasks.clear()
+        self._events.clear()
+        self._crons.clear()
+        self._apps.clear()
+
+    def get_task_names(self) -> list[str]:
+        """Get all registered task names."""
+        return list(self._tasks.keys())
