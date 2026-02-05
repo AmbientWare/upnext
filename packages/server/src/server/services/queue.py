@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime
 
-from api.services.redis import get_redis
+from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
 

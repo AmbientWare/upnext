@@ -5,9 +5,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from server.db.models import Base
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-from api.db.models import Base
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -125,9 +124,7 @@ _database: Database | None = None
 def get_database() -> Database:
     """Get the global database instance."""
     if _database is None:
-        raise RuntimeError(
-            "Database not initialized. Call init_database() first."
-        )
+        raise RuntimeError("Database not initialized. Call init_database() first.")
     return _database
 
 

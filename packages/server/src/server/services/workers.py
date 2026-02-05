@@ -5,9 +5,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from server.services.redis import get_redis
 from shared.schemas import Worker, WorkerStats
-
-from api.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
 

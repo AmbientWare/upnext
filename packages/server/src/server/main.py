@@ -6,9 +6,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from api.db.session import init_database
-from api.routes import (
+from server.db.session import init_database
+from server.routes import (
     dashboard_router,
     endpoints_router,
     events_router,
@@ -46,7 +45,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down Conduit API server...")
     if database_url:
-        from api.db.session import get_database
+        from server.db.session import get_database
 
         db = get_database()
         await db.disconnect()

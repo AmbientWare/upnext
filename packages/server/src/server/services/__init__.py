@@ -1,8 +1,8 @@
 """API services layer."""
 
-from api.services.queue import get_queue_stats
-from api.services.redis import close_redis, get_redis
-from api.services.workers import (
+from server.services.queue import get_queue_stats
+from server.services.redis import close_redis, get_redis
+from server.services.workers import (
     deregister_worker,
     get_function_definitions,
     get_worker,

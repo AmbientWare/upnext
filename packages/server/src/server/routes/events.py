@@ -6,6 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from server.db.repository import JobRepository
+from server.db.session import get_database
 from shared.events import (
     BatchEventRequest,
     EventRequest,
@@ -18,9 +20,6 @@ from shared.events import (
     JobRetryingEvent,
     JobStartedEvent,
 )
-
-from api.db.repository import JobRepository
-from api.db.session import get_database
 
 logger = logging.getLogger(__name__)
 

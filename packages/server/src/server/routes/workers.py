@@ -3,21 +3,20 @@
 import logging
 
 from fastapi import APIRouter, HTTPException
-from shared.events import WorkerDeregisterRequest, WorkerRegisterRequest
-from shared.schemas import (
-    HeartbeatRequest,
-    Worker,
-    WorkerResponse,
-    WorkersListResponse,
-)
-
-from api.services import (
+from server.services import (
     deregister_worker,
     get_function_definitions,
     get_worker,
     heartbeat_worker,
     list_workers,
     register_worker,
+)
+from shared.events import WorkerDeregisterRequest, WorkerRegisterRequest
+from shared.schemas import (
+    HeartbeatRequest,
+    Worker,
+    WorkerResponse,
+    WorkersListResponse,
 )
 
 logger = logging.getLogger(__name__)

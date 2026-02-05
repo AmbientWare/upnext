@@ -34,7 +34,7 @@ services:
   migrations:
     build:
       context: .
-      dockerfile: packages/api/Dockerfile
+      dockerfile: packages/server/Dockerfile
     command: ["uv", "run", "alembic", "upgrade", "head"]
     environment:
       DATABASE_URL: postgresql+asyncpg://conduit:conduit@postgres:5432/conduit
@@ -42,11 +42,11 @@ services:
       postgres:
         condition: service_healthy
 
-  # Conduit API Server
-  api:
+  # Conduit Server
+  server:
     build:
       context: .
-      dockerfile: packages/api/Dockerfile
+      dockerfile: packages/server/Dockerfile
     ports:
       - "8000:8000"
     environment:
@@ -56,7 +56,7 @@ services:
       HOST: 0.0.0.0
       PORT: 8000
     volumes:
-      - ./packages/api/src:/app/packages/api/src
+      - ./packages/server/src:/app/packages/server/src
       - ./packages/shared/src:/app/packages/shared/src
     depends_on:
       postgres:
@@ -71,110 +71,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  # Conduit Web Dashboard
-  web:
-    build:
-      context: .
-      dockerfile: packages/web/Dockerfile
-    ports:
-      - "3000:3000"
-    environment:
-      CONDUIT_API_URL: http://api:8000
-    depends_on:
-      api:
-        condition: service_healthy
-
-  # Example Worker (runs the e-commerce service with API + background tasks)
-  worker:
-    build:
-      context: .
-      dockerfile: packages/conduit/Dockerfile
-    command: ["uv", "run", "conduit", "run", "examples/service.py"]
-    ports:
-      - "8080:8080"  # Example service API
-    environment:
-      PYTHONUNBUFFERED: "1"
-      CONDUIT_STORAGE: api
-      CONDUIT_REDIS_URL: redis://redis:6379
-      CONDUIT_URL: http://api:8000
-    volumes:
-      - ./packages/conduit/src:/app/packages/conduit/src
-      - ./packages/conduit/examples:/app/packages/conduit/examples
-      - ./packages/shared/src:/app/packages/shared/src
-    depends_on:
-      redis:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-
-  # Load Generator (run with: docker compose --profile testing run load-generator)
-  load-generator:
-    build:
-      context: .
-      dockerfile: packages/conduit/Dockerfile
-    command: ["uv", "run", "python", "-m", "examples.load_generator", "--api-url", "http://worker:8080", "--mode", "demo"]
-    environment:
-      PYTHONUNBUFFERED: "1"
-    volumes:
-      - ./packages/conduit/src:/app/packages/conduit/src
-      - ./packages/conduit/examples:/app/packages/conduit/examples
-      - ./packages/shared/src:/app/packages/shared/src
-    depends_on:
-      worker:
-        condition: service_started
-    profiles:
-      - testing
-
-  # ---------------------------------------------------------------------------
-  # Load Test Profile (docker compose --profile loadtest up)
-  # ---------------------------------------------------------------------------
-
-  # Load test worker - runs the loadtest tasks
-  loadtest-worker:
-    build:
-      context: .
-      dockerfile: packages/conduit/Dockerfile
-    command: ["uv", "run", "conduit", "run", "examples/loadtest.py"]
-    environment:
-      PYTHONUNBUFFERED: "1"
-      CONDUIT_REDIS_URL: redis://redis:6379
-      CONDUIT_URL: http://api:8000
-    volumes:
-      - ./packages/conduit/src:/app/packages/conduit/src
-      - ./packages/conduit/examples:/app/packages/conduit/examples
-      - ./packages/shared/src:/app/packages/shared/src
-    depends_on:
-      redis:
-        condition: service_healthy
-    profiles:
-      - loadtest
-    deploy:
-      # Scale workers: docker compose --profile loadtest up --scale loadtest-worker=4
-      replicas: 1
-
-  # Load test client - submits jobs and measures throughput
-  # Run with: docker compose --profile loadtest run loadtest-client all 5000
-  loadtest-client:
-    build:
-      context: .
-      dockerfile: packages/conduit/Dockerfile
-    entrypoint: ["uv", "run", "python", "examples/loadtest.py"]
-    environment:
-      PYTHONUNBUFFERED: "1"
-      CONDUIT_REDIS_URL: redis://redis:6379
-      CONDUIT_URL: http://api:8000
-    volumes:
-      - ./packages/conduit/src:/app/packages/conduit/src
-      - ./packages/conduit/examples:/app/packages/conduit/examples
-      - ./packages/shared/src:/app/packages/shared/src
-    depends_on:
-      redis:
-        condition: service_healthy
-      loadtest-worker:
-        condition: service_started
-    profiles:
-      - loadtest
 
 volumes:
   redis_data:
