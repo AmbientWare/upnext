@@ -3,9 +3,12 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from server.db.session import init_database
 from server.routes import (
     dashboard_router,
@@ -79,14 +82,32 @@ app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(endpoints_router, prefix="/api/v1")
 
 
-@app.get("/")
-async def root():
-    """Root endpoint."""
-    return {
-        "name": "Conduit API",
-        "version": "0.1.0",
-        "docs": "/docs",
-    }
+# Static files directory (built frontend)
+STATIC_DIR = Path(__file__).parent.parent.parent / "static"
+
+# Mount static files if the directory exists (production build)
+if STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the SPA for all non-API routes."""
+        # Try to serve the requested file
+        file_path = STATIC_DIR / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        # Fall back to index.html for SPA routing
+        return FileResponse(STATIC_DIR / "index.html")
+else:
+    @app.get("/")
+    async def root():
+        """Root endpoint (dev mode without built frontend)."""
+        return {
+            "name": "Conduit API",
+            "version": "0.1.0",
+            "docs": "/docs",
+            "note": "Frontend not built. Run 'bun run build' in web/ directory.",
+        }
 
 
 def main():
@@ -97,7 +118,7 @@ def main():
     port = int(os.environ.get("PORT", "8080"))
 
     uvicorn.run(
-        "api.main:app",
+        "server.main:app",
         host=host,
         port=port,
         reload=os.environ.get("DEBUG", "").lower() == "true",

@@ -5,8 +5,8 @@ requires-python = ">=3.13"
 [manifest]
 members = [
     "conduit",
-    "conduit-api",
     "conduit-workspace",
+    "server",
     "shared",
 ]
 
@@ -235,35 +235,6 @@ requires-dist = [
     { name = "rich", specifier = ">=13.9.0" },
     { name = "shared", editable = "packages/shared" },
     { name = "typer", specifier = ">=0.15.0" },
-    { name = "uvicorn", specifier = ">=0.34.0" },
-]
-
-[[package]]
-name = "conduit-api"
-version = "0.1.0"
-source = { editable = "packages/api" }
-dependencies = [
-    { name = "alembic" },
-    { name = "asyncpg" },
-    { name = "fastapi" },
-    { name = "psycopg2-binary" },
-    { name = "pydantic" },
-    { name = "redis" },
-    { name = "shared" },
-    { name = "sqlalchemy" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.14.0" },
-    { name = "asyncpg", specifier = ">=0.30.0" },
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "psycopg2-binary", specifier = ">=2.9.0" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "redis", specifier = ">=7.1.0" },
-    { name = "shared", editable = "packages/shared" },
-    { name = "sqlalchemy", specifier = ">=2.0.36" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]
 
@@ -890,6 +861,35 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/74/99/a4cab2acbb884f80e558b0771e97e21e939c5dfb460f488d19df485e8298/rich-14.3.2.tar.gz", hash = "sha256:e712f11c1a562a11843306f5ed999475f09ac31ffb64281f73ab29ffdda8b3b8", size = 230143, upload-time = "2026-02-01T16:20:47.908Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ef/45/615f5babd880b4bd7d405cc0dc348234c5ffb6ed1ea33e152ede08b2072d/rich-14.3.2-py3-none-any.whl", hash = "sha256:08e67c3e90884651da3239ea668222d19bea7b589149d8014a21c633420dbb69", size = 309963, upload-time = "2026-02-01T16:20:46.078Z" },
+]
+
+[[package]]
+name = "server"
+version = "0.1.0"
+source = { editable = "packages/server" }
+dependencies = [
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "fastapi" },
+    { name = "psycopg2-binary" },
+    { name = "pydantic" },
+    { name = "redis" },
+    { name = "shared" },
+    { name = "sqlalchemy" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.14.0" },
+    { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "psycopg2-binary", specifier = ">=2.9.0" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "redis", specifier = ">=7.1.0" },
+    { name = "shared", editable = "packages/shared" },
+    { name = "sqlalchemy", specifier = ">=2.0.36" },
+    { name = "uvicorn", specifier = ">=0.34.0" },
 ]
 
 [[package]]
