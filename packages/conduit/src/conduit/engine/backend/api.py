@@ -1,12 +1,11 @@
 """
-Job backend for reporting events to Conduit API.
+API backend for worker registration with Conduit server.
 
-When CONDUIT_URL and CONDUIT_API_KEY are set, the worker reports
-job events to the hosted Conduit API for history, analytics, and dashboard.
+Workers register and send heartbeats to the server. Job events are now
+handled via Redis streams (StatusPublisher writes, server subscribes).
 """
 
 import asyncio
-import json
 import logging
 import socket
 from dataclasses import dataclass
@@ -14,7 +13,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
-from shared.models import Job
 
 from conduit.config import get_settings
 from conduit.engine.backend.base import BaseBackend
@@ -24,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ApiBackendConfig:
-    """Configuration for the job backend."""
+    """Configuration for the API backend."""
 
     url: str
     api_key: str | None = None  # Optional for self-hosted
@@ -35,10 +33,10 @@ class ApiBackendConfig:
 
 class ApiBackend(BaseBackend):
     """
-    Reports job events to the Conduit API backend.
+    Handles worker registration and heartbeats with the Conduit API.
 
-    This is the bridge between the worker and your hosted dashboard.
-    Events are sent asynchronously and failures don't block job execution.
+    Job events are written to Redis streams by StatusPublisher and consumed
+    by the server's stream subscriber - no longer sent via HTTP.
     """
 
     def __init__(self, config: ApiBackendConfig) -> None:
@@ -65,7 +63,7 @@ class ApiBackend(BaseBackend):
         version: str | None = None,
     ) -> bool:
         """
-        Connect to the Conduit API and validate credentials.
+        Connect to the Conduit API and register the worker.
 
         Performs a health check and registers the worker.
 
@@ -73,6 +71,7 @@ class ApiBackend(BaseBackend):
             worker_id: Unique worker identifier
             worker_name: Human-readable worker name
             functions: List of function names this worker handles
+            function_definitions: Detailed function definitions
             concurrency: Worker concurrency level
             hostname: Worker hostname
             version: Worker/app version
@@ -191,246 +190,6 @@ class ApiBackend(BaseBackend):
         )
         return result is not None
 
-    async def job_started(
-        self,
-        job: Job,
-        *,
-        worker_id: str | None = None,
-    ) -> None:
-        """Report that a job has started."""
-        if not self._connected:
-            return
-
-        await self._send_event(
-            "job.started",
-            {
-                "job_id": job.id,
-                "function": job.function,
-                "kwargs": job.kwargs,
-                "attempt": job.attempts,
-                "max_retries": job.max_retries,
-                "worker_id": worker_id or self._worker_id,
-                "started_at": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    async def job_completed(
-        self,
-        job: Job,
-        result: Any = None,
-        duration_ms: float | None = None,
-    ) -> None:
-        """Report that a job completed successfully."""
-        if not self._connected:
-            return
-
-        await self._send_event(
-            "job.completed",
-            {
-                "job_id": job.id,
-                "function": job.function,
-                "result": self._serialize_result(result),
-                "duration_ms": duration_ms,
-                "attempt": job.attempts,
-                "completed_at": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    async def job_failed(
-        self,
-        job: Job,
-        error: str,
-        traceback: str | None = None,
-        will_retry: bool = False,
-    ) -> None:
-        """Report that a job failed."""
-        if not self._connected:
-            return
-
-        await self._send_event(
-            "job.failed",
-            {
-                "job_id": job.id,
-                "function": job.function,
-                "error": error,
-                "traceback": traceback,
-                "attempt": job.attempts,
-                "max_retries": job.max_retries,
-                "will_retry": will_retry,
-                "failed_at": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    async def job_retrying(
-        self,
-        job: Job,
-        error: str,
-        delay: float,
-        next_attempt: int,
-    ) -> None:
-        """Report that a job is being retried."""
-        if not self._connected:
-            return
-
-        await self._send_event(
-            "job.retrying",
-            {
-                "job_id": job.id,
-                "function": job.function,
-                "error": error,
-                "delay_seconds": delay,
-                "current_attempt": job.attempts,
-                "next_attempt": next_attempt,
-                "retry_at": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    async def job_progress(
-        self,
-        job_id: str,
-        progress: float,
-        message: str | None = None,
-    ) -> None:
-        """Report job progress update."""
-        if not self._connected:
-            return
-
-        await self._send_event(
-            "job.progress",
-            {
-                "job_id": job_id,
-                "progress": progress,
-                "message": message,
-                "updated_at": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    async def job_checkpoint(
-        self,
-        job_id: str,
-        state: dict[str, Any],
-    ) -> None:
-        """Report job checkpoint for resumption after failures."""
-        if not self._connected:
-            return
-
-        await self._send_event(
-            "job.checkpoint",
-            {
-                "job_id": job_id,
-                "state": state,
-                "checkpointed_at": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    async def artifact(
-        self,
-        job_id: str,
-        name: str,
-        data: bytes | str,
-        content_type: str = "application/octet-stream",
-    ) -> str | None:
-        """
-        Upload an artifact for a job.
-
-        Returns the artifact URL if successful.
-        """
-        if not self._connected or not self._session:
-            return None
-
-        try:
-            # Prepare multipart data
-            form = aiohttp.FormData()
-            form.add_field("job_id", job_id)
-            form.add_field("name", name)
-            form.add_field(
-                "file",
-                data if isinstance(data, bytes) else data.encode(),
-                filename=name,
-                content_type=content_type,
-            )
-
-            async with self._session.post(
-                "/api/v1/artifacts",
-                data=form,
-            ) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    return result.get("url")
-                else:
-                    logger.warning(f"Failed to upload artifact: {resp.status}")
-                    return None
-
-        except Exception as e:
-            logger.debug(f"Artifact upload failed: {e}")
-            return None
-
-    async def log(
-        self,
-        job_id: str,
-        level: str,
-        message: str,
-        **extra: Any,
-    ) -> None:
-        """Send a log entry for a job."""
-        if not self._connected:
-            return
-
-        await self._send_event(
-            "job.log",
-            {
-                "job_id": job_id,
-                "level": level,
-                "message": message,
-                "extra": extra,
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    async def _send_event(self, event_type: str, data: dict[str, Any]) -> None:
-        """Send an event to the API."""
-        await self._send(
-            "/api/v1/events",
-            {
-                "type": event_type,
-                "data": data,
-                "worker_id": self._worker_id,
-            },
-        )
-
-    async def batch_send(self, events: list[Any]) -> None:
-        """
-        Send multiple status events in one API call.
-
-        Used by StatusBuffer for efficient batched reporting.
-
-        Args:
-            events: List of StatusEvent objects to send
-        """
-        if not self._connected or not events:
-            return
-
-        # Convert StatusEvent objects to dicts
-        event_dicts = []
-        for event in events:
-            event_dicts.append(
-                {
-                    "type": event.type,
-                    "job_id": event.job_id,
-                    "worker_id": event.worker_id,
-                    "timestamp": event.timestamp,
-                    "data": event.data,
-                }
-            )
-
-        await self._send(
-            "/api/v1/events/batch",
-            {
-                "events": event_dicts,
-                "worker_id": self._worker_id,
-            },
-        )
-
     async def _send(
         self,
         endpoint: str,
@@ -464,19 +223,6 @@ class ApiBackend(BaseBackend):
 
         return None
 
-    def _serialize_result(self, result: Any) -> Any:
-        """Serialize a result for JSON transport."""
-        if result is None:
-            return None
-
-        # Try direct JSON serialization
-        try:
-            json.dumps(result)
-            return result
-        except (TypeError, ValueError):
-            # Fall back to string representation
-            return str(result)
-
 
 def get_api_backend_config() -> ApiBackendConfig:
     """
@@ -485,7 +231,6 @@ def get_api_backend_config() -> ApiBackendConfig:
     Uses conduit.config.settings which defaults to localhost for development.
     Override with CONDUIT_URL environment variable for cloud/production.
     """
-
     settings = get_settings()
     return ApiBackendConfig(url=settings.url, api_key=settings.api_key)
 

@@ -6,8 +6,6 @@ from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from server.db.repository import JobRepository
-from server.db.session import get_database
 from shared.events import (
     BatchEventRequest,
     EventRequest,
@@ -15,11 +13,13 @@ from shared.events import (
     JobCheckpointEvent,
     JobCompletedEvent,
     JobFailedEvent,
-    JobLogEvent,
     JobProgressEvent,
     JobRetryingEvent,
     JobStartedEvent,
 )
+
+from server.db.repository import JobRepository
+from server.db.session import get_database
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ async def ingest_batch(request: BatchEventRequest) -> BatchEventResponse:
     """
     Ingest a batch of events from a worker.
 
-    This endpoint is used by StatusBuffer for efficient batched reporting.
+    This endpoint is used by StatusPublisher for efficient batched reporting.
     Multiple events are processed concurrently for high throughput.
     """
     logger.debug(
@@ -110,12 +110,10 @@ async def _process_event(
             await _handle_job_retrying(JobRetryingEvent(**data))
         elif event_type == EventType.JOB_PROGRESS:
             await _handle_job_progress(JobProgressEvent(**data))
-        elif event_type == EventType.JOB_LOG:
-            await _handle_job_log(JobLogEvent(**data))
         elif event_type == EventType.JOB_CHECKPOINT:
             await _handle_job_checkpoint(JobCheckpointEvent(**data))
         else:
-            logger.warning(f"Unknown event type: {event_type}")
+            logger.debug(f"Ignoring event type: {event_type}")
 
     except Exception as e:
         logger.error(f"Error processing event {event_type}: {e}")
@@ -272,34 +270,6 @@ async def _handle_job_progress(event: JobProgressEvent) -> None:
                 existing.progress = event.progress
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
-
-
-async def _handle_job_log(event: JobLogEvent) -> None:
-    """Handle job.log event - store log entry."""
-    logger.debug(f"Job log: {event.job_id} [{event.level}] {event.message}")
-
-    # Logs could be stored in a separate table or appended to job metadata
-    # For now, we just log them - could extend with a JobLogRepository
-    try:
-        db = get_database()
-        async with db.session() as session:
-            repo = JobRepository(session)
-
-            existing = await repo.get_by_id(event.job_id)
-            if existing:
-                # Append to metadata logs array
-                logs = existing.metadata_.get("logs", [])
-                logs.append(
-                    {
-                        "level": event.level,
-                        "message": event.message,
-                        "timestamp": event.timestamp.isoformat(),
-                        "extra": event.extra,
-                    }
-                )
-                existing.metadata_["logs"] = logs
-    except RuntimeError:
-        logger.debug("Database not available, skipping log persistence")
 
 
 async def _handle_job_checkpoint(event: JobCheckpointEvent) -> None:

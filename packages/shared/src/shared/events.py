@@ -1,13 +1,15 @@
 """Event schemas for job tracking between workers and API."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel
 
+EVENTS_STREAM = "conduit:status:events"
 
-class EventType(str, Enum):
+
+class EventType(StrEnum):
     """Event types sent from workers to API."""
 
     JOB_STARTED = "job.started"
@@ -15,7 +17,6 @@ class EventType(str, Enum):
     JOB_FAILED = "job.failed"
     JOB_RETRYING = "job.retrying"
     JOB_PROGRESS = "job.progress"
-    JOB_LOG = "job.log"
     JOB_CHECKPOINT = "job.checkpoint"
 
 
@@ -74,16 +75,6 @@ class JobProgressEvent(BaseModel):
     progress: float
     message: str | None = None
     updated_at: datetime
-
-
-class JobLogEvent(BaseModel):
-    """Event data for job.log."""
-
-    job_id: str
-    level: str
-    message: str
-    extra: dict[str, Any] = {}
-    timestamp: datetime
 
 
 class JobCheckpointEvent(BaseModel):

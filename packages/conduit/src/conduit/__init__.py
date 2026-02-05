@@ -2,18 +2,30 @@
 
 import asyncio
 
+from shared.artifacts import ArtifactType
+
 from conduit.engine import run_services
-from conduit.sdk import Api, Context, Worker, get_current_context
+from conduit.sdk import (
+    Api,
+    Context,
+    Worker,
+    create_artifact,
+    create_artifact_sync,
+    get_current_context,
+)
 from conduit.types import BackendType, SyncExecutor
 
 __all__ = [
     "Api",
+    "ArtifactType",
     "Context",
     "Worker",
     "BackendType",
     "SyncExecutor",
-    "run",
+    "create_artifact",
+    "create_artifact_sync",
     "get_current_context",
+    "run",
 ]
 
 __version__ = "0.1.0"

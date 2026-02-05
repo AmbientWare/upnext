@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from shared.artifacts import ArtifactType
+
 # =============================================================================
 # Common Types
 # =============================================================================
@@ -21,7 +23,6 @@ class JobHistoryResponse(BaseModel):
     """Single job history response."""
 
     id: str
-    key: str
     function: str
     status: str
     created_at: datetime | None = None
@@ -37,7 +38,6 @@ class JobHistoryResponse(BaseModel):
     metadata: dict[str, Any] = {}
     result: Any = None
     error: str | None = None
-    state_history: list[dict[str, Any]] = []
     duration_ms: float | None = None
 
     class Config:
@@ -61,6 +61,42 @@ class JobStatsResponse(BaseModel):
     cancelled_count: int
     success_rate: float
     avg_duration_ms: float | None = None
+
+
+# =============================================================================
+# Artifact Schemas
+# =============================================================================
+
+
+class ArtifactResponse(BaseModel):
+    """Single artifact response."""
+
+    id: int
+    job_id: str
+    name: str
+    type: str  # text, json, image/png, image/jpeg, file/pdf, etc.
+    size_bytes: int | None = None
+    data: Any = None
+    path: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ArtifactListResponse(BaseModel):
+    """List of artifacts response."""
+
+    artifacts: list[ArtifactResponse]
+    total: int
+
+
+class CreateArtifactRequest(BaseModel):
+    """Request to create an artifact."""
+
+    name: str
+    type: ArtifactType
+    data: Any = None
 
 
 # =============================================================================

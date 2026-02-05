@@ -1,7 +1,8 @@
 """API services layer."""
 
 from server.services.queue import get_queue_stats
-from server.services.redis import close_redis, get_redis
+from server.services.redis import close_redis, connect_redis, get_redis
+from server.services.stream_subscriber import StreamSubscriber, StreamSubscriberConfig
 from server.services.workers import (
     deregister_worker,
     get_function_definitions,
@@ -14,8 +15,12 @@ from server.services.workers import (
 
 __all__ = [
     # Redis
+    "connect_redis",
     "get_redis",
     "close_redis",
+    # Stream subscriber
+    "StreamSubscriber",
+    "StreamSubscriberConfig",
     # Workers
     "register_worker",
     "deregister_worker",

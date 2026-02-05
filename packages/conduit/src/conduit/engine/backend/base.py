@@ -1,20 +1,16 @@
-"""Base backend class for job event reporting."""
+"""Base backend class for worker registration."""
 
 from abc import ABC, abstractmethod
 from typing import Any
 
-from shared.models import Job
-
 
 class BaseBackend(ABC):
     """
-    Abstract base class for job event backends.
+    Abstract base class for worker registration backends.
 
-    Implementations report job lifecycle events to different backends:
-    - ApiBackend: Sends to Conduit API (SaaS)
-    - RedisBackend: Writes to Redis (self-hosted)
-
-    The StatusBuffer flushes batched events to the backend via batch_send().
+    Handles worker registration and heartbeats with the Conduit server.
+    Job events are written to Redis streams by StatusPublisher and consumed
+    by the server's stream subscriber.
     """
 
     @property
@@ -34,7 +30,7 @@ class BaseBackend(ABC):
         concurrency: int = 10,
     ) -> bool:
         """
-        Connect/initialize the backend.
+        Connect/initialize the backend and register the worker.
 
         Returns:
             True if connection successful, False otherwise
@@ -61,49 +57,4 @@ class BaseBackend(ABC):
         Returns:
             True if heartbeat succeeded, False otherwise.
         """
-        ...
-
-    @abstractmethod
-    async def batch_send(self, events: list[Any]) -> None:
-        """
-        Send multiple status events in one call.
-
-        Used by StatusBuffer for efficient batched reporting.
-
-        Args:
-            events: List of StatusEvent objects to send
-        """
-        ...
-
-    # Individual event methods (used for direct reporting, not batched)
-
-    @abstractmethod
-    async def job_started(
-        self,
-        job: "Job",
-        *,
-        worker_id: str | None = None,
-    ) -> None:
-        """Report that a job has started."""
-        ...
-
-    @abstractmethod
-    async def job_completed(
-        self,
-        job: "Job",
-        result: Any = None,
-        duration_ms: float | None = None,
-    ) -> None:
-        """Report that a job completed successfully."""
-        ...
-
-    @abstractmethod
-    async def job_failed(
-        self,
-        job: "Job",
-        error: str,
-        traceback: str | None = None,
-        will_retry: bool = False,
-    ) -> None:
-        """Report that a job failed."""
         ...

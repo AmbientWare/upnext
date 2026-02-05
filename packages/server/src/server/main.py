@@ -1,24 +1,19 @@
 """Conduit API Server."""
 
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from server.db.session import init_database
-from server.routes import (
-    dashboard_router,
-    endpoints_router,
-    events_router,
-    functions_router,
-    health_router,
-    jobs_router,
-    workers_router,
-)
+from fastapi.staticfiles import StaticFiles
+
+from server.config import get_settings
+from server.db.session import get_database, init_database
+from server.routes import health_router, v1_router
+from server.services.redis import close_redis, connect_redis
+from server.services.stream_subscriber import StreamSubscriber
 
 # Configure logging
 logging.basicConfig(
@@ -34,25 +29,50 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Conduit API server...")
 
-    # Initialize database if configured
-    database_url = os.environ.get("DATABASE_URL")
-    if database_url:
-        db = init_database(database_url)
-        await db.connect()
-        logger.info("Database connected")
+    settings = get_settings()
+
+    # Initialize database (defaults to SQLite if not configured)
+    db = init_database(settings.effective_database_url)
+    await db.connect()
+
+    if settings.is_sqlite:
+        logger.info("Database connected (SQLite)")
+        # Auto-create tables for SQLite
+        await db.create_tables()
     else:
-        logger.warning("DATABASE_URL not set, running without persistence")
+        logger.info("Database connected (PostgreSQL)")
+
+    # Connect to Redis and start stream subscriber
+    subscriber = None
+    redis_client = None
+
+    if settings.redis_url:
+        redis_client = await connect_redis(settings.redis_url)
+        logger.info("Redis connected")
+
+        subscriber = StreamSubscriber(redis_client=redis_client)
+        await subscriber.start()
+    else:
+        logger.info("Redis not configured (CONDUIT_REDIS_URL not set)")
 
     yield
 
     # Shutdown
     logger.info("Shutting down Conduit API server...")
-    if database_url:
-        from server.db.session import get_database
 
-        db = get_database()
-        await db.disconnect()
-        logger.info("Database disconnected")
+    # Stop stream subscriber first
+    if subscriber:
+        await subscriber.stop()
+
+    # Close Redis
+    if redis_client:
+        await close_redis()
+        logger.info("Redis disconnected")
+
+    # Disconnect database
+    db = get_database()
+    await db.disconnect()
+    logger.info("Database disconnected")
 
 
 # Create FastAPI app
@@ -66,7 +86,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],  # TODO: prod config
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -74,13 +94,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health_router)
-app.include_router(events_router, prefix="/api/v1")
-app.include_router(workers_router, prefix="/api/v1")
-app.include_router(jobs_router, prefix="/api/v1")
-app.include_router(functions_router, prefix="/api/v1")
-app.include_router(dashboard_router, prefix="/api/v1")
-app.include_router(endpoints_router, prefix="/api/v1")
-
+app.include_router(v1_router)
 
 # Static files directory (built frontend)
 STATIC_DIR = Path(__file__).parent.parent.parent / "static"
@@ -99,6 +113,7 @@ if STATIC_DIR.exists():
         # Fall back to index.html for SPA routing
         return FileResponse(STATIC_DIR / "index.html")
 else:
+
     @app.get("/")
     async def root():
         """Root endpoint (dev mode without built frontend)."""
@@ -114,14 +129,13 @@ def main():
     """Run the server."""
     import uvicorn
 
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8080"))
+    settings = get_settings()
 
     uvicorn.run(
         "server.main:app",
-        host=host,
-        port=port,
-        reload=os.environ.get("DEBUG", "").lower() == "true",
+        host=settings.host,
+        port=settings.port,
+        reload=settings.debug,
     )
 
 

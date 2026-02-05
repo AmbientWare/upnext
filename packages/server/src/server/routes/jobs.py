@@ -64,7 +64,6 @@ async def list_jobs(
         job_responses = [
             JobHistoryResponse(
                 id=job.id,
-                key=job.key,
                 function=job.function,
                 status=job.status,
                 created_at=job.created_at,
@@ -80,7 +79,6 @@ async def list_jobs(
                 metadata=job.metadata_,
                 result=job.result,
                 error=job.error,
-                state_history=job.state_history,
                 duration_ms=_calculate_duration_ms(job.started_at, job.completed_at),
             )
             for job in jobs
@@ -140,7 +138,7 @@ async def get_job(job_id: str) -> JobHistoryResponse:
     """
     Get a specific job by ID.
 
-    Returns job details including full state history.
+    Returns job details.
     """
     try:
         db = get_database()
@@ -156,7 +154,6 @@ async def get_job(job_id: str) -> JobHistoryResponse:
 
         return JobHistoryResponse(
             id=job.id,
-            key=job.key,
             function=job.function,
             status=job.status,
             created_at=job.created_at,
@@ -172,7 +169,6 @@ async def get_job(job_id: str) -> JobHistoryResponse:
             metadata=job.metadata_,
             result=job.result,
             error=job.error,
-            state_history=job.state_history,
             duration_ms=_calculate_duration_ms(job.started_at, job.completed_at),
         )
 

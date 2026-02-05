@@ -58,6 +58,9 @@ class Context:
 
         Automatically captures parent_id from the current context if
         running inside another task (enables automatic hierarchy tracking).
+
+        Args:
+            job: Job to create context from
         """
         # Check for parent from current context (automatic propagation)
         parent_ctx = _current_context.get()  # Don't raise if no parent

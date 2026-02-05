@@ -41,15 +41,16 @@ class Database:
         Initialize database connection.
 
         Args:
-            url: Database URL (postgresql+asyncpg://...)
+            url: Database URL (postgresql+asyncpg:// or sqlite+aiosqlite://)
             echo: Enable SQL logging
-            pool_size: Connection pool size
-            max_overflow: Max connections above pool_size
+            pool_size: Connection pool size (ignored for SQLite)
+            max_overflow: Max connections above pool_size (ignored for SQLite)
         """
         self._url = url
         self._echo = echo
         self._pool_size = pool_size
         self._max_overflow = max_overflow
+        self._is_sqlite = url.startswith("sqlite")
 
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
@@ -63,12 +64,19 @@ class Database:
 
     async def connect(self) -> None:
         """Establish database connection and create tables."""
-        self._engine = create_async_engine(
-            self._url,
-            echo=self._echo,
-            pool_size=self._pool_size,
-            max_overflow=self._max_overflow,
-        )
+        if self._is_sqlite:
+            # SQLite doesn't support connection pooling
+            self._engine = create_async_engine(
+                self._url,
+                echo=self._echo,
+            )
+        else:
+            self._engine = create_async_engine(
+                self._url,
+                echo=self._echo,
+                pool_size=self._pool_size,
+                max_overflow=self._max_overflow,
+            )
 
         self._session_factory = async_sessionmaker(
             bind=self._engine,

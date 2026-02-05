@@ -27,7 +27,7 @@ from conduit.engine.registry import (
     CronDefinition,
     Registry,
 )
-from conduit.engine.status import StatusBuffer, StatusBufferConfig
+from conduit.engine.status import StatusPublisher
 from conduit.sdk.context import Context, set_current_context
 from conduit.types import BackendType, SyncExecutor
 
@@ -69,14 +69,8 @@ class Worker:
     )
     redis_url: str | None = None  # Uses config.settings.redis_url if not specified
 
-    # Backend controls persistence (queue type is separate):
-    # - BackendType.REDIS: Redis persistence
-    # - BackendType.API: Conduit API persistence
-    backend: BackendType = BackendType.REDIS
-
-    # Status buffer configuration (for batched reporting)
-    status_flush_interval: float = 2.0  # How often to flush status events (seconds)
-    status_batch_size: int = 100  # Max events per batch
+    # Backend controls worker registration with the server
+    backend: BackendType = BackendType.API
 
     # Signal handling (set to False when signals are handled at a higher level)
     handle_signals: bool = True
@@ -98,8 +92,7 @@ class Worker:
     _queue_backend: RedisQueue = field(default=None, init=False)  # type: ignore[assignment]
     _job_processor: JobProcessor | None = field(default=None, init=False)
     _backend: BaseBackend | None = field(default=None, init=False)
-    _status_buffer: StatusBuffer | None = field(default=None, init=False)
-    _status_flush_task: asyncio.Task[None] | None = field(default=None, init=False)
+    _status_buffer: StatusPublisher | None = field(default=None, init=False)
     _worker_id: str | None = field(default=None, init=False)
     _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
     _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
@@ -149,16 +142,8 @@ class Worker:
         worker_id = f"{worker_id_prefix}_{uuid.uuid4().hex[:8]}"
         self._worker_id = worker_id
 
-        # Create status buffer for batched event reporting
-        config = StatusBufferConfig(
-            flush_interval=self.status_flush_interval,
-            batch_size=self.status_batch_size,
-        )
-        self._status_buffer = StatusBuffer(self._redis_client, worker_id, config)
-        logger.debug(
-            f"Status buffering enabled "
-            f"(interval={self.status_flush_interval}s, batch={self.status_batch_size})"
-        )
+        # Create status publisher for writing events to Redis stream
+        self._status_buffer = StatusPublisher(self._redis_client, worker_id)
 
         return worker_id
 
@@ -397,10 +382,7 @@ class Worker:
                 logger.debug("Connected to backend")
                 # Start heartbeat loop (every 5 seconds)
                 self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-                if self._status_buffer:
-                    self._status_flush_task = asyncio.create_task(
-                        self._status_buffer.flush_loop(self._backend)
-                    )
+                # Status buffer writes to Redis stream; server handles consumption
             else:
                 logger.debug("Backend unavailable, running without backend")
                 self._backend = None
@@ -577,8 +559,10 @@ class Worker:
             set_current_context(ctx)
 
             # Report job started
-            if self._backend:
-                await self._backend.job_started(job, worker_id=worker_id)
+            if self._status_buffer:
+                await self._status_buffer.record_job_started(
+                    job.id, job.function, job.attempts, job.max_retries
+                )
 
             # Execute the function
             start = time_module.time()
@@ -591,18 +575,19 @@ class Worker:
             duration_ms = (time_module.time() - start) * 1000
 
             # Report job completed
-            if self._backend:
-                await self._backend.job_completed(
-                    job, result=result, duration_ms=duration_ms
+            if self._status_buffer:
+                await self._status_buffer.record_job_completed(
+                    job.id, job.function, result=result, duration_ms=duration_ms
                 )
 
             return result
 
         except Exception as e:
             # Report job failed
-            if self._backend and job:
-                await self._backend.job_failed(
-                    job,
+            if self._status_buffer and job:
+                await self._status_buffer.record_job_failed(
+                    job.id,
+                    job.function,
                     error=str(e),
                     traceback=traceback.format_exc(),
                     will_retry=False,
@@ -627,17 +612,6 @@ class Worker:
             self._heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._heartbeat_task
-
-        # Flush status buffer (0.5s max)
-        if self._status_buffer:
-            self._status_buffer.stop()
-        if self._status_flush_task:
-            try:
-                await asyncio.wait_for(self._status_flush_task, timeout=0.5)
-            except asyncio.TimeoutError:
-                self._status_flush_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._status_flush_task
 
         # Stop job processor - this is where the timeout matters
         if self._job_processor:

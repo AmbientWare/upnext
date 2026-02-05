@@ -1,19 +1,41 @@
 """Redis service for API."""
 
-import os
-
 import redis.asyncio as redis
 
-# Redis client (initialized lazily)
+# Redis client singleton
 _redis_client: redis.Redis | None = None
 
 
-async def get_redis() -> redis.Redis:
-    """Get async Redis client, initialize if needed."""
+async def connect_redis(url: str) -> redis.Redis:
+    """
+    Connect to Redis and return the client.
+
+    Call this during startup to initialize the connection.
+    The client is stored as a singleton for get_redis() access.
+
+    Args:
+        url: Redis URL.
+
+    Returns:
+        Connected Redis client
+    """
     global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+
+    _redis_client = redis.from_url(url, decode_responses=True)
+    return _redis_client
+
+
+async def get_redis() -> redis.Redis:
+    """
+    Get the Redis client.
+
+    Raises RuntimeError if connect_redis() hasn't been called.
+    Use this after startup to access the shared client.
+    """
     if _redis_client is None:
-        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        _redis_client = redis.from_url(redis_url, decode_responses=True)
+        raise RuntimeError("Redis not connected. Call connect_redis() first.")
     return _redis_client
 
 

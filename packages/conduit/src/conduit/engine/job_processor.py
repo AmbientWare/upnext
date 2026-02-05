@@ -71,7 +71,7 @@ class JobProcessor:
         sync_executor: SyncExecutor = SyncExecutor.THREAD,
         sync_pool_size: int | None = None,
         dequeue_timeout: float = 5.0,
-        status_buffer: Any | None = None,  # StatusBuffer
+        status_buffer: Any | None = None,  # StatusPublisher
         handle_signals: bool = True,
     ) -> None:
         """
@@ -602,7 +602,7 @@ class JobProcessor:
 class JobContextBackend:
     """Context backend that delegates to queue and status buffer operations.
 
-    Status events are written to Redis via StatusBuffer for batched API reporting:
+    Status events are written to Redis via StatusPublisher for batched API reporting:
     - Non-blocking writes (Redis is microseconds, HTTP is milliseconds)
     - Batched API calls (many events in one request)
     - Fault tolerance (any worker can flush pending events)
@@ -612,7 +612,7 @@ class JobContextBackend:
         self,
         queue: BaseQueue,
         job: Job,
-        status_buffer: Any | None = None,  # StatusBuffer
+        status_buffer: Any | None = None,  # StatusPublisher
     ) -> None:
         self._queue = queue
         self._job = job

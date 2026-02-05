@@ -10,7 +10,7 @@ from conduit.engine.registry import (
     TaskDefinition,
 )
 from conduit.engine.runner import run_services
-from conduit.engine.status import StatusBuffer, StatusBufferConfig, StatusEvent
+from conduit.engine.status import StatusEvent, StatusPublisher, StatusPublisherConfig
 
 __all__ = [
     # Runner
@@ -25,8 +25,8 @@ __all__ = [
     "CronDefinition",
     "EventDefinition",
     # Status
-    "StatusBuffer",
-    "StatusBufferConfig",
+    "StatusPublisher",
+    "StatusPublisherConfig",
     "StatusEvent",
     # Cron
     "calculate_next_cron_run",

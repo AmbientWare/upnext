@@ -1,5 +1,6 @@
 """Shared models for Conduit packages."""
 
+from shared.artifacts import ArtifactType
 from shared.events import (
     BatchEventItem,
     BatchEventRequest,
@@ -10,7 +11,6 @@ from shared.events import (
     JobCheckpointEvent,
     JobCompletedEvent,
     JobFailedEvent,
-    JobLogEvent,
     JobProgressEvent,
     JobRetryingEvent,
     JobStartedEvent,
@@ -21,6 +21,9 @@ from shared.models import Job, JobStatus, StateTransition
 from shared.patterns import get_matching_patterns, matches_event_pattern
 from shared.schemas import (
     ApiStats,
+    ArtifactListResponse,
+    ArtifactResponse,
+    CreateArtifactRequest,
     DashboardStats,
     FunctionDetailResponse,
     FunctionInfo,
@@ -54,8 +57,12 @@ __all__ = [
     "JobFailedEvent",
     "JobRetryingEvent",
     "JobProgressEvent",
-    "JobLogEvent",
     "JobCheckpointEvent",
+    # Artifacts
+    "ArtifactType",
+    "ArtifactResponse",
+    "ArtifactListResponse",
+    "CreateArtifactRequest",
     # Worker events
     "WorkerRegisterRequest",
     "WorkerDeregisterRequest",

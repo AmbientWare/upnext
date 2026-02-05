@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from server.db.models import JobHistory
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from server.db.models import Artifact, JobHistory
 
 
 class JobRepository:
@@ -22,7 +23,7 @@ class JobRepository:
 
     async def record_job(self, data: dict[str, Any]) -> JobHistory:
         """
-        Record a completed job to history.
+        Record a job to history.
 
         Args:
             data: Job data from API request
@@ -32,7 +33,6 @@ class JobRepository:
         """
         history = JobHistory(
             id=data["job_id"],
-            key=data.get("key", data["job_id"]),
             function=data["function"],
             status=data["status"],
             created_at=data.get("created_at"),
@@ -48,7 +48,6 @@ class JobRepository:
             metadata_=data.get("metadata", {}),
             result=data.get("result"),
             error=data.get("error"),
-            state_history=data.get("state_history", []),
         )
         self._session.add(history)
         return history
@@ -177,3 +176,54 @@ class JobRepository:
 
         result = await self._session.execute(query)
         return result.rowcount if result.rowcount else 0  # type: ignore[return-value]
+
+
+class ArtifactRepository:
+    """Repository for artifact operations."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(
+        self,
+        job_id: str,
+        name: str,
+        artifact_type: str,
+        data: Any | None = None,
+        size_bytes: int | None = None,
+        path: str | None = None,
+    ) -> Artifact:
+        """Create an artifact for a job."""
+        artifact = Artifact(
+            job_id=job_id,
+            name=name,
+            type=artifact_type,
+            data=data,
+            size_bytes=size_bytes,
+            path=path,
+        )
+        self._session.add(artifact)
+        await self._session.flush()
+        return artifact
+
+    async def get_by_id(self, artifact_id: int) -> Artifact | None:
+        """Get an artifact by ID."""
+        query = select(Artifact).where(Artifact.id == artifact_id)
+        result = await self._session.execute(query)
+        return result.scalar_one_or_none()
+
+    async def list_by_job(self, job_id: str) -> list[Artifact]:
+        """List all artifacts for a job."""
+        query = (
+            select(Artifact)
+            .where(Artifact.job_id == job_id)
+            .order_by(Artifact.created_at.desc())
+        )
+        result = await self._session.execute(query)
+        return list(result.scalars().all())
+
+    async def delete(self, artifact_id: int) -> bool:
+        """Delete an artifact by ID."""
+        query = delete(Artifact).where(Artifact.id == artifact_id)
+        result = await self._session.execute(query)
+        return (result.rowcount or 0) > 0
