@@ -13,10 +13,7 @@ function RootLayout() {
   const getPageTitle = () => {
     const path = router.location.pathname;
     if (path.startsWith("/dashboard")) return "Dashboard";
-    if (path.startsWith("/jobs")) return "Jobs";
     if (path.startsWith("/functions")) return "Functions";
-    if (path.startsWith("/workers")) return "Workers";
-    if (path.startsWith("/apis")) return "APIs";
     return "Dashboard";
   };
 

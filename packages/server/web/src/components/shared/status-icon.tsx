@@ -1,4 +1,4 @@
-import { Clock, Loader2, CheckCircle, XCircle, RotateCcw, Ban } from "lucide-react";
+import { Loader2, CheckCircle, XCircle, RotateCcw } from "lucide-react";
 import { cn, type JobStatus } from "@/lib/utils";
 
 interface StatusIconProps {
@@ -14,12 +14,9 @@ const sizeClasses = {
 };
 
 const statusColors: Record<JobStatus, string> = {
-  pending: "text-amber-500",
-  queued: "text-violet-500",
   active: "text-blue-500",
   complete: "text-emerald-500",
   failed: "text-red-500",
-  cancelled: "text-zinc-500",
   retrying: "text-orange-500",
 };
 
@@ -28,12 +25,9 @@ export function StatusIcon({ status, size = "md", className }: StatusIconProps) 
   const colorClass = statusColors[status];
 
   const icons: Record<JobStatus, React.ReactNode> = {
-    pending: <Clock className={cn(sizeClass, colorClass, className)} />,
-    queued: <Clock className={cn(sizeClass, colorClass, className)} />,
     active: <Loader2 className={cn(sizeClass, colorClass, "animate-spin", className)} />,
     complete: <CheckCircle className={cn(sizeClass, colorClass, className)} />,
     failed: <XCircle className={cn(sizeClass, colorClass, className)} />,
-    cancelled: <Ban className={cn(sizeClass, colorClass, className)} />,
     retrying: <RotateCcw className={cn(sizeClass, colorClass, className)} />,
   };
 

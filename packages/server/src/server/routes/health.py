@@ -3,6 +3,8 @@
 from fastapi import APIRouter
 from shared.events import HealthResponse
 
+from server.config import get_settings
+
 router = APIRouter(tags=["health"])
 
 
@@ -16,7 +18,7 @@ async def health_check() -> HealthResponse:
     """
     return HealthResponse(
         status="ok",
-        version="0.1.0",
+        version=get_settings().version,
         tier="free",
         features=[],
     )

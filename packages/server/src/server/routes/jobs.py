@@ -4,38 +4,20 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from shared.schemas import (
+    JobHistoryResponse,
+    JobListResponse,
+    JobStatsResponse,
+    JobTrendHour,
+    JobTrendsResponse,
+)
+
 from server.db.repository import JobRepository
 from server.db.session import get_database
-from shared.schemas import JobHistoryResponse, JobListResponse, JobStatsResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
-
-
-# =============================================================================
-# Trends Schemas
-# =============================================================================
-
-
-class JobTrendHour(BaseModel):
-    """Hourly job counts by status."""
-
-    hour: str  # ISO format: "2024-01-15T14:00:00Z"
-    complete: int = 0
-    failed: int = 0
-    cancelled: int = 0
-    retrying: int = 0
-    active: int = 0
-    queued: int = 0
-    pending: int = 0
-
-
-class JobTrendsResponse(BaseModel):
-    """Job trends response."""
-
-    hourly: list[JobTrendHour]
 
 
 def _calculate_duration_ms(
@@ -182,18 +164,15 @@ async def get_job_trends(
         now = datetime.now(UTC)
         start_time = now - timedelta(hours=hours)
 
-        # Get jobs in the time range
-        jobs = await repo.list_jobs(
-            function=function,
+        # Get aggregated trends from DB (SQL GROUP BY)
+        trend_rows = await repo.get_hourly_trends(
             start_date=start_time,
             end_date=now,
-            limit=10000,  # Get all jobs in range
+            function=function,
         )
 
-        # Group by hour
+        # Initialize all hours
         hourly_counts: dict[str, dict[str, int]] = {}
-
-        # Initialize all hours with zeros
         for i in range(hours):
             hour_start = now - timedelta(hours=hours - i - 1)
             hour_key = hour_start.replace(minute=0, second=0, microsecond=0).strftime(
@@ -202,24 +181,18 @@ async def get_job_trends(
             hourly_counts[hour_key] = {
                 "complete": 0,
                 "failed": 0,
-                "cancelled": 0,
                 "retrying": 0,
                 "active": 0,
-                "queued": 0,
-                "pending": 0,
             }
 
-        # Count jobs by hour and status
-        for job in jobs:
-            if job.created_at:
-                hour_key = job.created_at.replace(
-                    minute=0, second=0, microsecond=0, tzinfo=UTC
-                ).strftime("%Y-%m-%dT%H:00:00Z")
-
-                if hour_key in hourly_counts:
-                    status = job.status.lower()
-                    if status in hourly_counts[hour_key]:
-                        hourly_counts[hour_key][status] += 1
+        # Fill in counts from aggregated DB results
+        for row in trend_rows:
+            hour_dt = datetime(int(row.yr), int(row.mo), int(row.dy), int(row.hr))
+            hour_key = hour_dt.strftime("%Y-%m-%dT%H:00:00Z")
+            if hour_key in hourly_counts:
+                status = row.status.lower()
+                if status in hourly_counts[hour_key]:
+                    hourly_counts[hour_key][status] = row.cnt
 
         # Convert to response
         hourly = [

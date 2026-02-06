@@ -5,18 +5,23 @@ This is the user-facing Api that supports @api.get(), @api.post(), etc.
 """
 
 import asyncio
+import json
 import logging
-import os
 import signal
+import socket
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, TypeVar
 
 import redis.asyncio as aioredis
 import uvicorn
 from fastapi import APIRouter, FastAPI
+from shared.api import API_INSTANCE_PREFIX, API_INSTANCE_TTL
 
+from conduit.config import get_settings
 from conduit.sdk.middleware import ApiTrackingMiddleware
 
 logger = logging.getLogger(__name__)
@@ -50,14 +55,10 @@ class Api:
     port: int = 8000
     docs_url: str = "/docs"
     openapi_url: str = "/openapi.json"
-    debug: bool = field(
-        default_factory=lambda: os.environ.get("CONDUIT_DEBUG", "").lower() == "true"
-    )
+    debug: bool = field(default_factory=lambda: get_settings().debug)
 
     # Redis URL for API request tracking (auto-detected from CONDUIT_REDIS_URL)
-    redis_url: str | None = field(
-        default_factory=lambda: os.environ.get("CONDUIT_REDIS_URL")
-    )
+    redis_url: str | None = field(default_factory=lambda: get_settings().redis_url)
 
     # Signal handling (set to False when signals are handled at a higher level)
     handle_signals: bool = True
@@ -66,9 +67,17 @@ class Api:
     _app: FastAPI | None = field(default=None, init=False)
     _server: Any = field(default=None, init=False)
     _redis: Any = field(default=None, init=False)
+    _api_id: str | None = field(default=None, init=False)
+    _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
+    _started_at: datetime | None = field(default=None, init=False)
     _pending_routers: list[tuple["APIRouter", dict[str, Any]]] = field(
         default_factory=list, init=False
     )
+
+    @property
+    def api_id(self) -> str | None:
+        """Get the unique instance ID (generated on start)."""
+        return self._api_id
 
     @property
     def app(self) -> FastAPI:
@@ -291,7 +300,7 @@ class Api:
         self._pending_routers.clear()
 
     async def _setup_tracking(self) -> None:
-        """Set up API request tracking via Redis hash buckets."""
+        """Set up API request tracking and instance registration via Redis."""
         if not self.redis_url:
             return
 
@@ -307,9 +316,77 @@ class Api:
             ApiTrackingMiddleware, api_name=self.name, redis_client=self._redis
         )
 
+        # Generate unique instance ID and register in Redis
+        self._api_id = f"api_{uuid.uuid4().hex[:8]}"
+        self._started_at = datetime.now(UTC)
+
+        await self._write_instance_heartbeat()
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        logger.debug(f"API instance registered: {self._api_id}")
+
+    def _get_endpoint_list(self) -> list[str]:
+        """Get list of registered endpoint strings (e.g. 'GET:/health')."""
+        endpoints: list[str] = []
+        for route in self.app.routes:
+            if hasattr(route, "methods"):
+                path = getattr(route, "path", "")
+                for method in getattr(route, "methods", set()):
+                    endpoints.append(f"{method}:{path}")
+        return endpoints
+
+    def _instance_data(self) -> str:
+        """Build JSON instance data for Redis."""
+        return json.dumps(
+            {
+                "id": self._api_id,
+                "api_name": self.name,
+                "started_at": self._started_at.isoformat() if self._started_at else "",
+                "last_heartbeat": datetime.now(UTC).isoformat(),
+                "host": self.host,
+                "port": self.port,
+                "endpoints": self._get_endpoint_list(),
+                "hostname": socket.gethostname(),
+            }
+        )
+
+    async def _write_instance_heartbeat(self) -> None:
+        """Write instance data to Redis with TTL."""
+        if not self._redis or not self._api_id:
+            return
+        key = f"{API_INSTANCE_PREFIX}:{self._api_id}"
+        await self._redis.setex(key, API_INSTANCE_TTL, self._instance_data())
+
+    async def _heartbeat_loop(self) -> None:
+        """Refresh instance TTL in Redis periodically."""
+        while True:
+            try:
+                await asyncio.sleep(10)
+                await self._write_instance_heartbeat()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"API heartbeat error: {e}")
+                await asyncio.sleep(10)
+
     async def _cleanup_tracking(self) -> None:
-        """Close Redis connection used for tracking."""
+        """Remove instance from Redis and close connection."""
+        # Stop heartbeat
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
+
         if self._redis:
+            # Remove instance key
+            if self._api_id:
+                try:
+                    await self._redis.delete(f"{API_INSTANCE_PREFIX}:{self._api_id}")
+                except Exception:
+                    pass
+
             try:
                 await self._redis.close()
             except Exception:

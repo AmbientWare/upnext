@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import type { JobStatus } from "@/lib/types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -36,14 +37,11 @@ export function formatTimeAgo(date: Date): string {
   return `${seconds}s ago`;
 }
 
-export type JobStatus = "pending" | "queued" | "active" | "complete" | "failed" | "cancelled" | "retrying";
+export type { JobStatus };
 
 export const statusConfig: Record<JobStatus, { bg: string; text: string; dot: string; label: string }> = {
-  pending: { bg: "bg-amber-500/10", text: "text-amber-400", dot: "bg-amber-500", label: "Pending" },
-  queued: { bg: "bg-violet-500/10", text: "text-violet-400", dot: "bg-violet-500", label: "Queued" },
   active: { bg: "bg-blue-500/10", text: "text-blue-400", dot: "bg-blue-500", label: "Active" },
   complete: { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-500", label: "Complete" },
   failed: { bg: "bg-red-500/10", text: "text-red-400", dot: "bg-red-500", label: "Failed" },
-  cancelled: { bg: "bg-zinc-500/10", text: "text-zinc-400", dot: "bg-zinc-500", label: "Cancelled" },
   retrying: { bg: "bg-orange-500/10", text: "text-orange-400", dot: "bg-orange-500", label: "Retrying" },
 };

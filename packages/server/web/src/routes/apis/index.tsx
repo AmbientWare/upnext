@@ -1,10 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { cn } from "@/lib/utils";
+import { cn, formatTimeAgo } from "@/lib/utils";
 import { getApis, queryKeys } from "@/lib/conduit-api";
 import type { ApiInfo } from "@/lib/types";
-import { Search, X } from "lucide-react";
+import { Search, X, ChevronDown, Circle } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 export const Route = createFileRoute("/apis/")({
   component: ApisPage,
@@ -12,6 +20,7 @@ export const Route = createFileRoute("/apis/")({
 
 function ApisPage() {
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">("");
 
   const { data: apisData } = useQuery({
     queryKey: queryKeys.apis,
@@ -22,13 +31,21 @@ function ApisPage() {
   const allApis = apisData?.apis ?? [];
 
   const filteredApis = useMemo(() => {
-    if (!search) return allApis;
+    let apis = allApis;
 
-    const searchLower = search.toLowerCase();
-    return allApis.filter((api) =>
-      api.name.toLowerCase().includes(searchLower)
-    );
-  }, [allApis, search]);
+    if (search) {
+      const searchLower = search.toLowerCase();
+      apis = apis.filter((api) => api.name.toLowerCase().includes(searchLower));
+    }
+
+    if (statusFilter === "active") {
+      apis = apis.filter((api) => api.active);
+    } else if (statusFilter === "inactive") {
+      apis = apis.filter((api) => !api.active);
+    }
+
+    return apis;
+  }, [allApis, search, statusFilter]);
 
   // Calculate totals
   const totals = useMemo(() => {
@@ -59,9 +76,26 @@ function ApisPage() {
           />
         </div>
 
-        {search && (
+        {/* Status Filter */}
+        <div className="relative">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "" | "active" | "inactive")}
+            className={cn(
+              "appearance-none bg-[#1a1a1a] border border-[#2a2a2a] rounded-md px-3 py-2 pr-8 text-sm focus:outline-none focus:border-[#3a3a3a]",
+              statusFilter ? "text-[#e0e0e0]" : "text-[#555]"
+            )}
+          >
+            <option value="">All Status</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[#555] pointer-events-none" />
+        </div>
+
+        {(search || statusFilter) && (
           <button
-            onClick={() => setSearch("")}
+            onClick={() => { setSearch(""); setStatusFilter(""); }}
             className="flex items-center gap-1 px-2 py-1.5 text-xs text-[#666] hover:text-[#999] transition-colors"
           >
             <X className="w-3 h-3" />
@@ -87,18 +121,16 @@ function ApisPage() {
 
       {/* APIs Table */}
       <div className="matrix-panel rounded flex-1 overflow-hidden">
-        <div className="h-full overflow-auto">
-          {filteredApis.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-[#555]">
-              <div className="text-sm font-medium">No APIs found</div>
-              <div className="text-xs mt-1">
-                {search ? "Try adjusting your search" : "APIs will appear here when requests are made"}
-              </div>
+        {filteredApis.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-[#555]">
+            <div className="text-sm font-medium">No APIs found</div>
+            <div className="text-xs mt-1">
+              {search ? "Try adjusting your search" : "APIs will appear here when requests are made"}
             </div>
-          ) : (
-            <ApisTable apis={filteredApis} />
-          )}
-        </div>
+          </div>
+        ) : (
+          <ApisTable apis={filteredApis} />
+        )}
       </div>
     </div>
   );
@@ -106,28 +138,53 @@ function ApisPage() {
 
 function ApisTable({ apis }: { apis: ApiInfo[] }) {
   return (
-    <table className="w-full">
-      <thead className="sticky top-0 bg-[#141414]">
-        <tr className="text-[10px] text-[#666] uppercase tracking-wider">
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Name</th>
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Endpoints</th>
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Requests (24h)</th>
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Avg Latency</th>
-          <th className="px-3 py-2 text-left font-medium">Error Rate</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table>
+      <TableHeader className="sticky top-0 z-10 bg-[#141414]">
+        <TableRow className="text-[10px] text-[#666] uppercase tracking-wider border-[#2a2a2a] hover:bg-transparent">
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Name</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Instances</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Endpoints</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Requests (24h)</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Avg Latency</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Error Rate</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {apis.map((api) => (
-          <tr key={api.name} className="matrix-row hover:bg-[#1a1a1a] transition-colors">
-            <td className="matrix-cell px-3 py-2 mono text-[11px]">{api.name}</td>
-            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#888]">
+          <TableRow key={api.name} className="border-[#1e1e1e] hover:bg-[#1a1a1a]">
+            <TableCell className="py-2">
+              <div className="flex items-center gap-2">
+                <Circle className={cn("w-2 h-2 shrink-0", api.active ? "fill-emerald-400 text-emerald-400" : "fill-[#444] text-[#444]")} />
+                <span className="text-[11px] text-[#e0e0e0]">{api.name}</span>
+              </div>
+            </TableCell>
+            <TableCell className="py-2">
+              {(api.instances ?? []).length > 0 ? (
+                <div className="flex flex-col gap-0.5">
+                  {(api.instances ?? []).map((inst) => (
+                    <div key={inst.id} className="flex items-center gap-1.5">
+                      <span className="mono text-[10px] text-[#888]">{inst.id}</span>
+                      <span className="text-[10px] text-[#555]">
+                        {inst.host}:{inst.port}
+                      </span>
+                      <span className="text-[10px] text-[#444]">
+                        {formatTimeAgo(new Date(inst.last_heartbeat))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-[10px] text-[#444]">{"\u2014"}</span>
+              )}
+            </TableCell>
+            <TableCell className="mono text-[11px] text-[#888] py-2">
               {api.endpoint_count}
-            </td>
-            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#888]">
+            </TableCell>
+            <TableCell className="mono text-[11px] text-[#888] py-2">
               {api.requests_24h.toLocaleString()}
-            </td>
-            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#888]">{Math.round(api.avg_latency_ms)}ms</td>
-            <td className="px-3 py-2 mono text-[11px]">
+            </TableCell>
+            <TableCell className="mono text-[11px] text-[#888] py-2">{Math.round(api.avg_latency_ms)}ms</TableCell>
+            <TableCell className="mono text-[11px] py-2">
               <span
                 className={cn(
                   api.error_rate === 0
@@ -141,10 +198,10 @@ function ApisTable({ apis }: { apis: ApiInfo[] }) {
               >
                 {api.error_rate.toFixed(1)}%
               </span>
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }

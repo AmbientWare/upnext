@@ -8,7 +8,7 @@
 // =============================================================================
 
 export type FunctionType = 'task' | 'cron' | 'event';
-export type JobStatus = 'pending' | 'active' | 'complete' | 'failed' | 'retrying' | 'cancelled';
+export type JobStatus = 'active' | 'complete' | 'failed' | 'retrying';
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 // =============================================================================
@@ -54,11 +54,8 @@ export interface JobTrendHour {
   hour: string;
   complete: number;
   failed: number;
-  cancelled: number;
   retrying: number;
   active: number;
-  queued: number;
-  pending: number;
 }
 
 export interface JobTrendsResponse {
@@ -86,8 +83,9 @@ export interface Run {
 // Worker Schemas
 // =============================================================================
 
-export interface Worker {
+export interface WorkerInstance {
   id: string;
+  worker_name: string;
   started_at: string;
   last_heartbeat: string;
   functions: string[];
@@ -96,11 +94,19 @@ export interface Worker {
   jobs_processed: number;
   jobs_failed: number;
   hostname: string | null;
-  version: string | null;
+}
+
+export interface WorkerInfo {
+  name: string;
+  active: boolean;
+  instance_count: number;
+  instances: WorkerInstance[];
+  functions: string[];
+  concurrency: number;
 }
 
 export interface WorkersListResponse {
-  workers: Worker[];
+  workers: WorkerInfo[];
   total: number;
 }
 
@@ -115,6 +121,7 @@ export interface WorkerStats {
 export interface FunctionInfo {
   name: string;
   type: FunctionType;
+  active: boolean;
   // Task config
   timeout: number | null;
   max_retries: number | null;
@@ -130,6 +137,8 @@ export interface FunctionInfo {
   batch_size: number | null;
   batch_timeout: number | null;
   max_concurrency: number | null;
+  // Workers currently handling this function
+  workers: string[];
   // Stats
   runs_24h: number;
   success_rate: number;
@@ -162,8 +171,22 @@ export interface FunctionDetailResponse extends FunctionInfo {
 // API Schemas
 // =============================================================================
 
+export interface ApiInstance {
+  id: string;
+  api_name: string;
+  started_at: string;
+  last_heartbeat: string;
+  host: string;
+  port: number;
+  endpoints: string[];
+  hostname: string | null;
+}
+
 export interface ApiInfo {
   name: string;
+  active: boolean;
+  instance_count: number;
+  instances: ApiInstance[];
   endpoint_count: number;
   requests_24h: number;
   avg_latency_ms: number;

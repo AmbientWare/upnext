@@ -31,7 +31,7 @@ class JobHistory(Base):
     # Job identity
     function: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    # Status: pending, active, complete, failed, retrying, cancelled
+    # Status: active, complete, failed, retrying
     status: Mapped[str] = mapped_column(String(20), nullable=False)
 
     # Timing

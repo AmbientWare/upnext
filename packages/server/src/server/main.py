@@ -12,8 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from server.config import get_settings
 from server.db.session import get_database, init_database
 from server.routes import health_router, v1_router
-from server.services.redis import close_redis, connect_redis
-from server.services.stream_subscriber import StreamSubscriber
+from server.services import CleanupService, StreamSubscriber, close_redis, connect_redis
 
 # Configure logging
 logging.basicConfig(
@@ -55,12 +54,18 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Redis not configured (CONDUIT_REDIS_URL not set)")
 
+    # Start periodic cleanup service
+    cleanup = CleanupService(redis_client=redis_client)
+    await cleanup.start()
+
     yield
 
     # Shutdown
     logger.info("Shutting down Conduit API server...")
 
-    # Stop stream subscribers first
+    # Stop background services
+    await cleanup.stop()
+
     if subscriber:
         await subscriber.stop()
 
@@ -79,7 +84,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Conduit API",
     description="API server for Conduit job tracking and dashboard",
-    version="0.1.0",
+    version=get_settings().version,
     lifespan=lifespan,
 )
 
@@ -118,7 +123,7 @@ else:
         """Root endpoint (dev mode without built frontend)."""
         return {
             "name": "Conduit API",
-            "version": "0.1.0",
+            "version": get_settings().version,
             "docs": "/docs",
             "note": "Frontend not built. Run 'bun run build' in web/ directory.",
         }
@@ -134,7 +139,6 @@ def main():
         "server.main:app",
         host=settings.host,
         port=settings.port,
-        reload=settings.debug,
     )
 
 

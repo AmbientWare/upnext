@@ -13,7 +13,14 @@ Each hash contains:
 # Key prefix for all API tracking keys
 API_PREFIX = "conduit:api"
 
+# Key prefix for API instance heartbeats
+API_INSTANCE_PREFIX = "conduit:api_instances"
+
 # TTLs (seconds)
 MINUTE_BUCKET_TTL = 600  # 10 minutes
 HOURLY_BUCKET_TTL = 2_592_000  # 30 days
 REGISTRY_TTL = 2_592_000  # 30 days
+
+# API instance TTL - must heartbeat within this time
+# With 10s heartbeat interval, this gives 3 missed heartbeats before expiry
+API_INSTANCE_TTL = 30

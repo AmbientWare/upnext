@@ -6,18 +6,28 @@ This is the user-facing Worker that supports @worker.task(), @worker.cron(), etc
 
 import asyncio
 import contextlib
+import json
 import logging
+import socket
 import time as time_module
 import traceback
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, overload
 
 from shared.models import Job
+from shared.workers import (
+    FUNCTION_DEF_TTL,
+    FUNCTION_KEY_PREFIX,
+    WORKER_DEF_PREFIX,
+    WORKER_DEF_TTL,
+    WORKER_KEY_PREFIX,
+    WORKER_TTL,
+)
 
 from conduit.config import get_settings
-from conduit.engine.backend import BaseBackend, create_backend
 from conduit.engine.cron import calculate_next_cron_run
 from conduit.engine.handlers import EventHandle, TaskHandle
 from conduit.engine.job_processor import JobProcessor
@@ -29,7 +39,7 @@ from conduit.engine.registry import (
 )
 from conduit.engine.status import StatusPublisher
 from conduit.sdk.context import Context, set_current_context
-from conduit.types import BackendType, SyncExecutor
+from conduit.types import SyncExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +79,6 @@ class Worker:
     )
     redis_url: str | None = None  # Uses config.settings.redis_url if not specified
 
-    # Backend controls worker registration with the server
-    backend: BackendType = BackendType.API
-
     # Signal handling (set to False when signals are handled at a higher level)
     handle_signals: bool = True
 
@@ -91,8 +98,12 @@ class Worker:
     _redis_client: Any = field(default=None, init=False)
     _queue_backend: RedisQueue = field(default=None, init=False)  # type: ignore[assignment]
     _job_processor: JobProcessor | None = field(default=None, init=False)
-    _backend: BaseBackend | None = field(default=None, init=False)
     _status_buffer: StatusPublisher | None = field(default=None, init=False)
+    _started_at: datetime | None = field(default=None, init=False)
+    _registered_functions: list[str] = field(default_factory=list, init=False)
+    _function_definitions: list[dict[str, Any]] = field(
+        default_factory=list, init=False
+    )
     _worker_id: str | None = field(default=None, init=False)
     _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
     _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
@@ -368,24 +379,15 @@ class Worker:
                 }
             )
 
-        # Connect to backend based on backend setting
-        self._backend = await create_backend(self.backend, client=self._redis_client)
-        if self._backend:
-            connected = await self._backend.connect(
-                worker_id,
-                self.name,
-                functions=registered_functions,
-                function_definitions=function_definitions,
-                concurrency=self.concurrency,
-            )
-            if connected:
-                logger.debug("Connected to backend")
-                # Start heartbeat loop (every 5 seconds)
-                self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-                # Status buffer writes to Redis stream; server handles consumption
-            else:
-                logger.debug("Backend unavailable, running without backend")
-                self._backend = None
+        # Register worker instance and definitions in Redis
+        self._started_at = datetime.now(UTC)
+        self._registered_functions = registered_functions
+        self._function_definitions = function_definitions
+        await self._write_worker_heartbeat()
+        await self._write_worker_definition()
+        await self._write_function_definitions()
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        logger.debug(f"Worker instance registered: {worker_id}")
 
         # Create job processor (internal execution engine)
         self._job_processor = JobProcessor(
@@ -434,70 +436,84 @@ class Worker:
             except Exception as e:
                 logger.error(f"Failed to seed cron job '{job_name}': {e}")
 
-    async def _heartbeat_loop(self) -> None:
-        """Send heartbeats to the API with exponential backoff on failures."""
-        if not self._backend or not self._worker_id:
+    def _worker_data(self) -> str:
+        """Build JSON worker data for Redis."""
+        active_jobs = 0
+        jobs_processed = 0
+        jobs_failed = 0
+
+        if self._job_processor:
+            active_jobs = self._job_processor.active_job_count
+            jobs_processed = self._job_processor.jobs_processed
+            jobs_failed = self._job_processor.jobs_failed
+
+        return json.dumps(
+            {
+                "id": self._worker_id,
+                "worker_name": self.name,
+                "started_at": self._started_at.isoformat() if self._started_at else "",
+                "last_heartbeat": datetime.now(UTC).isoformat(),
+                "functions": self._registered_functions,
+                "concurrency": self.concurrency,
+                "active_jobs": active_jobs,
+                "jobs_processed": jobs_processed,
+                "jobs_failed": jobs_failed,
+                "hostname": socket.gethostname(),
+            }
+        )
+
+    async def _write_worker_heartbeat(self) -> None:
+        """Write worker data to Redis with TTL."""
+        if not self._redis_client or not self._worker_id:
             return
+        key = f"{WORKER_KEY_PREFIX}:{self._worker_id}"
+        await self._redis_client.setex(key, WORKER_TTL, self._worker_data())
 
-        consecutive_failures = 0
-        base_interval = 3.0  # Normal heartbeat interval
-        max_backoff = 60.0  # Max delay when API is down
+    async def _write_worker_definition(self) -> None:
+        """Write persistent worker definition to Redis with 30-day TTL.
 
+        Key is `conduit:worker_defs:{worker_name}` — a config registry
+        refreshed each time a worker starts.  Active/inactive is derived
+        from live instance heartbeats, not key existence.
+        """
+        if not self._redis_client:
+            return
+        key = f"{WORKER_DEF_PREFIX}:{self.name}"
+        data = json.dumps({
+            "name": self.name,
+            "functions": self._registered_functions,
+            "concurrency": self.concurrency,
+        })
+        await self._redis_client.setex(key, WORKER_DEF_TTL, data)
+
+    async def _write_function_definitions(self) -> None:
+        """Write function definitions to Redis with a 30-day TTL.
+
+        Keys are `conduit:functions:{name}` — a config registry refreshed
+        each time a worker starts.  Active/inactive is determined by live
+        worker heartbeats, not by key existence.  The 30-day TTL ensures
+        stale definitions self-clean (matches API registry TTL).
+        """
+        if not self._redis_client:
+            return
+        for func_def in self._function_definitions:
+            name = func_def.get("name")
+            if not name:
+                continue
+            key = f"{FUNCTION_KEY_PREFIX}:{name}"
+            await self._redis_client.setex(key, FUNCTION_DEF_TTL, json.dumps(func_def))
+
+    async def _heartbeat_loop(self) -> None:
+        """Refresh worker heartbeat TTL in Redis periodically."""
         while True:
             try:
-                # Get current stats from engine worker
-                active_jobs = 0
-                jobs_processed = 0
-                jobs_failed = 0
-                queued_jobs = 0
-
-                if self._job_processor:
-                    active_jobs = self._job_processor.active_job_count
-                    jobs_processed = self._job_processor.jobs_processed
-                    jobs_failed = self._job_processor.jobs_failed
-
-                if not self._backend:
-                    return
-
-                success = await self._backend.heartbeat(
-                    self._worker_id,
-                    active_jobs=active_jobs,
-                    jobs_processed=jobs_processed,
-                    jobs_failed=jobs_failed,
-                    queued_jobs=queued_jobs,
-                )
-
-                if success:
-                    if consecutive_failures > 0:
-                        logger.info("API connection restored")
-                    consecutive_failures = 0
-                    await asyncio.sleep(base_interval)
-                else:
-                    consecutive_failures += 1
-                    backoff = min(
-                        base_interval * (2**consecutive_failures), max_backoff
-                    )
-                    logger.debug(
-                        f"Heartbeat failed (attempt {consecutive_failures}), "
-                        f"retrying in {backoff:.1f}s..."
-                    )
-                    await asyncio.sleep(backoff)
-                    # Try to re-register with the API
-                    await self._backend.connect(
-                        self._worker_id,
-                        self.name,
-                        functions=list(self._task_handles.keys()),
-                        concurrency=self.concurrency,
-                    )
-
+                await asyncio.sleep(10)
+                await self._write_worker_heartbeat()
             except asyncio.CancelledError:
                 break
-
             except Exception as e:
-                consecutive_failures += 1
-                backoff = min(base_interval * (2**consecutive_failures), max_backoff)
-                logger.debug(f"Heartbeat error: {e}, retrying in {backoff:.1f}s")
-                await asyncio.sleep(backoff)
+                logger.debug(f"Worker heartbeat error: {e}")
+                await asyncio.sleep(10)
 
     async def execute(
         self,
@@ -507,7 +523,7 @@ class Worker:
         """
         Execute a single function directly (for CLI testing/debugging).
 
-        This initializes the worker (connects to Redis, API backend, etc.),
+        This initializes the worker (connects to Redis, etc.),
         runs the specified function once, and then shuts down cleanly.
 
         Args:
@@ -534,19 +550,7 @@ class Worker:
             )
 
         # Shared initialization (queue, emit, task handles, worker ID, status buffer)
-        worker_id = self.initialize(worker_id_prefix="call")
-
-        # Connect to backend based on backend setting
-        self._backend = await create_backend(self.backend, client=self._redis_client)
-        if self._backend:
-            connected = await self._backend.connect(
-                worker_id,
-                self.name,
-                functions=[function_name],
-                concurrency=1,
-            )
-            if not connected:
-                self._backend = None
+        self.initialize(worker_id_prefix="call")
 
         job: Job | None = None
         try:
@@ -596,8 +600,6 @@ class Worker:
 
         finally:
             set_current_context(None)
-            if self._backend:
-                await self._backend.disconnect()
             if self._queue_backend:
                 await self._queue_backend.close()
 
@@ -627,11 +629,16 @@ class Worker:
                     await asyncio.gather(*pending, return_exceptions=True)
             self._background_tasks.clear()
 
-        # Close connections
+        # Remove worker from Redis and close connections
+        if self._redis_client and self._worker_id:
+            try:
+                await self._redis_client.delete(
+                    f"{WORKER_KEY_PREFIX}:{self._worker_id}"
+                )
+            except Exception:
+                pass
         if self._queue_backend:
             await self._queue_backend.close()
-        if self._backend:
-            await self._backend.disconnect()
 
         logger.debug(f"Worker '{self.name}' stopped")
 

@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from "./routes/__root"
 import { Route as IndexRouteImport } from "./routes/index"
 import { Route as WorkersIndexRouteImport } from "./routes/workers/index"
-import { Route as JobsIndexRouteImport } from "./routes/jobs/index"
 import { Route as FunctionsIndexRouteImport } from "./routes/functions/index"
 import { Route as DashboardIndexRouteImport } from "./routes/dashboard/index"
 import { Route as ApisIndexRouteImport } from "./routes/apis/index"
@@ -24,11 +23,6 @@ const IndexRoute = IndexRouteImport.update({
 const WorkersIndexRoute = WorkersIndexRouteImport.update({
   id: "/workers/",
   path: "/workers/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JobsIndexRoute = JobsIndexRouteImport.update({
-  id: "/jobs/",
-  path: "/jobs/",
   getParentRoute: () => rootRouteImport,
 } as any)
 const FunctionsIndexRoute = FunctionsIndexRouteImport.update({
@@ -52,7 +46,6 @@ export interface FileRoutesByFullPath {
   "/apis/": typeof ApisIndexRoute
   "/dashboard/": typeof DashboardIndexRoute
   "/functions/": typeof FunctionsIndexRoute
-  "/jobs/": typeof JobsIndexRoute
   "/workers/": typeof WorkersIndexRoute
 }
 export interface FileRoutesByTo {
@@ -60,7 +53,6 @@ export interface FileRoutesByTo {
   "/apis": typeof ApisIndexRoute
   "/dashboard": typeof DashboardIndexRoute
   "/functions": typeof FunctionsIndexRoute
-  "/jobs": typeof JobsIndexRoute
   "/workers": typeof WorkersIndexRoute
 }
 export interface FileRoutesById {
@@ -69,28 +61,14 @@ export interface FileRoutesById {
   "/apis/": typeof ApisIndexRoute
   "/dashboard/": typeof DashboardIndexRoute
   "/functions/": typeof FunctionsIndexRoute
-  "/jobs/": typeof JobsIndexRoute
   "/workers/": typeof WorkersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | "/"
-    | "/apis/"
-    | "/dashboard/"
-    | "/functions/"
-    | "/jobs/"
-    | "/workers/"
+  fullPaths: "/" | "/apis/" | "/dashboard/" | "/functions/" | "/workers/"
   fileRoutesByTo: FileRoutesByTo
-  to: "/" | "/apis" | "/dashboard" | "/functions" | "/jobs" | "/workers"
-  id:
-    | "__root__"
-    | "/"
-    | "/apis/"
-    | "/dashboard/"
-    | "/functions/"
-    | "/jobs/"
-    | "/workers/"
+  to: "/" | "/apis" | "/dashboard" | "/functions" | "/workers"
+  id: "__root__" | "/" | "/apis/" | "/dashboard/" | "/functions/" | "/workers/"
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -98,7 +76,6 @@ export interface RootRouteChildren {
   ApisIndexRoute: typeof ApisIndexRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   FunctionsIndexRoute: typeof FunctionsIndexRoute
-  JobsIndexRoute: typeof JobsIndexRoute
   WorkersIndexRoute: typeof WorkersIndexRoute
 }
 
@@ -116,13 +93,6 @@ declare module "@tanstack/react-router" {
       path: "/workers"
       fullPath: "/workers/"
       preLoaderRoute: typeof WorkersIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/jobs/": {
-      id: "/jobs/"
-      path: "/jobs"
-      fullPath: "/jobs/"
-      preLoaderRoute: typeof JobsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/functions/": {
@@ -154,7 +124,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApisIndexRoute: ApisIndexRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   FunctionsIndexRoute: FunctionsIndexRoute,
-  JobsIndexRoute: JobsIndexRoute,
   WorkersIndexRoute: WorkersIndexRoute,
 }
 export const routeTree = rootRouteImport

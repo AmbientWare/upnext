@@ -8,12 +8,11 @@ import json
 import logging
 from datetime import datetime
 
+from shared.workers import WORKER_KEY_PREFIX
+
 from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
-
-# Redis key prefix for workers (must match workers service)
-WORKER_KEY_PREFIX = "conduit:workers:"
 
 
 async def get_queue_stats() -> tuple[int, int]:
@@ -33,7 +32,7 @@ async def get_queue_stats() -> tuple[int, int]:
         latest_heartbeat: datetime | None = None
 
         # Scan all worker keys and aggregate stats
-        async for key in r.scan_iter(match=f"{WORKER_KEY_PREFIX}*", count=100):
+        async for key in r.scan_iter(match=f"{WORKER_KEY_PREFIX}:*", count=100):
             data = await r.get(key)
             if data:
                 worker_data = json.loads(data)

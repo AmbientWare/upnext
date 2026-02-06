@@ -13,7 +13,7 @@ import type {
   JobListResponse,
   JobStatsResponse,
   JobTrendsResponse,
-  Worker,
+  WorkerInstance,
   WorkersListResponse,
 } from "./types";
 
@@ -155,9 +155,9 @@ export async function getWorkers(): Promise<WorkersListResponse> {
   return handleResponse<WorkersListResponse>(response);
 }
 
-export async function getWorker(workerId: string): Promise<Worker> {
+export async function getWorker(workerId: string): Promise<WorkerInstance> {
   const response = await fetch(`${API_BASE}/workers/${workerId}`);
-  return handleResponse<Worker>(response);
+  return handleResponse<WorkerInstance>(response);
 }
 
 // =============================================================================
@@ -190,7 +190,7 @@ export async function getFunction(name: string): Promise<FunctionDetailResponse>
 // =============================================================================
 
 export async function getApis(): Promise<ApisListResponse> {
-  const response = await fetch(`${API_BASE}/endpoints`);
+  const response = await fetch(`${API_BASE}/apis`);
   return handleResponse<ApisListResponse>(response);
 }
 
@@ -204,7 +204,7 @@ export async function getApiTrends(params: GetApiTrendsParams = {}): Promise<Api
   if (params.hours !== undefined) searchParams.set('hours', String(params.hours));
 
   const query = searchParams.toString();
-  const url = `${API_BASE}/endpoints/trends${query ? `?${query}` : ''}`;
+  const url = `${API_BASE}/apis/trends${query ? `?${query}` : ''}`;
 
   const response = await fetch(url);
   return handleResponse<ApiTrendsResponse>(response);

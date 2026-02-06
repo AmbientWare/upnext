@@ -22,14 +22,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # API server URL (for job tracking/dashboard, used when backend="api")
-    # Default to localhost for dev, override with CONDUIT_URL for cloud
+    debug: bool = False
+
+    # Conduit server URL (for dashboard)
     url: str = "http://localhost:8000"
 
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
 
-    # API key for authenticated access (required for backend="api" in production)
+    # API key for authenticated access
     api_key: str | None = None
 
     # Environment mode

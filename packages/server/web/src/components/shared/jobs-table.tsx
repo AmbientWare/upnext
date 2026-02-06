@@ -2,6 +2,14 @@ import { formatDuration, formatTimeAgo } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
 import { ProgressBar } from "./progress-bar";
 import type { Job } from "@/lib/types";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 interface JobsTableProps {
   jobs: Job[];
@@ -10,47 +18,47 @@ interface JobsTableProps {
 
 export function JobsTable({ jobs, onJobClick }: JobsTableProps) {
   return (
-    <table className="w-full">
-      <thead className="sticky top-0 bg-[#141414]">
-        <tr className="text-[10px] text-[#666] uppercase tracking-wider">
-          <th className="matrix-cell px-3 py-2 text-left font-medium">ID</th>
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Function</th>
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Status</th>
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Duration</th>
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Worker</th>
-          <th className="matrix-cell px-3 py-2 text-left font-medium">Age</th>
-          <th className="px-3 py-2 text-left font-medium">Progress</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table>
+      <TableHeader className="sticky top-0 z-10 bg-[#141414]">
+        <TableRow className="text-[10px] text-[#666] uppercase tracking-wider border-[#2a2a2a] hover:bg-transparent">
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">ID</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Function</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Status</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Duration</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Worker</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Age</TableHead>
+          <TableHead className="text-[10px] text-[#666] font-medium h-8">Progress</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {jobs.map((job) => (
-          <tr
+          <TableRow
             key={job.id}
             onClick={() => onJobClick?.(job)}
-            className="matrix-row hover:bg-[#1a1a1a] transition-colors cursor-pointer"
+            className="border-[#1e1e1e] hover:bg-[#1a1a1a] cursor-pointer"
           >
-            <td className="matrix-cell px-3 py-1.5 mono text-[11px] text-[#888]">{job.id.slice(0, 12)}</td>
-            <td className="matrix-cell px-3 py-1.5 text-[11px]">{job.function}</td>
-            <td className="matrix-cell px-3 py-1.5">
+            <TableCell className="mono text-[11px] text-[#888] py-1.5">{job.id.slice(0, 12)}</TableCell>
+            <TableCell className="text-[11px] py-1.5">{job.function}</TableCell>
+            <TableCell className="py-1.5">
               <StatusBadge status={job.status} />
-            </td>
-            <td className="matrix-cell px-3 py-1.5 mono text-[11px] text-[#888]">
-              {job.duration_ms ? formatDuration(job.duration_ms) : "—"}
-            </td>
-            <td className="matrix-cell px-3 py-1.5 mono text-[11px] text-[#666]">{job.worker_id || "—"}</td>
-            <td className="matrix-cell px-3 py-1.5 text-[11px] text-[#666]">
-              {job.scheduled_at ? formatTimeAgo(new Date(job.scheduled_at)) : "—"}
-            </td>
-            <td className="px-3 py-1.5">
+            </TableCell>
+            <TableCell className="mono text-[11px] text-[#888] py-1.5">
+              {job.duration_ms ? formatDuration(job.duration_ms) : "\u2014"}
+            </TableCell>
+            <TableCell className="mono text-[11px] text-[#666] py-1.5">{job.worker_id || "\u2014"}</TableCell>
+            <TableCell className="text-[11px] text-[#666] py-1.5">
+              {job.scheduled_at ? formatTimeAgo(new Date(job.scheduled_at)) : "\u2014"}
+            </TableCell>
+            <TableCell className="py-1.5">
               {job.status === "active" && job.progress !== undefined && job.progress > 0 ? (
                 <ProgressBar value={job.progress * 100} showLabel size="sm" />
               ) : (
-                <span className="text-[#333]">—</span>
+                <span className="text-[#333]">{"\u2014"}</span>
               )}
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }

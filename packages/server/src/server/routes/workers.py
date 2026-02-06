@@ -1,22 +1,18 @@
-"""Worker registration routes using Redis for state."""
+"""Worker routes - reads worker data from Redis."""
 
 import logging
 
 from fastapi import APIRouter, HTTPException
-from server.services import (
-    deregister_worker,
-    get_function_definitions,
-    get_worker,
-    heartbeat_worker,
-    list_workers,
-    register_worker,
-)
-from shared.events import WorkerDeregisterRequest, WorkerRegisterRequest
 from shared.schemas import (
-    HeartbeatRequest,
-    Worker,
-    WorkerResponse,
+    WorkerInfo,
+    WorkerInstance,
     WorkersListResponse,
+)
+
+from server.services.workers import (
+    get_worker_definitions,
+    get_worker_instance,
+    list_worker_instances,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,93 +20,56 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workers", tags=["workers"])
 
 
-@router.post("/register", response_model=WorkerResponse)
-async def register_worker_route(request: WorkerRegisterRequest) -> WorkerResponse:
-    """
-    Register a worker with the API.
-
-    Stores worker data in Redis with TTL. Worker must send heartbeats
-    to stay registered.
-    """
-    # Convert function definitions to dicts
-    func_defs = [fd.model_dump() for fd in request.function_definitions]
-
-    await register_worker(
-        worker_id=request.worker_id,
-        worker_name=request.worker_name,
-        started_at=request.started_at,
-        functions=request.functions,
-        concurrency=request.concurrency,
-        hostname=request.hostname,
-        version=request.version,
-        function_definitions=func_defs,
-    )
-
-    logger.info(
-        f"Worker registered: {request.worker_id} ({request.worker_name}) "
-        f"with {len(request.function_definitions)} functions"
-    )
-
-    return WorkerResponse(
-        worker_id=request.worker_id,
-        status="registered",
-    )
-
-
-@router.post("/heartbeat", response_model=WorkerResponse)
-async def worker_heartbeat_route(request: HeartbeatRequest) -> WorkerResponse:
-    """
-    Update worker heartbeat - refreshes TTL.
-
-    Workers should call this every 5 seconds to stay registered.
-    """
-    success = await heartbeat_worker(
-        worker_id=request.worker_id,
-        active_jobs=request.active_jobs,
-        jobs_processed=request.jobs_processed,
-        jobs_failed=request.jobs_failed,
-        queued_jobs=request.queued_jobs,
-    )
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Worker not registered")
-
-    return WorkerResponse(worker_id=request.worker_id, status="ok")
-
-
-@router.post("/deregister", response_model=WorkerResponse)
-async def deregister_worker_route(request: WorkerDeregisterRequest) -> WorkerResponse:
-    """
-    Deregister a worker from the API.
-
-    Called when a worker shuts down gracefully. Also happens automatically
-    when TTL expires if worker crashes.
-    """
-    await deregister_worker(request.worker_id)
-
-    return WorkerResponse(
-        worker_id=request.worker_id,
-        status="deregistered",
-    )
-
-
 @router.get("", response_model=WorkersListResponse)
 async def list_workers_route() -> WorkersListResponse:
-    """List all active workers."""
-    workers = await list_workers()
+    """List all workers with active instances, matching API pattern."""
+    worker_defs = await get_worker_definitions()
+    all_instances = await list_worker_instances()
+
+    # Group instances by worker_name
+    instances_by_name: dict[str, list[WorkerInstance]] = {}
+    for inst in all_instances:
+        instances_by_name.setdefault(inst.worker_name, []).append(inst)
+
+    workers: list[WorkerInfo] = []
+
+    # Build from persistent definitions (always shown, even when inactive)
+    for name, defn in worker_defs.items():
+        instances = instances_by_name.pop(name, [])
+        workers.append(
+            WorkerInfo(
+                name=name,
+                active=bool(instances),
+                instance_count=len(instances),
+                instances=instances,
+                functions=defn.get("functions", []),
+                concurrency=defn.get("concurrency", 0),
+            )
+        )
+
+    # Also include workers with live instances but no persistent definition yet
+    for name, instances in instances_by_name.items():
+        first = instances[0]
+        workers.append(
+            WorkerInfo(
+                name=name,
+                active=True,
+                instance_count=len(instances),
+                instances=instances,
+                functions=first.functions,
+                concurrency=first.concurrency,
+            )
+        )
+
     return WorkersListResponse(workers=workers, total=len(workers))
 
 
-@router.get("/{worker_id}", response_model=Worker)
-async def get_worker_route(worker_id: str) -> Worker:
-    """Get a specific worker by ID."""
-    worker = await get_worker(worker_id)
+@router.get("/{worker_id}", response_model=WorkerInstance)
+async def get_worker_route(worker_id: str) -> WorkerInstance:
+    """Get a specific worker instance by ID."""
+    instance = await get_worker_instance(worker_id)
 
-    if not worker:
+    if not instance:
         raise HTTPException(status_code=404, detail=f"Worker {worker_id} not found")
 
-    return worker
-
-
-# Re-export for other routes that need it
-__all__ = ["router", "get_function_definitions"]
+    return instance

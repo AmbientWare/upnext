@@ -63,6 +63,22 @@ class JobStatsResponse(BaseModel):
     avg_duration_ms: float | None = None
 
 
+class JobTrendHour(BaseModel):
+    """Hourly job counts by status."""
+
+    hour: str  # ISO format: "2024-01-15T14:00:00Z"
+    complete: int = 0
+    failed: int = 0
+    retrying: int = 0
+    active: int = 0
+
+
+class JobTrendsResponse(BaseModel):
+    """Job trends response."""
+
+    hourly: list[JobTrendHour]
+
+
 # =============================================================================
 # Artifact Schemas
 # =============================================================================
@@ -124,50 +140,128 @@ class Run(BaseModel):
 # =============================================================================
 
 
-class Worker(BaseModel):
-    """Worker model."""
+class WorkerInstance(BaseModel):
+    """Worker instance model (registered via Redis heartbeat)."""
 
     id: str
+    worker_name: str
     started_at: str
     last_heartbeat: str
-    functions: list[str]
-    concurrency: int
-    active_jobs: int
-    jobs_processed: int
-    jobs_failed: int
+    functions: list[str] = []
+    concurrency: int = 1
+    active_jobs: int = 0
+    jobs_processed: int = 0
+    jobs_failed: int = 0
     hostname: str | None = None
-    version: str | None = None
 
 
-class WorkerResponse(BaseModel):
-    """Worker operation response."""
+class WorkerInfo(BaseModel):
+    """Worker-level aggregate info (grouped by worker name)."""
 
-    worker_id: str
-    status: str
+    name: str
+    active: bool = False
+    instance_count: int = 0
+    instances: list[WorkerInstance] = []
+    functions: list[str] = []
+    concurrency: int = 0
 
 
 class WorkersListResponse(BaseModel):
     """Workers list response."""
 
-    workers: list[Worker]
+    workers: list[WorkerInfo]
     total: int
-
-
-class HeartbeatRequest(BaseModel):
-    """Heartbeat request from worker."""
-
-    worker_id: str
-    active_jobs: int = 0
-    jobs_processed: int = 0
-    jobs_failed: int = 0
-    # Queue stats (worker reads from Redis and reports)
-    queued_jobs: int = 0
 
 
 class WorkerStats(BaseModel):
     """Worker statistics."""
 
     total: int
+
+
+# =============================================================================
+# API Instance Schemas
+# =============================================================================
+
+
+class ApiInstance(BaseModel):
+    """API instance model (registered via Redis heartbeat)."""
+
+    id: str
+    api_name: str
+    started_at: str
+    last_heartbeat: str
+    host: str = "0.0.0.0"
+    port: int = 8000
+    endpoints: list[str] = []
+    hostname: str | None = None
+
+
+HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+
+class ApiEndpoint(BaseModel):
+    """API endpoint info."""
+
+    method: HttpMethod
+    path: str
+    requests_24h: int = 0
+    avg_latency_ms: float = 0.0
+    p50_latency_ms: float = 0.0
+    p95_latency_ms: float = 0.0
+    p99_latency_ms: float = 0.0
+    error_rate: float = 0.0
+    last_request_at: str | None = None
+
+
+class ApiInfo(BaseModel):
+    """API-level aggregate info (grouped by API name)."""
+
+    name: str
+    active: bool = False
+    instance_count: int = 0
+    instances: list[ApiInstance] = []
+    endpoint_count: int = 0
+    requests_24h: int = 0
+    avg_latency_ms: float = 0.0
+    error_rate: float = 0.0
+    requests_per_min: float = 0.0
+
+
+class ApisListResponse(BaseModel):
+    """APIs list response."""
+
+    apis: list[ApiInfo]
+    total: int
+
+
+class EndpointsListResponse(BaseModel):
+    """Endpoints list response (per-endpoint detail)."""
+
+    endpoints: list[ApiEndpoint]
+    total: int
+
+
+class ApiDetailResponse(ApiEndpoint):
+    """API endpoint detail response."""
+
+    hourly_stats: list = []
+    recent_errors: list = []
+
+
+class ApiTrendHour(BaseModel):
+    """Hourly API response counts by status category."""
+
+    hour: str
+    success_2xx: int = 0
+    client_4xx: int = 0
+    server_5xx: int = 0
+
+
+class ApiTrendsResponse(BaseModel):
+    """API trends response."""
+
+    hourly: list[ApiTrendHour]
 
 
 # =============================================================================
@@ -180,6 +274,7 @@ class FunctionInfo(BaseModel):
 
     name: str
     type: FunctionType
+    active: bool = False
     # Task config
     timeout: int | None = None
     max_retries: int | None = None
@@ -195,6 +290,8 @@ class FunctionInfo(BaseModel):
     batch_size: int | None = None
     batch_timeout: float | None = None
     max_concurrency: int | None = None
+    # Workers currently handling this function
+    workers: list[str] = []
     # Stats
     runs_24h: int = 0
     success_rate: float = 100.0

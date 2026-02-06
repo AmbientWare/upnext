@@ -111,41 +111,6 @@ class BatchEventRequest(BaseModel):
     worker_id: str | None = None
 
 
-class FunctionDefinition(BaseModel):
-    """Function definition sent during worker registration."""
-
-    name: str
-    type: str  # "task", "cron", "event"
-    # Task config
-    timeout: float | None = None
-    max_retries: int = 0
-    retry_delay: float = 1.0
-    # Cron config
-    schedule: str | None = None
-    timezone: str | None = None
-    # Event config
-    pattern: str | None = None
-
-
-class WorkerRegisterRequest(BaseModel):
-    """Worker registration request."""
-
-    worker_id: str
-    worker_name: str
-    started_at: datetime
-    functions: list[str] = []
-    function_definitions: list[FunctionDefinition] = []
-    concurrency: int = 10
-    hostname: str | None = None
-    version: str | None = None
-
-
-class WorkerDeregisterRequest(BaseModel):
-    """Worker deregistration request."""
-
-    worker_id: str
-
-
 class HealthResponse(BaseModel):
     """Health check response."""
 

@@ -13,14 +13,13 @@ from conduit.sdk import (
     create_artifact_sync,
     get_current_context,
 )
-from conduit.types import BackendType, SyncExecutor
+from conduit.types import SyncExecutor
 
 __all__ = [
     "Api",
     "ArtifactType",
     "Context",
     "Worker",
-    "BackendType",
     "SyncExecutor",
     "create_artifact",
     "create_artifact_sync",
