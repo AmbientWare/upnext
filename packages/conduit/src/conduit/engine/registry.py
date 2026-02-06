@@ -61,6 +61,7 @@ class EventDefinition:
     retries: int = 0
     retry_delay: float = 1.0
     retry_backoff: float = 2.0
+    timeout: float = 30 * 60  # 30 minutes
 
 
 @dataclass
@@ -71,7 +72,7 @@ class CronDefinition:
     func: Callable[..., Any]
     is_async: bool
     name: str | None = None
-    timeout: float | None = None  # Execution timeout in seconds
+    timeout: float = 30 * 60  # 30 minutes
 
 
 @dataclass
@@ -143,7 +144,7 @@ class Registry:
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
-        timeout: float | None = None,
+        timeout: float = 30 * 60,  # 30 minutes
         cache_key: str | None = None,
         cache_ttl: int | None = None,
         on_start: Callable[..., Any] | None = None,
@@ -205,6 +206,7 @@ class Registry:
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
+        timeout: float = 30 * 60,  # 30 minutes
     ) -> EventDefinition:
         """Register an event."""
         definition = EventDefinition(
@@ -215,9 +217,10 @@ class Registry:
             retries=retries,
             retry_delay=retry_delay,
             retry_backoff=retry_backoff,
+            timeout=timeout,
         )
 
-        # Register by name for worker lookup (with retry config)
+        # Register by name for worker lookup (with retry/timeout config)
         self._tasks[name] = TaskDefinition(
             name=name,
             func=func,
@@ -225,6 +228,7 @@ class Registry:
             retries=retries,
             retry_delay=retry_delay,
             retry_backoff=retry_backoff,
+            timeout=timeout,
         )
 
         # Register by event pattern for routing
@@ -240,7 +244,7 @@ class Registry:
         func: Callable[..., Any],
         *,
         name: str | None = None,
-        timeout: float | None = None,
+        timeout: float = 30 * 60,  # 30 minutes
     ) -> CronDefinition:
         """Register a cron job."""
         job_name = name or func.__name__

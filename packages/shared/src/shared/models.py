@@ -142,7 +142,6 @@ class Job:
 
     # Cron scheduling
     schedule: str | None = None
-    timezone: str = "UTC"
 
     # State history
     state_history: list[StateTransition] = field(default_factory=list)
@@ -194,7 +193,6 @@ class Job:
             "error": self.error,
             "error_traceback": self.error_traceback,
             "schedule": self.schedule,
-            "timezone": self.timezone,
             "state_history": [t.to_dict() for t in self.state_history],
         }
 
@@ -231,7 +229,6 @@ class Job:
             error=data.get("error"),
             error_traceback=data.get("error_traceback"),
             schedule=data.get("schedule"),
-            timezone=data.get("timezone", "UTC"),
             state_history=[
                 StateTransition.from_dict(t) for t in data.get("state_history", [])
             ],

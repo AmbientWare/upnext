@@ -7,8 +7,7 @@ import {
   getJobs,
   queryKeys,
 } from "@/lib/conduit-api";
-import { JobsTable } from "@/components/shared";
-import { Panel } from "@/components/shared";
+import { JobsTablePanel } from "@/components/shared";
 import { SystemOverviewPanel } from "./-components/system-overview-panel";
 import { TrendsPanel } from "./-components/trends-panel";
 import { ApiTrendsPanel } from "./-components/api-trends-panel";
@@ -63,15 +62,7 @@ function DataMatrixDashboard() {
       </div>
 
       {/* Recent Jobs */}
-      <Panel title="Recent Jobs" className="flex-1 min-h-64 flex flex-col overflow-hidden" contentClassName="flex-1 overflow-hidden">
-        {jobs.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-            No jobs found
-          </div>
-        ) : (
-          <JobsTable jobs={jobs} />
-        )}
-      </Panel>
+      <JobsTablePanel jobs={jobs} showFilters />
     </div>
   );
 }

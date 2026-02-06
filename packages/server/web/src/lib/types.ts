@@ -128,15 +128,9 @@ export interface FunctionInfo {
   retry_delay: number | null;
   // Cron config
   schedule: string | null;
-  timezone: string | null;
   next_run_at: string | null;
   // Event config
   pattern: string | null;
-  // Stream config
-  source: string | null;
-  batch_size: number | null;
-  batch_timeout: number | null;
-  max_concurrency: number | null;
   // Workers currently handling this function
   workers: string[];
   // Stats
@@ -146,9 +140,6 @@ export interface FunctionInfo {
   p95_duration_ms: number | null;
   last_run_at: string | null;
   last_run_status: string | null;
-  // Stream-specific stats
-  events_processed_24h: number | null;
-  batches_24h: number | null;
 }
 
 export interface FunctionsListResponse {
@@ -156,15 +147,8 @@ export interface FunctionsListResponse {
   total: number;
 }
 
-export interface HourlyStat {
-  hour: string;
-  success: number;
-  failure: number;
-}
-
 export interface FunctionDetailResponse extends FunctionInfo {
   recent_runs: Run[];
-  hourly_stats: HourlyStat[];
 }
 
 // =============================================================================

@@ -1,6 +1,7 @@
 """Functions routes - aggregate stats from jobs table."""
 
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -10,7 +11,6 @@ from shared.schemas import (
     FunctionInfo,
     FunctionsListResponse,
     FunctionType,
-    HourlyStat,
     Run,
 )
 
@@ -40,19 +40,14 @@ def _build_function_info(
     """Build a FunctionInfo from a config dict and stats."""
     return FunctionInfo(
         name=name,
-        type=config.get("type", "task"),
+        type=config.get("type", FunctionType.TASK),
         active=active,
         timeout=config.get("timeout"),
         max_retries=config.get("max_retries"),
         retry_delay=config.get("retry_delay"),
         schedule=config.get("schedule"),
-        timezone=config.get("timezone"),
         next_run_at=config.get("next_run_at"),
         pattern=config.get("pattern"),
-        source=config.get("source"),
-        batch_size=config.get("batch_size"),
-        batch_timeout=config.get("batch_timeout"),
-        max_concurrency=config.get("max_concurrency"),
         workers=workers or [],
         runs_24h=runs_24h,
         success_rate=success_rate,
@@ -60,8 +55,6 @@ def _build_function_info(
         p95_duration_ms=p95_duration_ms,
         last_run_at=last_run_at,
         last_run_status=last_run_status,
-        events_processed_24h=config.get("events_processed_24h"),
-        batches_24h=config.get("batches_24h"),
     )
 
 
@@ -106,7 +99,7 @@ async def list_functions(
     handler_to_event: dict[str, tuple[str, dict]] = {}
     event_patterns_with_handlers: set[str] = set()
     for name, config in func_defs.items():
-        if config.get("type") == "event" and config.get("handlers"):
+        if config.get("type") == FunctionType.EVENT and config.get("handlers"):
             event_patterns_with_handlers.add(name)
             for handler_name in config["handlers"]:
                 handler_to_event[handler_name] = (name, config)
@@ -137,9 +130,9 @@ async def list_functions(
                 if name in handler_to_event:
                     _, func_config = handler_to_event[name]
                 else:
-                    func_config = func_defs.get(name, {"type": "task"})
+                    func_config = func_defs.get(name, {"type": FunctionType.TASK})
 
-                func_type = func_config.get("type", "task")
+                func_type = func_config.get("type", FunctionType.TASK)
                 if type and func_type != type:
                     continue
 
@@ -162,7 +155,7 @@ async def list_functions(
 
             # Also add registered functions with no runs
             for name, config in func_defs.items():
-                func_type = config.get("type", "task")
+                func_type = config.get("type", FunctionType.TASK)
                 if type and func_type != type:
                     continue
 
@@ -191,7 +184,7 @@ async def list_functions(
     except RuntimeError:
         # Database not available - return registered functions only
         for name, config in func_defs.items():
-            func_type = config.get("type", "task")
+            func_type = config.get("type", FunctionType.TASK)
             if type and func_type != type:
                 continue
 
@@ -223,148 +216,116 @@ async def list_functions(
 
 @router.get("/{name}", response_model=FunctionDetailResponse)
 async def get_function(name: str) -> FunctionDetailResponse:
-    """
-    Get detailed info for a specific function.
-
-    Includes recent runs and hourly stats.
-    """
+    """Get detailed info for a specific function."""
     now = datetime.now(UTC)
     day_ago = now - timedelta(hours=24)
 
     # Fetch function definitions and active workers from Redis
     func_defs = await get_function_definitions()
     active_workers = await list_worker_instances()
-    func_config = func_defs.get(name, {"type": "task"})
-    func_type = func_config.get("type", "task")
 
-    # Active if any live worker lists this function
-    is_active = any(name in w.functions for w in active_workers)
+    # If this is an event handler name, resolve to the parent event config
+    func_config = func_defs.get(name, {"type": FunctionType.TASK})
+    for _pattern, config in func_defs.items():
+        if config.get("type") == FunctionType.EVENT and name in config.get("handlers", []):
+            func_config = config
+            break
+    func_type = func_config.get("type", FunctionType.TASK)
 
+    # Build worker labels for this function
+    worker_counts: dict[str, int] = {}
+    for w in active_workers:
+        if name in w.functions:
+            label = w.worker_name or w.hostname or w.id[:8]
+            worker_counts[label] = worker_counts.get(label, 0) + 1
+
+    worker_labels = [
+        f"{label} ({count})" if count > 1 else label
+        for label, count in worker_counts.items()
+    ]
+    is_active = len(worker_labels) > 0
+
+    # Defaults
+    runs_24h = 0
+    success_rate = 100.0
+    avg_duration_ms = 0.0
+    p95_duration_ms: float | None = None
+    last_run_at: str | None = None
+    last_run_status: str | None = None
     recent_runs: list[Run] = []
-    hourly_stats: list[HourlyStat] = []
-
-    # Initialize hourly buckets
-    hourly_buckets: dict[str, dict[str, int]] = {}
-    for i in range(24):
-        hour = (now - timedelta(hours=i)).strftime("%Y-%m-%dT%H:00:00Z")
-        hourly_buckets[hour] = {"success": 0, "failure": 0}
 
     try:
         db = get_database()
         async with db.session() as session:
             repo = JobRepository(session)
 
-            # Get recent jobs for this function
-            jobs = await repo.list_jobs(function=name, start_date=day_ago, limit=100)
+            # Accurate counts via SQL aggregation (not capped by LIMIT)
+            stats = await repo.get_stats(function=name, start_date=day_ago)
+            runs_24h = stats["total"]
+            success_rate = round(stats["success_rate"], 1)
 
-            runs = 0
-            successes = 0
-            total_duration_ms = 0
-            duration_count = 0
-            last_run_at = None
-            last_run_status = None
+            # All durations (pre-sorted) for avg + p95
+            durations = await repo.get_durations(
+                function=name, start_date=day_ago
+            )
+            if durations:
+                avg_duration_ms = round(sum(durations) / len(durations), 2)
+                p95_idx = min(
+                    math.ceil(len(durations) * 0.95) - 1, len(durations) - 1
+                )
+                p95_duration_ms = round(durations[p95_idx], 2)
+
+            # Recent runs for the table (also gives us last run info)
+            jobs = await repo.list_jobs(function=name, limit=20)
+            if jobs:
+                first = jobs[0]
+                run_time = first.completed_at or first.started_at or first.created_at
+                if run_time:
+                    last_run_at = run_time.isoformat()
+                last_run_status = first.status
 
             for job in jobs:
-                runs += 1
-
-                # Track success/failure
-                if job.status == "complete":
-                    successes += 1
-                    # Add to hourly bucket
-                    if job.completed_at:
-                        hour = job.completed_at.strftime("%Y-%m-%dT%H:00:00Z")
-                        if hour in hourly_buckets:
-                            hourly_buckets[hour]["success"] += 1
-                elif job.status == "failed":
-                    if job.completed_at:
-                        hour = job.completed_at.strftime("%Y-%m-%dT%H:00:00Z")
-                        if hour in hourly_buckets:
-                            hourly_buckets[hour]["failure"] += 1
-
-                # Calculate duration
                 duration_ms = None
                 if job.started_at and job.completed_at:
                     duration_ms = (
                         job.completed_at - job.started_at
                     ).total_seconds() * 1000
-                    total_duration_ms += duration_ms
-                    duration_count += 1
 
-                # Track last run
-                run_time = job.completed_at or job.started_at or job.created_at
-                if run_time and (
-                    last_run_at is None or run_time.isoformat() > last_run_at
-                ):
-                    last_run_at = run_time.isoformat()
-                    last_run_status = job.status
-
-                # Add to recent runs (limit to 20)
-                if len(recent_runs) < 20:
-                    recent_runs.append(
-                        Run(
-                            id=job.id,
-                            function=job.function,
-                            status=job.status,
-                            started_at=job.started_at.isoformat()
-                            if job.started_at
-                            else None,
-                            completed_at=job.completed_at.isoformat()
-                            if job.completed_at
-                            else None,
-                            duration_ms=duration_ms,
-                            error=job.error,
-                        )
-                    )
-
-            success_rate = (successes / runs * 100) if runs > 0 else 100.0
-            avg_duration = (
-                (total_duration_ms / duration_count) if duration_count > 0 else 0
-            )
-
-            # Convert hourly buckets to list (sorted by hour, most recent first)
-            for hour in sorted(hourly_buckets.keys(), reverse=True):
-                hourly_stats.append(
-                    HourlyStat(
-                        hour=hour,
-                        success=hourly_buckets[hour]["success"],
-                        failure=hourly_buckets[hour]["failure"],
+                recent_runs.append(
+                    Run(
+                        id=job.id,
+                        function=job.function,
+                        status=job.status,
+                        started_at=job.started_at.isoformat()
+                        if job.started_at
+                        else None,
+                        completed_at=job.completed_at.isoformat()
+                        if job.completed_at
+                        else None,
+                        duration_ms=duration_ms,
+                        error=job.error,
                     )
                 )
 
-            return FunctionDetailResponse(
-                name=name,
-                type=func_type,
-                active=is_active,
-                timeout=func_config.get("timeout"),
-                max_retries=func_config.get("max_retries"),
-                retry_delay=func_config.get("retry_delay"),
-                schedule=func_config.get("schedule"),
-                timezone=func_config.get("timezone"),
-                next_run_at=func_config.get("next_run_at"),
-                pattern=func_config.get("pattern"),
-                source=func_config.get("source"),
-                batch_size=func_config.get("batch_size"),
-                batch_timeout=func_config.get("batch_timeout"),
-                max_concurrency=func_config.get("max_concurrency"),
-                runs_24h=runs,
-                success_rate=round(success_rate, 1),
-                avg_duration_ms=round(avg_duration, 2),
-                p95_duration_ms=None,
-                last_run_at=last_run_at,
-                last_run_status=last_run_status,
-                recent_runs=recent_runs,
-                hourly_stats=hourly_stats,
-            )
-
     except RuntimeError:
-        # Database not available
-        return FunctionDetailResponse(
-            name=name,
-            type=func_type,
-            active=is_active,
-            runs_24h=0,
-            success_rate=100.0,
-            avg_duration_ms=0,
-            recent_runs=[],
-            hourly_stats=[],
-        )
+        pass
+
+    return FunctionDetailResponse(
+        name=name,
+        type=func_type,
+        active=is_active,
+        workers=worker_labels,
+        timeout=func_config.get("timeout"),
+        max_retries=func_config.get("max_retries"),
+        retry_delay=func_config.get("retry_delay"),
+        schedule=func_config.get("schedule"),
+        next_run_at=func_config.get("next_run_at"),
+        pattern=func_config.get("pattern"),
+        runs_24h=runs_24h,
+        success_rate=success_rate,
+        avg_duration_ms=avg_duration_ms,
+        p95_duration_ms=p95_duration_ms,
+        last_run_at=last_run_at,
+        last_run_status=last_run_status,
+        recent_runs=recent_runs,
+    )

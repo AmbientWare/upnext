@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
@@ -195,6 +195,8 @@ function FunctionsPage() {
 }
 
 function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
+  const navigate = useNavigate();
+
   return (
     <Table>
       <TableHeader className="sticky top-0 z-10 bg-card">
@@ -212,7 +214,11 @@ function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
       </TableHeader>
       <TableBody>
         {functions.map((fn) => (
-          <TableRow key={fn.name} className="border-border hover:bg-accent">
+          <TableRow
+            key={fn.name}
+            className="border-border hover:bg-accent cursor-pointer"
+            onClick={() => navigate({ to: "/functions/$name", params: { name: fn.name } })}
+          >
             <TableCell className="py-2">
               <div className="flex items-center gap-2">
                 <Circle className={cn("w-2 h-2 shrink-0", fn.active ? "fill-emerald-400 text-emerald-400" : "fill-muted-foreground/60 text-muted-foreground/60")} />

@@ -36,6 +36,7 @@ class _Handler:
     retries: int = 0
     retry_delay: float = 1.0
     retry_backoff: float = 2.0
+    timeout: float = 30 * 60  # 30 minutes
 
 
 class TypedEvent(Generic[P]):
@@ -123,6 +124,7 @@ class EventHandle:
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
+        timeout: float = 30 * 60,  # 30 minutes
     ) -> Callable[[Callable[P, Any]], TypedEvent[P]]: ...
 
     def on(
@@ -132,6 +134,7 @@ class EventHandle:
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
+        timeout: float = 30 * 60,  # 30 minutes
     ) -> Any:
         """
         Subscribe a handler to this event.
@@ -160,6 +163,7 @@ class EventHandle:
                 retries=retries,
                 retry_delay=retry_delay,
                 retry_backoff=retry_backoff,
+                timeout=timeout,
             )
             self._handlers.append(handler)
 
@@ -170,6 +174,7 @@ class EventHandle:
                 retries=handler.retries,
                 retry_delay=handler.retry_delay,
                 retry_backoff=handler.retry_backoff,
+                timeout=handler.timeout,
             )
 
             # Return typed event for this handler

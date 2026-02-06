@@ -30,10 +30,9 @@ def calculate_next_cron_run(
     Args:
         schedule: Cron expression (5 or 6 fields)
         base_time: Time to calculate from (defaults to now)
-        timezone: Timezone for evaluation (currently uses UTC)
 
     Returns:
-        datetime of next run time (timezone-aware UTC)
+        datetime of next run time
 
     Examples:
         >>> # Every minute
@@ -66,10 +65,6 @@ def calculate_next_cron_run(
     if not isinstance(next_run, datetime):
         next_run = datetime.fromtimestamp(next_run, UTC)
 
-    # Ensure timezone-aware
-    if next_run.tzinfo is None:
-        next_run = next_run.replace(tzinfo=UTC)
-
     return next_run
 
 
@@ -85,7 +80,6 @@ def calculate_next_cron_timestamp(
     Args:
         schedule: Cron expression (5 or 6 fields)
         base_time: Time to calculate from (defaults to now)
-        timezone: Timezone for evaluation
 
     Returns:
         Unix timestamp of next run time
