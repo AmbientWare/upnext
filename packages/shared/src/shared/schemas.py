@@ -128,7 +128,6 @@ class Worker(BaseModel):
     """Worker model."""
 
     id: str
-    status: str  # 'healthy' | 'unhealthy' | 'stopped'
     started_at: str
     last_heartbeat: str
     functions: list[str]
@@ -169,8 +168,6 @@ class WorkerStats(BaseModel):
     """Worker statistics."""
 
     total: int
-    healthy: int
-    unhealthy: int
 
 
 # =============================================================================

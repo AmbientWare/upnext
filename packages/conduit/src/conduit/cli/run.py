@@ -55,11 +55,17 @@ def run(
 
     apis, workers = filter_components(apis, workers, only)
 
+    # Determine redis URL for display (from first worker that has one, or first API)
+    display_redis_url = next(
+        (w.resolved_redis_url for w in workers if w.resolved_redis_url), None
+    ) or next((a.redis_url for a in apis if a.redis_url), None)
+
     print_services_panel(
         apis,
         workers,
         title="conduit",
-        worker_line_fn=lambda w: worker_lines(w, redis_url=w.resolved_redis_url),
+        worker_line_fn=lambda w: worker_lines(w),
+        redis_url=display_redis_url,
     )
 
     try:

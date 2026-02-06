@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from server.db.repository import JobRepository
 from server.db.session import get_database
 from server.services import get_queue_stats, get_worker_stats
+from server.services.api_tracking import get_metrics_reader
 from shared.schemas import (
     ApiStats,
     DashboardStats,
@@ -121,11 +122,16 @@ async def get_dashboard_stats() -> DashboardStats:
     # Worker stats from Redis
     worker_stats = await get_worker_stats()
 
-    # API stats - not tracked yet, return defaults
+    # API stats from Redis hash buckets
+    try:
+        reader = await get_metrics_reader()
+        api_summary = await reader.get_summary()
+    except RuntimeError:
+        api_summary = {"requests_24h": 0, "avg_latency_ms": 0, "error_rate": 0}
     api_stats = ApiStats(
-        requests_24h=0,
-        avg_latency_ms=0.0,
-        error_rate=0.0,
+        requests_24h=api_summary["requests_24h"],
+        avg_latency_ms=api_summary["avg_latency_ms"],
+        error_rate=api_summary["error_rate"],
     )
 
     return DashboardStats(

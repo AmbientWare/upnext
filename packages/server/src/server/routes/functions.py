@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/functions", tags=["functions"])
 
 
-@router.get("/", response_model=FunctionsListResponse)
+@router.get("", response_model=FunctionsListResponse)
 async def list_functions(
     type: FunctionType | None = Query(None, description="Filter by function type"),
 ) -> FunctionsListResponse:

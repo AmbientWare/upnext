@@ -139,8 +139,8 @@ class JobProcessor:
 
     @property
     def active_jobs(self) -> int:
-        """Get number of active jobs."""
-        return len(self._tasks)
+        """Get number of jobs currently being executed."""
+        return len(self._active_jobs)
 
     @property
     def stats(self) -> dict[str, int]:
@@ -154,8 +154,8 @@ class JobProcessor:
 
     @property
     def active_job_count(self) -> int:
-        """Get number of currently active jobs."""
-        return len(self._tasks)
+        """Get number of jobs currently being executed."""
+        return len(self._active_jobs)
 
     @property
     def jobs_processed(self) -> int:

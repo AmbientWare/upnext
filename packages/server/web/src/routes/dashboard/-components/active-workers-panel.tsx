@@ -1,15 +1,21 @@
-import { cn, formatTimeAgo } from "@/lib/utils";
+import { formatTimeAgo } from "@/lib/utils";
 import { Panel, ProgressBar } from "@/components/shared";
-import type { Worker } from "@/lib/mock-data";
 
-interface ActiveWorkersPanelProps {
-  workers: Worker[];
+// Transformed worker type for display
+interface DisplayWorker {
+  id: string;
+  name: string;
+  functions: string[];
+  concurrency: number;
+  activeJobs: number;
+  jobsProcessed: number;
+  jobsFailed: number;
+  lastHeartbeat: Date;
 }
 
-const hostingStyles = {
-  managed: "bg-sky-500/20 text-sky-400",
-  "self-hosted": "bg-violet-500/20 text-violet-400",
-};
+interface ActiveWorkersPanelProps {
+  workers: DisplayWorker[];
+}
 
 export function ActiveWorkersPanel({ workers }: ActiveWorkersPanelProps) {
   return (
@@ -31,14 +37,7 @@ export function ActiveWorkersPanel({ workers }: ActiveWorkersPanelProps) {
         <tbody>
           {workers.map((worker) => (
             <tr key={worker.id} className="matrix-row hover:bg-[#1a1a1a] transition-colors">
-              <td className="matrix-cell px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <span className="mono text-[11px]">{worker.name}</span>
-                  <span className={cn("text-[8px] px-1 py-0.5 rounded font-medium", hostingStyles[worker.hosting])}>
-                    {worker.hosting === "self-hosted" ? "SH" : "M"}
-                  </span>
-                </div>
-              </td>
+              <td className="matrix-cell px-3 py-2 mono text-[11px]">{worker.name}</td>
               <td className="matrix-cell px-3 py-2">
                 <div className="flex items-center gap-2">
                   <ProgressBar

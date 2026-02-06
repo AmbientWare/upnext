@@ -13,8 +13,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TypeVar
 
+import redis.asyncio as aioredis
 import uvicorn
 from fastapi import APIRouter, FastAPI
+
+from conduit.sdk.middleware import ApiTrackingMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +54,18 @@ class Api:
         default_factory=lambda: os.environ.get("CONDUIT_DEBUG", "").lower() == "true"
     )
 
+    # Redis URL for API request tracking (auto-detected from CONDUIT_REDIS_URL)
+    redis_url: str | None = field(
+        default_factory=lambda: os.environ.get("CONDUIT_REDIS_URL")
+    )
+
     # Signal handling (set to False when signals are handled at a higher level)
     handle_signals: bool = True
 
     # Internal FastAPI app (created lazily)
     _app: FastAPI | None = field(default=None, init=False)
     _server: Any = field(default=None, init=False)
+    _redis: Any = field(default=None, init=False)
     _pending_routers: list[tuple["APIRouter", dict[str, Any]]] = field(
         default_factory=list, init=False
     )
@@ -281,6 +290,32 @@ class Api:
             self.app.include_router(router, **kwargs)
         self._pending_routers.clear()
 
+    async def _setup_tracking(self) -> None:
+        """Set up API request tracking via Redis hash buckets."""
+        if not self.redis_url:
+            return
+
+        try:
+            self._redis = aioredis.from_url(self.redis_url, decode_responses=True)
+            await self._redis.ping()
+        except Exception as e:
+            logger.debug(f"Redis not available for API tracking: {e}")
+            self._redis = None
+            return
+
+        self.app.add_middleware(
+            ApiTrackingMiddleware, api_name=self.name, redis_client=self._redis
+        )
+
+    async def _cleanup_tracking(self) -> None:
+        """Close Redis connection used for tracking."""
+        if self._redis:
+            try:
+                await self._redis.close()
+            except Exception:
+                pass
+            self._redis = None
+
     async def start(self) -> None:
         """
         Start the API server.
@@ -291,6 +326,9 @@ class Api:
 
         # Include any pending routers before starting
         self._include_pending_routers()
+
+        # Set up request tracking
+        await self._setup_tracking()
 
         logger.debug(f"Starting API '{self.name}' on {self.host}:{self.port}")
 
@@ -316,6 +354,9 @@ class Api:
         try:
             await self._server.serve()
         finally:
+            # Clean up tracking Redis connection
+            await self._cleanup_tracking()
+
             # Remove signal handlers
             if self.handle_signals:
                 loop = asyncio.get_running_loop()

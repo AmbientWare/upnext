@@ -33,23 +33,7 @@ async def register_worker_route(request: WorkerRegisterRequest) -> WorkerRespons
     to stay registered.
     """
     # Convert function definitions to dicts
-    func_defs = [
-        {
-            "name": fd.name,
-            "type": fd.type,
-            "timeout": fd.timeout,
-            "max_retries": fd.max_retries,
-            "retry_delay": fd.retry_delay,
-            "schedule": fd.schedule,
-            "timezone": fd.timezone,
-            "pattern": fd.pattern,
-            "source": fd.source,
-            "batch_size": fd.batch_size,
-            "batch_timeout": fd.batch_timeout,
-            "max_concurrency": fd.max_concurrency,
-        }
-        for fd in request.function_definitions
-    ]
+    func_defs = [fd.model_dump() for fd in request.function_definitions]
 
     await register_worker(
         worker_id=request.worker_id,
@@ -110,7 +94,7 @@ async def deregister_worker_route(request: WorkerDeregisterRequest) -> WorkerRes
     )
 
 
-@router.get("/", response_model=WorkersListResponse)
+@router.get("", response_model=WorkersListResponse)
 async def list_workers_route() -> WorkersListResponse:
     """List all active workers."""
     workers = await list_workers()

@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, useRef, useEffect } from "react";
-import { cn, type JobStatus, statusConfig } from "@/lib/utils";
-import { generateMockJobs } from "@/lib/mock-data";
+import { useQuery } from "@tanstack/react-query";
+import { cn, statusConfig } from "@/lib/utils";
+import { getJobs, getFunctions, queryKeys } from "@/lib/conduit-api";
+import type { JobStatus } from "@/lib/types";
 import { JobsTable, LiveIndicator } from "@/components/shared";
 import { Search, X, ChevronDown } from "lucide-react";
 
@@ -9,30 +11,53 @@ export const Route = createFileRoute("/jobs/")({
   component: JobsPage,
 });
 
-const statusOptions: JobStatus[] = ["pending", "queued", "active", "complete", "failed", "cancelled", "retrying"];
+const statusOptions: JobStatus[] = ["pending", "active", "complete", "failed", "cancelled", "retrying"];
 
 type TimePeriod = "live" | "1h" | "24h" | "7d" | "30d" | "all";
 
-const timePeriodOptions: { value: TimePeriod; label: string; ms: number; limit?: number }[] = [
-  { value: "live", label: "Live Feed", ms: 0, limit: 50 },
-  { value: "1h", label: "Last Hour", ms: 60 * 60 * 1000 },
-  { value: "24h", label: "Last 24 Hours", ms: 24 * 60 * 60 * 1000 },
-  { value: "7d", label: "Last 7 Days", ms: 7 * 24 * 60 * 60 * 1000 },
-  { value: "30d", label: "Last 30 Days", ms: 30 * 24 * 60 * 60 * 1000 },
-  { value: "all", label: "All Time", ms: 0 },
+const timePeriodOptions: { value: TimePeriod; label: string; hours?: number; limit?: number }[] = [
+  { value: "live", label: "Live Feed", limit: 50 },
+  { value: "1h", label: "Last Hour", hours: 1 },
+  { value: "24h", label: "Last 24 Hours", hours: 24 },
+  { value: "7d", label: "Last 7 Days", hours: 24 * 7 },
+  { value: "30d", label: "Last 30 Days", hours: 24 * 30 },
+  { value: "all", label: "All Time" },
 ];
 
 function JobsPage() {
-  const allJobs = useMemo(() => {
-    // Sort by scheduledAt descending (newer first)
-    return generateMockJobs(200).sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime());
-  }, []);
   const [search, setSearch] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<JobStatus | "">("");
   const [selectedFunction, setSelectedFunction] = useState<string>("");
   const [selectedTimePeriod, setSelectedTimePeriod] = useState<TimePeriod>("live");
   const [timePeriodOpen, setTimePeriodOpen] = useState(false);
   const timePeriodRef = useRef<HTMLDivElement>(null);
+
+  // Calculate query parameters based on filters
+  const isLive = selectedTimePeriod === "live";
+  const limit = isLive ? 50 : 200;
+
+  // Fetch jobs from API
+  const { data: jobsData, isFetching } = useQuery({
+    queryKey: queryKeys.jobs({
+      status: selectedStatus ? [selectedStatus] : undefined,
+      function: selectedFunction || undefined,
+      limit,
+    }),
+    queryFn: () =>
+      getJobs({
+        status: selectedStatus ? [selectedStatus] : undefined,
+        function: selectedFunction || undefined,
+        limit,
+      }),
+    refetchInterval: isLive ? 2000 : 30000, // Faster refresh for live mode
+  });
+
+  // Fetch functions list for filter dropdown
+  const { data: functionsData } = useQuery({
+    queryKey: queryKeys.functions(),
+    queryFn: () => getFunctions(),
+    staleTime: 60000, // Cache for 1 minute
+  });
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -45,51 +70,13 @@ function JobsPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Get unique function names
+  // Get function names from API
   const functionNames = useMemo(() => {
-    const names = new Set(allJobs.map((job) => job.function));
-    return Array.from(names).sort();
-  }, [allJobs]);
+    return functionsData?.functions.map((f) => f.name).sort() ?? [];
+  }, [functionsData]);
 
-  const filteredJobs = useMemo(() => {
-    let jobs = allJobs;
-
-    // Filter by search
-    if (search) {
-      const searchLower = search.toLowerCase();
-      jobs = jobs.filter(
-        (job) =>
-          job.id.toLowerCase().includes(searchLower) ||
-          job.function.toLowerCase().includes(searchLower) ||
-          job.workerId?.toLowerCase().includes(searchLower)
-      );
-    }
-
-    // Filter by status
-    if (selectedStatus) {
-      jobs = jobs.filter((job) => job.status === selectedStatus);
-    }
-
-    // Filter by function
-    if (selectedFunction) {
-      jobs = jobs.filter((job) => job.function === selectedFunction);
-    }
-
-    // Filter by time period
-    const period = timePeriodOptions.find((p) => p.value === selectedTimePeriod);
-    if (period) {
-      if (period.limit) {
-        // Live feed mode - just take the latest N jobs
-        jobs = jobs.slice(0, period.limit);
-      } else if (period.ms > 0) {
-        // Time-based filter
-        const cutoff = new Date(Date.now() - period.ms);
-        jobs = jobs.filter((job) => job.scheduledAt >= cutoff);
-      }
-    }
-
-    return jobs;
-  }, [allJobs, search, selectedStatus, selectedFunction, selectedTimePeriod]);
+  const jobs = jobsData?.jobs ?? [];
+  const totalJobs = jobsData?.total ?? 0;
 
   const clearFilters = () => {
     setSearch("");
@@ -163,7 +150,7 @@ function JobsPage() {
             className="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-md px-3 pr-8 text-sm text-[#e0e0e0] focus:outline-none focus:border-[#3a3a3a] min-w-[130px] h-[38px]"
           >
             {selectedTimePeriod === "live" ? (
-              <LiveIndicator label="Live Feed" size="md" />
+              <LiveIndicator label={isFetching ? "Updating..." : "Live Feed"} size="md" />
             ) : (
               <span>{timePeriodOptions.find((p) => p.value === selectedTimePeriod)?.label}</span>
             )}
@@ -172,22 +159,22 @@ function JobsPage() {
 
           {timePeriodOpen && (
             <div className="absolute top-full left-0 mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded-md py-1 min-w-full z-50 shadow-lg">
-              {timePeriodOptions.map((period) => (
+              {timePeriodOptions.map((p) => (
                 <button
-                  key={period.value}
+                  key={p.value}
                   onClick={() => {
-                    setSelectedTimePeriod(period.value);
+                    setSelectedTimePeriod(p.value);
                     setTimePeriodOpen(false);
                   }}
                   className={cn(
                     "w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[#252525] transition-colors",
-                    selectedTimePeriod === period.value ? "text-[#e0e0e0]" : "text-[#888]"
+                    selectedTimePeriod === p.value ? "text-[#e0e0e0]" : "text-[#888]"
                   )}
                 >
-                  {period.value === "live" ? (
+                  {p.value === "live" ? (
                     <LiveIndicator label="Live Feed" size="md" />
                   ) : (
-                    <span>{period.label}</span>
+                    <span>{p.label}</span>
                   )}
                 </button>
               ))}
@@ -210,16 +197,26 @@ function JobsPage() {
 
         {/* Results count */}
         <span className="text-xs text-[#555] mono">
-          {selectedTimePeriod === "live"
-            ? `Latest ${filteredJobs.length} jobs`
-            : `${filteredJobs.length} of ${allJobs.length} jobs`}
+          {isLive
+            ? `Latest ${jobs.length} jobs`
+            : `${jobs.length} of ${totalJobs} jobs`}
         </span>
       </div>
 
       {/* Jobs Table */}
       <div className="matrix-panel rounded flex-1 overflow-hidden">
         <div className="h-full overflow-auto">
-          <JobsTable jobs={filteredJobs} />
+          {jobs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-[#555]">
+              <div className="text-4xl mb-4">📋</div>
+              <div className="text-sm font-medium">No jobs found</div>
+              <div className="text-xs mt-1">
+                {hasFilters ? "Try adjusting your filters" : "Jobs will appear here when they are created"}
+              </div>
+            </div>
+          ) : (
+            <JobsTable jobs={jobs} />
+          )}
         </div>
       </div>
     </div>

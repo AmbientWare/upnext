@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Database connected (PostgreSQL)")
 
-    # Connect to Redis and start stream subscriber
+    # Connect to Redis and start stream subscribers
     subscriber = None
     redis_client = None
 
@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down Conduit API server...")
 
-    # Stop stream subscriber first
+    # Stop stream subscribers first
     if subscriber:
         await subscriber.stop()
 
@@ -106,12 +106,11 @@ if STATIC_DIR.exists():
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """Serve the SPA for all non-API routes."""
-        # Try to serve the requested file
         file_path = STATIC_DIR / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
-        # Fall back to index.html for SPA routing
         return FileResponse(STATIC_DIR / "index.html")
+
 else:
 
     @app.get("/")

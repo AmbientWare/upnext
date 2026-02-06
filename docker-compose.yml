@@ -69,6 +69,54 @@ services:
       retries: 3
       start_period: 10s
 
+  # =============================================================================
+  # Testing Profile - Example services for generating dashboard data
+  # Run with: docker compose --profile testing up
+  # =============================================================================
+
+  # Example worker + API service
+  example-service:
+    profiles: ["testing"]
+    build:
+      context: .
+      dockerfile: examples/Dockerfile
+    environment:
+      PYTHONUNBUFFERED: "1"
+      CONDUIT_REDIS_URL: redis://redis:6379
+      CONDUIT_URL: http://server:8080
+    volumes:
+      - ./examples:/app/examples
+      - ./packages/conduit/src:/app/packages/conduit/src
+      - ./packages/shared/src:/app/packages/shared/src
+    depends_on:
+      redis:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
+
+  # Traffic generator - submits jobs to the example service
+  example-client:
+    profiles: ["testing"]
+    build:
+      context: .
+      dockerfile: examples/Dockerfile
+    command: ["uv", "run", "python", "examples/client.py"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      API_URL: http://example-service:8001
+      INTERVAL_MIN: "0.3"
+      INTERVAL_MAX: "1.5"
+    volumes:
+      - ./examples:/app/examples
+      - ./packages/conduit/src:/app/packages/conduit/src
+      - ./packages/shared/src:/app/packages/shared/src
+    depends_on:
+      example-service:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   redis_data:
   postgres_data:

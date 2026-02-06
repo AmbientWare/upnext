@@ -1,22 +1,19 @@
 import { cn } from "@/lib/utils";
 import { Panel } from "@/components/shared";
-import type { Api } from "@/lib/mock-data";
 
-interface ActiveApisPanelProps {
-  apis: Api[];
-  className?: string;
+// Transformed API type for display
+interface DisplayApi {
+  name: string;
+  endpointCount: number;
+  requestsPerMin: number;
+  avgLatencyMs: number;
+  errorRate: number;
 }
 
-const statusColors = {
-  healthy: "bg-emerald-500",
-  degraded: "bg-amber-500",
-  down: "bg-red-500",
-};
-
-const hostingStyles = {
-  managed: "bg-sky-500/20 text-sky-400",
-  "self-hosted": "bg-violet-500/20 text-violet-400",
-};
+interface ActiveApisPanelProps {
+  apis: DisplayApi[];
+  className?: string;
+}
 
 export function ActiveApisPanel({ apis, className }: ActiveApisPanelProps) {
   const totalReqPerMin = apis.reduce((sum, a) => sum + a.requestsPerMin, 0);
@@ -39,21 +36,15 @@ export function ActiveApisPanel({ apis, className }: ActiveApisPanelProps) {
         </thead>
         <tbody>
           {apis.map((api) => (
-            <tr key={api.id} className="matrix-row hover:bg-[#1a1a1a] transition-colors">
+            <tr key={api.name} className="matrix-row hover:bg-[#1a1a1a] transition-colors">
               <td className="matrix-cell px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <div className={cn("w-2 h-2 rounded-full", statusColors[api.status])} />
-                  <span className="mono text-[11px] text-[#999]">{api.name}</span>
-                  <span className={cn("text-[8px] px-1 py-0.5 rounded font-medium", hostingStyles[api.hosting])}>
-                    {api.hosting === "self-hosted" ? "SH" : "M"}
-                  </span>
-                </div>
+                <span className="mono text-[11px] text-[#999]">{api.name}</span>
               </td>
               <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#888]">
                 {api.requestsPerMin.toLocaleString()}
               </td>
               <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#888]">
-                {api.avgLatencyMs}ms
+                {Math.round(api.avgLatencyMs)}ms
               </td>
               <td className="px-3 py-2 mono text-[11px]">
                 <span

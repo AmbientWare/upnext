@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Panel } from "@/components/shared";
 import { ChevronDown } from "lucide-react";
+import { getApiTrends, queryKeys } from "@/lib/conduit-api";
 
 type TimeRange = "24h" | "7d" | "30d";
-type Interval = "hour" | "day";
 
 interface ApiTrendsPanelProps {
   className?: string;
@@ -14,11 +15,6 @@ const timeRangeOptions: { value: TimeRange; label: string }[] = [
   { value: "24h", label: "24 Hours" },
   { value: "7d", label: "7 Days" },
   { value: "30d", label: "30 Days" },
-];
-
-const intervalOptions: { value: Interval; label: string }[] = [
-  { value: "hour", label: "Hourly" },
-  { value: "day", label: "Daily" },
 ];
 
 type ApiStatus = "2xx" | "4xx" | "5xx";
@@ -31,56 +27,44 @@ const apiStatusConfig: Record<ApiStatus, { label: string; color: string }> = {
 
 const stackedStatuses: ApiStatus[] = ["2xx", "4xx", "5xx"];
 
-function generateApiTrendData(range: TimeRange, interval: Interval) {
-  const now = new Date();
-  const data: { label: string; statuses: Record<ApiStatus, number> }[] = [];
-
-  let buckets: number;
-  if (range === "24h") {
-    buckets = interval === "hour" ? 24 : 1;
-  } else if (range === "7d") {
-    buckets = interval === "hour" ? 24 * 7 : 7;
-  } else {
-    buckets = interval === "hour" ? 24 * 30 : 30;
+// Convert time range to hours for API
+function timeRangeToHours(range: TimeRange): number {
+  switch (range) {
+    case "24h": return 24;
+    case "7d": return 24 * 7;
+    case "30d": return 24 * 30;
   }
-
-  const maxBars = interval === "hour" ? 24 : 30;
-  buckets = Math.min(buckets, maxBars);
-
-  for (let i = buckets - 1; i >= 0; i--) {
-    const date = new Date(now);
-    if (interval === "hour") {
-      date.setHours(date.getHours() - i);
-      data.push({
-        label: date.getHours().toString().padStart(2, "0") + ":00",
-        statuses: {
-          "2xx": Math.floor(Math.random() * 500) + 200,
-          "4xx": Math.floor(Math.random() * 30) + 5,
-          "5xx": Math.floor(Math.random() * 10),
-        },
-      });
-    } else {
-      date.setDate(date.getDate() - i);
-      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-      data.push({
-        label: dayNames[date.getDay()],
-        statuses: {
-          "2xx": Math.floor(Math.random() * 5000) + 2000,
-          "4xx": Math.floor(Math.random() * 300) + 50,
-          "5xx": Math.floor(Math.random() * 100),
-        },
-      });
-    }
-  }
-
-  return data;
 }
 
 export function ApiTrendsPanel({ className }: ApiTrendsPanelProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>("24h");
-  const [interval, setInterval] = useState<Interval>("hour");
 
-  const data = useMemo(() => generateApiTrendData(timeRange, interval), [timeRange, interval]);
+  const hours = timeRangeToHours(timeRange);
+
+  // Fetch API trends data
+  const { data: trendsData } = useQuery({
+    queryKey: queryKeys.apiTrends({ hours }),
+    queryFn: () => getApiTrends({ hours }),
+    refetchInterval: 30000, // Refresh every 30s
+  });
+
+  // Transform API data to chart format
+  const data = useMemo(() => {
+    if (!trendsData?.hourly) {
+      return [];
+    }
+    return trendsData.hourly.map((h) => {
+      const date = new Date(h.hour);
+      return {
+        label: date.getHours().toString().padStart(2, "0") + ":00",
+        statuses: {
+          "2xx": h.success_2xx,
+          "4xx": h.client_4xx,
+          "5xx": h.server_5xx,
+        } as Record<ApiStatus, number>,
+      };
+    });
+  }, [trendsData]);
 
   const maxTotal = useMemo(() => {
     return Math.max(...data.map((d) => Object.values(d.statuses).reduce((a, b) => a + b, 0)));
@@ -107,38 +91,19 @@ export function ApiTrendsPanel({ className }: ApiTrendsPanelProps) {
       className={cn("flex-1 flex flex-col overflow-hidden", className)}
       contentClassName="flex-1 flex flex-col overflow-hidden p-3"
       titleRight={
-        <div className="flex items-center gap-2">
-          {/* Time Range Selector */}
-          <div className="relative">
-            <select
-              value={timeRange}
-              onChange={(e) => setTimeRange(e.target.value as TimeRange)}
-              className="appearance-none bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 pr-6 text-[10px] text-[#888] focus:outline-none"
-            >
-              {timeRangeOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 w-3 h-3 text-[#555] pointer-events-none" />
-          </div>
-
-          {/* Interval Selector */}
-          <div className="relative">
-            <select
-              value={interval}
-              onChange={(e) => setInterval(e.target.value as Interval)}
-              className="appearance-none bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 pr-6 text-[10px] text-[#888] focus:outline-none"
-            >
-              {intervalOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 w-3 h-3 text-[#555] pointer-events-none" />
-          </div>
+        <div className="relative">
+          <select
+            value={timeRange}
+            onChange={(e) => setTimeRange(e.target.value as TimeRange)}
+            className="appearance-none bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 pr-6 text-[10px] text-[#888] focus:outline-none"
+          >
+            {timeRangeOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 w-3 h-3 text-[#555] pointer-events-none" />
         </div>
       }
     >

@@ -1,0 +1,263 @@
+"""
+Example Conduit service with worker and API.
+
+Demonstrates:
+- Tasks with retries and timeouts
+- Cron jobs running every few seconds
+- Event handlers
+- API endpoints
+
+Run with: conduit run examples/service.py
+"""
+
+import asyncio
+import logging
+import random
+from datetime import datetime
+
+import conduit
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create worker and API
+worker = conduit.Worker("example-worker", concurrency=10)
+api = conduit.Api("example-api", port=8001)
+
+
+# =============================================================================
+# Tasks
+# =============================================================================
+
+
+@worker.task(retries=3, timeout=30.0)
+async def process_order(order_id: str, items: list[str]) -> dict:
+    """Process an order - simulates work with progress updates."""
+    ctx = conduit.get_current_context()
+
+    logger.info(f"Processing order {order_id} with {len(items)} items")
+
+    for i, item in enumerate(items):
+        # Simulate processing each item
+        await asyncio.sleep(random.uniform(0.1, 0.5))
+        progress = int((i + 1) / len(items) * 100)
+        ctx.set_progress(progress, f"Processing {item}")
+
+    # Randomly fail 10% of orders to test retries
+    if random.random() < 0.1:
+        raise ValueError(f"Failed to process order {order_id}")
+
+    return {"order_id": order_id, "status": "completed", "items_count": len(items)}
+
+
+@worker.task(retries=2, timeout=10.0)
+async def send_notification(user_id: str, message: str, channel: str = "email") -> dict:
+    """Send a notification to a user."""
+
+    logger.info(f"Sending {channel} notification to {user_id}: {message[:50]}...")
+
+    # Simulate network latency
+    await asyncio.sleep(random.uniform(0.1, 0.3))
+
+    # Create an artifact with the notification details
+    await conduit.create_artifact(
+        name="notification_sent",
+        data={
+            "user_id": user_id,
+            "channel": channel,
+            "sent_at": datetime.now().isoformat(),
+        },
+    )
+
+    return {"user_id": user_id, "channel": channel, "status": "sent"}
+
+
+@worker.task
+async def generate_report(report_type: str, date_range: dict | None = None) -> dict:
+    """Generate a report - a longer running task."""
+    ctx = conduit.get_current_context()
+
+    logger.info(f"Generating {report_type} report")
+
+    # Simulate report generation in stages
+    stages = ["Collecting data", "Processing", "Formatting", "Saving"]
+    for i, stage in enumerate(stages):
+        await asyncio.sleep(random.uniform(0.2, 0.5))
+        ctx.set_progress(int((i + 1) / len(stages) * 100), stage)
+
+    # Create report artifact
+    report_data = {
+        "type": report_type,
+        "generated_at": datetime.now().isoformat(),
+        "rows": random.randint(100, 1000),
+    }
+
+    await conduit.create_artifact(
+        name=f"report_{report_type}",
+        data=report_data,
+    )
+
+    return report_data
+
+
+@worker.task
+def sync_inventory(product_ids: list[str]) -> dict:
+    """Sync inventory - a synchronous task (runs in thread pool)."""
+    import time
+
+    logger.info(f"Syncing inventory for {len(product_ids)} products")
+
+    # Simulate sync work
+    time.sleep(random.uniform(0.1, 0.3))
+
+    return {"synced": len(product_ids), "status": "complete"}
+
+
+# =============================================================================
+# Cron Jobs
+# =============================================================================
+
+
+@worker.cron("*/5 * * * * *")  # Every 5 seconds
+async def health_check():
+    """Periodic health check - runs every 5 seconds."""
+    logger.info(f"Health check at {datetime.now().isoformat()}")
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+
+@worker.cron("*/15 * * * * *")  # Every 15 seconds
+async def metrics_snapshot():
+    """Collect metrics snapshot - runs every 15 seconds."""
+    metrics = {
+        "timestamp": datetime.now().isoformat(),
+        "memory_usage": random.randint(100, 500),
+        "cpu_usage": random.uniform(0.1, 0.9),
+        "active_connections": random.randint(10, 100),
+    }
+    logger.info(f"Metrics: {metrics}")
+    return metrics
+
+
+@worker.cron("*/30 * * * * *")  # Every 30 seconds
+async def cleanup_sessions():
+    """Clean up expired sessions - runs every 30 seconds."""
+    cleaned = random.randint(0, 10)
+    logger.info(f"Cleaned up {cleaned} expired sessions")
+    return {"cleaned": cleaned}
+
+
+# =============================================================================
+# Events
+# =============================================================================
+
+order_placed = worker.event("order.placed")
+user_registered = worker.event("user.registered")
+
+
+@order_placed.on
+async def on_order_send_confirmation(order_id: str, user_id: str, **kwargs):
+    """Send order confirmation when an order is placed."""
+    logger.info(f"Sending confirmation for order {order_id} to user {user_id}")
+    await asyncio.sleep(0.1)
+    return {"confirmation_sent": True}
+
+
+@order_placed.on(retries=2)
+async def on_order_update_inventory(items: list[str] | None = None, **kwargs):
+    """Update inventory when an order is placed."""
+    items = items or []
+    logger.info(f"Updating inventory for {len(items)} items")
+    await asyncio.sleep(0.2)
+    return {"inventory_updated": True}
+
+
+@user_registered.on
+async def on_user_send_welcome(user_id: str, email: str, **kwargs):
+    """Send welcome email when a user registers."""
+    logger.info(f"Sending welcome email to {email}")
+    await asyncio.sleep(0.1)
+    return {"welcome_sent": True}
+
+
+# =============================================================================
+# API Endpoints
+# =============================================================================
+
+
+@api.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "ok", "service": "example-api"}
+
+
+@api.post("/orders")
+async def create_order(order: dict):
+    """Create a new order - submits to worker."""
+    order_id = f"order_{random.randint(1000, 9999)}"
+    items = order.get("items", ["item1", "item2"])
+
+    # Submit order processing task
+    job = await process_order.submit(order_id=order_id, items=items)
+
+    # Emit order placed event
+    await order_placed.send(
+        order_id=order_id, user_id=order.get("user_id", "user_1"), items=items
+    )
+
+    return {"order_id": order_id, "job_id": job, "status": "submitted"}
+
+
+@api.post("/notifications")
+async def send_user_notification(notification: dict):
+    """Send a notification - submits to worker."""
+    user_id = notification.get("user_id", "user_1")
+    message = notification.get("message", "Hello!")
+    channel = notification.get("channel", "email")
+
+    job = await send_notification.submit(
+        user_id=user_id, message=message, channel=channel
+    )
+
+    return {"job_id": job, "status": "submitted"}
+
+
+@api.post("/reports")
+async def request_report(request: dict):
+    """Request a report - submits to worker."""
+    report_type = request.get("type", "daily")
+
+    job = await generate_report.submit(
+        report_type=report_type, date_range=request.get("date_range")
+    )
+
+    return {"job_id": job, "report_type": report_type, "status": "submitted"}
+
+
+@api.post("/users/register")
+async def register_user(user: dict):
+    """Register a new user - emits event."""
+    user_id = f"user_{random.randint(1000, 9999)}"
+    email = user.get("email", f"{user_id}@example.com")
+
+    # Emit user registered event
+    await user_registered.send(user_id=user_id, email=email)
+
+    return {"user_id": user_id, "email": email, "status": "registered"}
+
+
+@api.post("/inventory/sync")
+async def trigger_inventory_sync(request: dict):
+    """Trigger inventory sync - submits to worker."""
+    product_ids = request.get("product_ids", ["prod_1", "prod_2", "prod_3"])
+
+    job = await sync_inventory.submit(product_ids=product_ids)
+
+    return {"job_id": job, "products": len(product_ids), "status": "submitted"}
+
+
+# =============================================================================
+# Run
+# =============================================================================
+
+if __name__ == "__main__":
+    conduit.run(api, worker)

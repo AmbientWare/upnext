@@ -1,0 +1,234 @@
+/**
+ * Conduit API client for the web dashboard.
+ * All API calls to the backend go through this module.
+ */
+
+import type {
+  ApisListResponse,
+  ApiTrendsResponse,
+  DashboardStats,
+  FunctionDetailResponse,
+  FunctionsListResponse,
+  Job,
+  JobListResponse,
+  JobStatsResponse,
+  JobTrendsResponse,
+  Worker,
+  WorkersListResponse,
+} from "./types";
+
+// API base URL - defaults to same origin
+const API_BASE = '/api/v1';
+
+// =============================================================================
+// Error Handling
+// =============================================================================
+
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+
+  constructor(status: number, statusText: string, message?: string) {
+    super(message || `API Error: ${status} ${statusText}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.statusText = statusText;
+  }
+}
+
+async function handleResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new ApiError(response.status, response.statusText, text);
+  }
+  return response.json();
+}
+
+// =============================================================================
+// Dashboard
+// =============================================================================
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  const response = await fetch(`${API_BASE}/dashboard/stats`);
+  return handleResponse<DashboardStats>(response);
+}
+
+// =============================================================================
+// Jobs
+// =============================================================================
+
+export interface GetJobsParams {
+  function?: string;
+  status?: string[];
+  worker_id?: string;
+  after?: string;
+  before?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function getJobs(params: GetJobsParams = {}): Promise<JobListResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.function) searchParams.set('function', params.function);
+  if (params.status?.length) {
+    params.status.forEach(s => searchParams.append('status', s));
+  }
+  if (params.worker_id) searchParams.set('worker_id', params.worker_id);
+  if (params.after) searchParams.set('after', params.after);
+  if (params.before) searchParams.set('before', params.before);
+  if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
+  if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/jobs${query ? `?${query}` : ''}`;
+
+  const response = await fetch(url);
+  return handleResponse<JobListResponse>(response);
+}
+
+export async function getJob(jobId: string): Promise<Job> {
+  const response = await fetch(`${API_BASE}/jobs/${jobId}`);
+  return handleResponse<Job>(response);
+}
+
+export interface GetJobStatsParams {
+  function?: string;
+  after?: string;
+  before?: string;
+}
+
+export async function getJobStats(params: GetJobStatsParams = {}): Promise<JobStatsResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.function) searchParams.set('function', params.function);
+  if (params.after) searchParams.set('after', params.after);
+  if (params.before) searchParams.set('before', params.before);
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/jobs/stats${query ? `?${query}` : ''}`;
+
+  const response = await fetch(url);
+  return handleResponse<JobStatsResponse>(response);
+}
+
+export interface GetJobTrendsParams {
+  hours?: number;
+  function?: string;
+  type?: string;
+}
+
+export async function getJobTrends(params: GetJobTrendsParams = {}): Promise<JobTrendsResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.hours !== undefined) searchParams.set('hours', String(params.hours));
+  if (params.function) searchParams.set('function', params.function);
+  if (params.type) searchParams.set('type', params.type);
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/jobs/trends${query ? `?${query}` : ''}`;
+
+  const response = await fetch(url);
+  return handleResponse<JobTrendsResponse>(response);
+}
+
+export async function cancelJob(jobId: string): Promise<{ status: string }> {
+  const response = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  });
+  return handleResponse<{ status: string }>(response);
+}
+
+export async function retryJob(jobId: string): Promise<{ status: string }> {
+  const response = await fetch(`${API_BASE}/jobs/${jobId}/retry`, {
+    method: 'POST',
+  });
+  return handleResponse<{ status: string }>(response);
+}
+
+// =============================================================================
+// Workers
+// =============================================================================
+
+export async function getWorkers(): Promise<WorkersListResponse> {
+  const response = await fetch(`${API_BASE}/workers`);
+  return handleResponse<WorkersListResponse>(response);
+}
+
+export async function getWorker(workerId: string): Promise<Worker> {
+  const response = await fetch(`${API_BASE}/workers/${workerId}`);
+  return handleResponse<Worker>(response);
+}
+
+// =============================================================================
+// Functions
+// =============================================================================
+
+export interface GetFunctionsParams {
+  type?: 'task' | 'cron' | 'event';
+}
+
+export async function getFunctions(params: GetFunctionsParams = {}): Promise<FunctionsListResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.type) searchParams.set('type', params.type);
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/functions${query ? `?${query}` : ''}`;
+
+  const response = await fetch(url);
+  return handleResponse<FunctionsListResponse>(response);
+}
+
+export async function getFunction(name: string): Promise<FunctionDetailResponse> {
+  const response = await fetch(`${API_BASE}/functions/${encodeURIComponent(name)}`);
+  return handleResponse<FunctionDetailResponse>(response);
+}
+
+// =============================================================================
+// API Endpoints
+// =============================================================================
+
+export async function getApis(): Promise<ApisListResponse> {
+  const response = await fetch(`${API_BASE}/endpoints`);
+  return handleResponse<ApisListResponse>(response);
+}
+
+export interface GetApiTrendsParams {
+  hours?: number;
+}
+
+export async function getApiTrends(params: GetApiTrendsParams = {}): Promise<ApiTrendsResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.hours !== undefined) searchParams.set('hours', String(params.hours));
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/endpoints/trends${query ? `?${query}` : ''}`;
+
+  const response = await fetch(url);
+  return handleResponse<ApiTrendsResponse>(response);
+}
+
+// =============================================================================
+// Query Keys (for TanStack Query)
+// =============================================================================
+
+export const queryKeys = {
+  dashboard: ['dashboard'] as const,
+  dashboardStats: ['dashboard', 'stats'] as const,
+
+  jobs: (params?: GetJobsParams) => ['jobs', params] as const,
+  job: (id: string) => ['jobs', id] as const,
+  jobStats: (params?: GetJobStatsParams) => ['jobs', 'stats', params] as const,
+  jobTrends: (params?: GetJobTrendsParams) => ['jobs', 'trends', params] as const,
+
+  workers: ['workers'] as const,
+  worker: (id: string) => ['workers', id] as const,
+
+  functions: (params?: GetFunctionsParams) => ['functions', params] as const,
+  function: (name: string) => ['functions', name] as const,
+
+  apis: ['apis'] as const,
+  apiTrends: (params?: GetApiTrendsParams) => ['apis', 'trends', params] as const,
+};

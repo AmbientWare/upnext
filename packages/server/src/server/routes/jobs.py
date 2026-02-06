@@ -1,9 +1,10 @@
 """Job history routes."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from server.db.repository import JobRepository
 from server.db.session import get_database
 from shared.schemas import JobHistoryResponse, JobListResponse, JobStatsResponse
@@ -11,6 +12,30 @@ from shared.schemas import JobHistoryResponse, JobListResponse, JobStatsResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+# =============================================================================
+# Trends Schemas
+# =============================================================================
+
+
+class JobTrendHour(BaseModel):
+    """Hourly job counts by status."""
+
+    hour: str  # ISO format: "2024-01-15T14:00:00Z"
+    complete: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    retrying: int = 0
+    active: int = 0
+    queued: int = 0
+    pending: int = 0
+
+
+class JobTrendsResponse(BaseModel):
+    """Job trends response."""
+
+    hourly: list[JobTrendHour]
 
 
 def _calculate_duration_ms(
@@ -22,7 +47,7 @@ def _calculate_duration_ms(
     return None
 
 
-@router.get("/", response_model=JobListResponse)
+@router.get("", response_model=JobListResponse)
 async def list_jobs(
     function: str | None = Query(None, description="Filter by function name"),
     status: list[str] | None = Query(None, description="Filter by status"),
@@ -131,6 +156,93 @@ async def get_job_stats(
             success_rate=stats["success_rate"],
             avg_duration_ms=None,  # TODO: Calculate from jobs
         )
+
+
+@router.get("/trends", response_model=JobTrendsResponse)
+async def get_job_trends(
+    hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
+    function: str | None = Query(None, description="Filter by function name"),
+    type: str | None = Query(None, description="Filter by function type"),
+) -> JobTrendsResponse:
+    """
+    Get hourly job trends for charts.
+
+    Returns job counts grouped by hour and status for the specified time period.
+    """
+    try:
+        db = get_database()
+    except RuntimeError:
+        # Return empty hours when no database
+        return _empty_trends(hours)
+
+    async with db.session() as session:
+        repo = JobRepository(session)
+
+        # Calculate time range
+        now = datetime.now(UTC)
+        start_time = now - timedelta(hours=hours)
+
+        # Get jobs in the time range
+        jobs = await repo.list_jobs(
+            function=function,
+            start_date=start_time,
+            end_date=now,
+            limit=10000,  # Get all jobs in range
+        )
+
+        # Group by hour
+        hourly_counts: dict[str, dict[str, int]] = {}
+
+        # Initialize all hours with zeros
+        for i in range(hours):
+            hour_start = now - timedelta(hours=hours - i - 1)
+            hour_key = hour_start.replace(minute=0, second=0, microsecond=0).strftime(
+                "%Y-%m-%dT%H:00:00Z"
+            )
+            hourly_counts[hour_key] = {
+                "complete": 0,
+                "failed": 0,
+                "cancelled": 0,
+                "retrying": 0,
+                "active": 0,
+                "queued": 0,
+                "pending": 0,
+            }
+
+        # Count jobs by hour and status
+        for job in jobs:
+            if job.created_at:
+                hour_key = job.created_at.replace(
+                    minute=0, second=0, microsecond=0, tzinfo=UTC
+                ).strftime("%Y-%m-%dT%H:00:00Z")
+
+                if hour_key in hourly_counts:
+                    status = job.status.lower()
+                    if status in hourly_counts[hour_key]:
+                        hourly_counts[hour_key][status] += 1
+
+        # Convert to response
+        hourly = [
+            JobTrendHour(hour=hour, **counts)
+            for hour, counts in sorted(hourly_counts.items())
+        ]
+
+        return JobTrendsResponse(hourly=hourly)
+
+
+def _empty_trends(hours: int) -> JobTrendsResponse:
+    """Return empty trends data for the given hours."""
+    now = datetime.now(UTC)
+    hourly = []
+
+    for i in range(hours):
+        hour_start = now - timedelta(hours=hours - i - 1)
+        hour_key = hour_start.replace(minute=0, second=0, microsecond=0).strftime(
+            "%Y-%m-%dT%H:00:00Z"
+        )
+        hourly.append(JobTrendHour(hour=hour_key))
+
+    return JobTrendsResponse(hourly=hourly)
 
 
 @router.get("/{job_id}", response_model=JobHistoryResponse)

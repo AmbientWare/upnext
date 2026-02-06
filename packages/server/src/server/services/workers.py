@@ -56,7 +56,6 @@ async def register_worker(
         "jobs_failed": 0,
         "hostname": hostname,
         "version": version,
-        "status": "healthy",
     }
 
     # Store worker with TTL
@@ -123,7 +122,6 @@ async def heartbeat_worker(
     worker_data["jobs_processed"] = jobs_processed
     worker_data["jobs_failed"] = jobs_failed
     worker_data["queued_jobs"] = queued_jobs
-    worker_data["status"] = "healthy"
 
     # Refresh TTL
     await r.setex(key, WORKER_TTL, json.dumps(worker_data))
@@ -141,7 +139,6 @@ async def get_worker(worker_id: str) -> Worker | None:
     worker_data = json.loads(data)
     return Worker(
         id=worker_data["id"],
-        status=worker_data.get("status", "healthy"),
         started_at=worker_data["started_at"],
         last_heartbeat=worker_data["last_heartbeat"],
         functions=worker_data.get("functions", []),
@@ -167,7 +164,6 @@ async def list_workers() -> list[Worker]:
             workers.append(
                 Worker(
                     id=worker_data["id"],
-                    status=worker_data.get("status", "healthy"),
                     started_at=worker_data["started_at"],
                     last_heartbeat=worker_data["last_heartbeat"],
                     functions=worker_data.get("functions", []),
@@ -192,8 +188,7 @@ async def get_worker_stats() -> WorkerStats:
     async for _ in r.scan_iter(match=f"{WORKER_KEY_PREFIX}*", count=100):
         total += 1
 
-    # All workers in Redis are healthy (TTL handles cleanup)
-    return WorkerStats(total=total, healthy=total, unhealthy=0)
+    return WorkerStats(total=total)
 
 
 async def get_function_definitions() -> dict[str, dict[str, Any]]:

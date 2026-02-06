@@ -1,14 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
-import { generateMockFunctions, type TaskFunction } from "@/lib/mock-data";
+import { getFunctions, queryKeys } from "@/lib/conduit-api";
+import type { FunctionInfo, FunctionType } from "@/lib/types";
 import { Search, X, ChevronDown } from "lucide-react";
 
 export const Route = createFileRoute("/functions/")({
   component: FunctionsPage,
 });
-
-type FunctionType = "task" | "cron" | "event";
 
 const typeOptions: { value: FunctionType | ""; label: string }[] = [
   { value: "", label: "All Types" },
@@ -24,9 +24,17 @@ const typeStyles: Record<FunctionType, string> = {
 };
 
 function FunctionsPage() {
-  const allFunctions = useMemo(() => generateMockFunctions(), []);
   const [search, setSearch] = useState("");
   const [selectedType, setSelectedType] = useState<FunctionType | "">("");
+
+  // Fetch functions from API
+  const { data: functionsData } = useQuery({
+    queryKey: queryKeys.functions({ type: selectedType || undefined }),
+    queryFn: () => getFunctions({ type: selectedType || undefined }),
+    refetchInterval: 30000, // Refresh every 30s
+  });
+
+  const allFunctions = functionsData?.functions ?? [];
 
   const filteredFunctions = useMemo(() => {
     let fns = allFunctions;
@@ -37,16 +45,12 @@ function FunctionsPage() {
         (fn) =>
           fn.name.toLowerCase().includes(searchLower) ||
           fn.schedule?.toLowerCase().includes(searchLower) ||
-          fn.eventPattern?.toLowerCase().includes(searchLower)
+          fn.pattern?.toLowerCase().includes(searchLower)
       );
     }
 
-    if (selectedType) {
-      fns = fns.filter((fn) => fn.type === selectedType);
-    }
-
     return fns;
-  }, [allFunctions, search, selectedType]);
+  }, [allFunctions, search]);
 
   const clearFilters = () => {
     setSearch("");
@@ -112,14 +116,24 @@ function FunctionsPage() {
       {/* Functions Table */}
       <div className="matrix-panel rounded flex-1 overflow-hidden">
         <div className="h-full overflow-auto">
-          <FunctionsTable functions={filteredFunctions} />
+          {filteredFunctions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-[#555]">
+              <div className="text-4xl mb-4">⚡</div>
+              <div className="text-sm font-medium">No functions found</div>
+              <div className="text-xs mt-1">
+                {hasFilters ? "Try adjusting your filters" : "Functions will appear here when workers register"}
+              </div>
+            </div>
+          ) : (
+            <FunctionsTable functions={filteredFunctions} />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function FunctionsTable({ functions }: { functions: TaskFunction[] }) {
+function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
   return (
     <table className="w-full">
       <thead className="sticky top-0 bg-[#141414]">
@@ -143,24 +157,24 @@ function FunctionsTable({ functions }: { functions: TaskFunction[] }) {
                 {fn.type.toUpperCase()}
               </span>
             </td>
-            <td className="matrix-cell px-3 py-2 mono text-[11px]">{formatNumber(fn.runsLast24h)}</td>
+            <td className="matrix-cell px-3 py-2 mono text-[11px]">{formatNumber(fn.runs_24h)}</td>
             <td className="matrix-cell px-3 py-2 mono text-[11px]">
               <span
                 className={cn(
-                  fn.successRate >= 99
+                  fn.success_rate >= 99
                     ? "text-emerald-400"
-                    : fn.successRate >= 95
+                    : fn.success_rate >= 95
                       ? "text-amber-400"
                       : "text-red-400"
                 )}
               >
-                {fn.successRate}%
+                {fn.success_rate.toFixed(1)}%
               </span>
             </td>
-            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#888]">{formatDuration(fn.avgDuration)}</td>
-            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#666]">{fn.timeout}s</td>
-            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#666]">{fn.maxRetries}</td>
-            <td className="px-3 py-2 mono text-[10px] text-[#555]">{fn.schedule || fn.eventPattern || "—"}</td>
+            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#888]">{formatDuration(fn.avg_duration_ms)}</td>
+            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#666]">{fn.timeout ?? "—"}s</td>
+            <td className="matrix-cell px-3 py-2 mono text-[11px] text-[#666]">{fn.max_retries ?? "—"}</td>
+            <td className="px-3 py-2 mono text-[10px] text-[#555]">{fn.schedule || fn.pattern || "—"}</td>
           </tr>
         ))}
       </tbody>

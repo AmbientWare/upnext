@@ -477,7 +477,10 @@ class RedisQueue(BaseQueue):
                         jobs.append(job)
 
                 if jobs:
-                    logger.info(f"Recovered {len(jobs)} stale job(s) from {stream_key}")
+                    func_name = stream_key.split(":")[-1]
+                    logger.info(
+                        f"Recovered {len(jobs)} stale job(s) for function '{func_name}'"
+                    )
 
         except redis.ResponseError as e:
             logger.warning(f"XAUTOCLAIM failed on {stream_key}: {e}")

@@ -19,10 +19,8 @@ __all__ = ["run_services", "worker_lines", "print_services_panel", "filter_compo
 
 def worker_lines(
     worker: Worker,
-    *,
-    redis_url: str | None,
 ) -> list[Text]:
-    """Build display lines for a worker (name, handlers, queue status)."""
+    """Build display lines for a worker (name, handlers)."""
     lines: list[Text] = []
 
     # Worker name
@@ -54,12 +52,6 @@ def worker_lines(
         line.append("   no handlers", style="dim")
         lines.append(line)
 
-    # Queue status
-    line = Text(no_wrap=True, overflow="ellipsis")
-    line.append("   ✓ ", style="green")
-    line.append(f"redis ({redis_url})", style="dim")
-    lines.append(line)
-
     return lines
 
 
@@ -69,6 +61,7 @@ def print_services_panel(
     *,
     title: str,
     worker_line_fn: Callable[[Worker], list[Text]],
+    redis_url: str | None = None,
 ) -> None:
     """Print the startup panel showing APIs, workers, and Ctrl+C hint."""
     lines: list[Text] = []
@@ -86,29 +79,34 @@ def print_services_panel(
     for worker in workers:
         lines.extend(worker_line_fn(worker))
 
-    # Blank line before hint
+    # Blank line at bottom for spacing before panel border
     lines.append(Text())
-    hint = Text(no_wrap=True, overflow="ellipsis")
-    hint.append("Press ", style="dim")
-    hint.append("Ctrl+C", style="dim bold")
-    hint.append(" to stop", style="dim")
-    lines.append(hint)
 
     table = Table.grid(padding=0)
     table.add_column(overflow="ellipsis", no_wrap=True)
     for line in lines:
         table.add_row(line)
 
+    # Build subtitle with redis status and Ctrl+C hint
+    subtitle_parts: list[str] = []
+    if redis_url:
+        subtitle_parts.append(f"[green]✓[/green] [dim]redis ({redis_url})[/dim]")
+    subtitle_parts.append("[dim]Ctrl+C to stop[/dim]")
+    subtitle = " [dim]·[/dim] ".join(subtitle_parts)
+
     panel = Panel(
         table,
         title=f"[bold]{title}[/bold]",
         title_align="left",
+        subtitle=subtitle,
+        subtitle_align="right",
         border_style="dim",
         box=ROUNDED,
         padding=(0, 1),
         expand=False,
     )
     console.print(panel)
+    nl()
 
 
 def filter_components(

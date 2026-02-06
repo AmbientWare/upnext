@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 EVENTS_STREAM = "conduit:status:events"
+API_REQUESTS_STREAM = "conduit:api:requests"
 
 
 class EventType(StrEnum):
