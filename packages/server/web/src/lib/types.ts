@@ -237,7 +237,6 @@ export interface RunStats {
   total_24h: number;
   success_rate: number;
   active_count: number;
-  queued_count: number;
 }
 
 export interface ApiStats {

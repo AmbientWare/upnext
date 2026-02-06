@@ -19,7 +19,7 @@ function RootLayout() {
 
   return (
     <TooltipProvider>
-      <div className="app-root h-screen bg-[#0c0c0c] text-[#e0e0e0] flex overflow-hidden">
+      <div className="app-root h-screen bg-background text-foreground flex overflow-hidden">
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
@@ -33,22 +33,22 @@ function RootLayout() {
           }
 
           .matrix-panel {
-            background: #141414;
-            border: 1px solid #2a2a2a;
+            background: var(--card);
+            border: 1px solid var(--input);
           }
 
           .matrix-panel-header {
-            background: linear-gradient(180deg, #1a1a1a 0%, #141414 100%);
-            border-bottom: 1px solid #2a2a2a;
+            background: linear-gradient(180deg, var(--muted) 0%, var(--card) 100%);
+            border-bottom: 1px solid var(--input);
           }
 
           .matrix-cell {
-            border-right: 1px solid #1e1e1e;
-            border-bottom: 1px solid #1e1e1e;
+            border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
           }
 
           .matrix-row:hover {
-            background: #1a1a1a;
+            background: var(--accent);
           }
 
           .spark-line {
@@ -75,8 +75,8 @@ function RootLayout() {
 
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Top Header */}
-          <header className="h-14 border-b border-[#1e1e1e] flex items-center px-6 shrink-0">
-            <h1 className="text-lg font-semibold text-[#e0e0e0]">{getPageTitle()}</h1>
+          <header className="h-14 border-b border-border flex items-center px-6 shrink-0">
+            <h1 className="text-lg font-semibold text-foreground">{getPageTitle()}</h1>
           </header>
 
           {/* Main Content */}

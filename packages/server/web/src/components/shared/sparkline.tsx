@@ -32,7 +32,7 @@ export function Sparkline({
         <polyline fill="none" stroke={color} strokeWidth="1.5" className="spark-line" points={points} />
       </svg>
       {showLabels && (
-        <div className="flex justify-between text-[9px] text-[#555] mono mt-1">
+        <div className="flex justify-between text-[9px] text-muted-foreground mono mt-1">
           <span>{labelStart}</span>
           <span>{labelEnd}</span>
         </div>

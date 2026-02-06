@@ -337,7 +337,6 @@ class RunStats(BaseModel):
     total_24h: int
     success_rate: float
     active_count: int
-    queued_count: int
 
 
 class ApiStats(BaseModel):

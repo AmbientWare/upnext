@@ -36,10 +36,10 @@ export function ProgressBar({
 
   return (
     <div className={cn("flex items-center gap-2", className)}>
-      <div className={cn("flex-1 bg-[#1a1a1a] rounded overflow-hidden", size === "sm" ? "h-1.5" : "h-2")}>
+      <div className={cn("flex-1 bg-muted rounded overflow-hidden", size === "sm" ? "h-1.5" : "h-2")}>
         <div className={cn("h-full rounded transition-all", getColorClass())} style={{ width: `${percentage}%` }} />
       </div>
-      {showLabel && <span className="mono text-[10px] text-[#666]">{percentage.toFixed(0)}%</span>}
+      {showLabel && <span className="mono text-[10px] text-muted-foreground">{percentage.toFixed(0)}%</span>}
     </div>
   );
 }
