@@ -14,7 +14,7 @@ export function Panel({ title, titleRight, children, className, contentClassName
     <div className={cn("matrix-panel rounded", className)}>
       {title && (
         <div className="matrix-panel-header px-3 py-2 flex items-center justify-between">
-          <span className="text-[10px] font-medium text-[#888] uppercase tracking-wider">{title}</span>
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{title}</span>
           {titleRight}
         </div>
       )}

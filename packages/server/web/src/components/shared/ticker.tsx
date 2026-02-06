@@ -14,13 +14,13 @@ interface TickerProps {
 
 export function Ticker({ items, className }: TickerProps) {
   return (
-    <div className={cn("bg-[#0a0a0a] border-b border-[#2a2a2a] py-1 overflow-hidden", className)}>
+    <div className={cn("bg-background border-b border-input py-1 overflow-hidden", className)}>
       <div className="ticker whitespace-nowrap">
         {[...Array(2)].map((_, i) => (
           <span key={i} className="inline-flex items-center gap-8 mr-8">
             {items.map((item, j) => (
               <span key={j} className="inline-flex items-center gap-2">
-                <span className="text-[#666]">{item.label}</span>
+                <span className="text-muted-foreground">{item.label}</span>
                 <span
                   className={cn(
                     "font-medium mono",
@@ -28,14 +28,14 @@ export function Ticker({ items, className }: TickerProps) {
                       ? "text-emerald-400"
                       : item.trend === "down"
                         ? "text-red-400"
-                        : "text-[#e0e0e0]"
+                        : "text-foreground"
                   )}
                 >
                   {item.value}
                 </span>
                 {item.trend === "up" && <TrendingUp className="w-3 h-3 text-emerald-400" />}
                 {item.trend === "down" && <TrendingDown className="w-3 h-3 text-red-400" />}
-                {item.trend === "neutral" && <Minus className="w-3 h-3 text-[#666]" />}
+                {item.trend === "neutral" && <Minus className="w-3 h-3 text-muted-foreground" />}
               </span>
             ))}
           </span>

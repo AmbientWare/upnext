@@ -13,7 +13,7 @@ from shared.schemas import (
 
 from server.db.repository import JobRepository
 from server.db.session import get_database
-from server.services import get_queue_stats, get_worker_stats
+from server.services import get_active_job_count, get_worker_stats
 from server.services.api_tracking import get_metrics_reader
 
 logger = logging.getLogger(__name__)
@@ -36,14 +36,13 @@ async def get_dashboard_stats() -> DashboardStats:
         total_24h=0,
         success_rate=100.0,
         active_count=0,
-        queued_count=0,
     )
 
     recent_runs: list[Run] = []
     recent_failures: list[Run] = []
 
-    # Get active/queued counts from Redis (real-time queue state)
-    active_count, queued_count = await get_queue_stats()
+    # Get active job count from Redis (real-time from worker heartbeats)
+    active_count = await get_active_job_count()
 
     try:
         db = get_database()
@@ -57,7 +56,6 @@ async def get_dashboard_stats() -> DashboardStats:
                 total_24h=stats["total"],
                 success_rate=stats["success_rate"],
                 active_count=active_count,
-                queued_count=queued_count,
             )
 
             # Get recent runs (last 10)

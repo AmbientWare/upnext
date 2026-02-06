@@ -14,14 +14,14 @@ export function Sidebar() {
   const currentPath = router.location.pathname;
 
   return (
-    <aside className="w-48 bg-[#0f0f0f] border-r border-[#1e1e1e] flex flex-col">
+    <aside className="w-48 bg-background border-r border-border flex flex-col">
       {/* Logo */}
-      <div className="h-14 flex items-center px-4 border-b border-[#1e1e1e]">
+      <div className="h-14 flex items-center px-4 border-b border-border">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded bg-emerald-500/20 flex items-center justify-center">
             <span className="text-emerald-400 font-bold text-sm">C</span>
           </div>
-          <span className="font-semibold text-[#e0e0e0] tracking-tight">Conduit</span>
+          <span className="font-semibold text-foreground tracking-tight">Conduit</span>
         </div>
       </div>
 
@@ -38,7 +38,7 @@ export function Sidebar() {
                 "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors mb-1",
                 isActive
                   ? "bg-emerald-500/15 text-emerald-400"
-                  : "text-[#888] hover:text-[#e0e0e0] hover:bg-[#1a1a1a]"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
               )}
             >
               <Icon className="w-4 h-4" />

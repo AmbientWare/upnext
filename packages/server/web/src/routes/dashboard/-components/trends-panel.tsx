@@ -3,8 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn, type JobStatus } from "@/lib/utils";
 import { Panel } from "@/components/shared";
-import { ChevronDown } from "lucide-react";
 import { getJobTrends, queryKeys } from "@/lib/conduit-api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   ChartContainer,
   ChartTooltip,
@@ -98,32 +104,59 @@ export function TrendsPanel({ className }: TrendsPanelProps) {
       contentClassName="flex-1 flex flex-col overflow-hidden p-3"
       titleRight={
         <div className="flex items-center gap-2">
-          <FilterSelect value={jobType} onChange={(v) => setJobType(v as JobType)} options={jobTypeFilters} />
-          <FilterSelect value={granularity} onChange={(v) => setGranularity(v as Granularity)} options={granularityOptions} />
-          <FilterSelect value={timeRange} onChange={(v) => setTimeRange(v as TimeRange)} options={timeRangeOptions} />
+          <Select value={jobType} onValueChange={(v) => setJobType(v as JobType)}>
+            <SelectTrigger size="sm" className="h-6 text-[10px] gap-1 px-2">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {jobTypeFilters.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={granularity} onValueChange={(v) => setGranularity(v as Granularity)}>
+            <SelectTrigger size="sm" className="h-6 text-[10px] gap-1 px-2">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {granularityOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={timeRange} onValueChange={(v) => setTimeRange(v as TimeRange)}>
+            <SelectTrigger size="sm" className="h-6 text-[10px] gap-1 px-2">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {timeRangeOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       }
     >
       <div className="flex-1 min-h-0">
         {data.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-[#555] text-xs">
+          <div className="h-full flex items-center justify-center text-muted-foreground text-xs">
             No job data available
           </div>
         ) : (
           <ChartContainer config={chartConfig} className="h-full w-full">
             <BarChart data={data}>
-              <CartesianGrid vertical={false} stroke="#1e1e1e" />
+              <CartesianGrid vertical={false} stroke="var(--border)" />
               <XAxis
                 dataKey="label"
                 tickLine={false}
                 axisLine={false}
-                tick={{ fill: "#555", fontSize: 10 }}
+                tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
                 interval="preserveStartEnd"
               />
               <YAxis
                 tickLine={false}
                 axisLine={false}
-                tick={{ fill: "#555", fontSize: 10 }}
+                tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
                 width={30}
               />
               <ChartTooltip content={<ChartTooltipContent />} />
@@ -144,23 +177,3 @@ export function TrendsPanel({ className }: TrendsPanelProps) {
   );
 }
 
-function FilterSelect({ value, onChange, options }: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="appearance-none bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 pr-6 text-[10px] text-[#888] focus:outline-none"
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
-      <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 w-3 h-3 text-[#555] pointer-events-none" />
-    </div>
-  );
-}
