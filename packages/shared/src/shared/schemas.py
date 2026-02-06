@@ -1,6 +1,7 @@
 """Shared API schemas for Conduit."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -11,7 +12,11 @@ from shared.artifacts import ArtifactType
 # Common Types
 # =============================================================================
 
-FunctionType = Literal["task", "cron", "event"]
+
+class FunctionType(StrEnum):
+    TASK = "task"
+    CRON = "cron"
+    EVENT = "event"
 
 
 # =============================================================================
@@ -281,15 +286,9 @@ class FunctionInfo(BaseModel):
     retry_delay: int | None = None
     # Cron config
     schedule: str | None = None
-    timezone: str | None = None
     next_run_at: str | None = None
     # Event config
     pattern: str | None = None
-    # Stream config
-    source: str | None = None
-    batch_size: int | None = None
-    batch_timeout: float | None = None
-    max_concurrency: int | None = None
     # Workers currently handling this function
     workers: list[str] = []
     # Stats
@@ -299,9 +298,6 @@ class FunctionInfo(BaseModel):
     p95_duration_ms: float | None = None
     last_run_at: str | None = None
     last_run_status: str | None = None
-    # Stream-specific stats
-    events_processed_24h: int | None = None
-    batches_24h: int | None = None
 
 
 class FunctionsListResponse(BaseModel):
@@ -311,19 +307,10 @@ class FunctionsListResponse(BaseModel):
     total: int
 
 
-class HourlyStat(BaseModel):
-    """Hourly stat for function detail."""
-
-    hour: str
-    success: int
-    failure: int
-
-
 class FunctionDetailResponse(FunctionInfo):
     """Function detail response."""
 
     recent_runs: list[Run] = []
-    hourly_stats: list[HourlyStat] = []
 
 
 # =============================================================================

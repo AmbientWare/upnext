@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, overload
 
 from shared.models import Job
+from shared.schemas import FunctionType
 from shared.workers import (
     FUNCTION_DEF_TTL,
     FUNCTION_KEY_PREFIX,
@@ -176,7 +177,7 @@ class Worker:
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
-        timeout: float | None = None,
+        timeout: float = 30 * 60,  # 30 minutes
         cache_key: str | None = None,
         cache_ttl: int | None = None,
         on_start: Callable[..., Any] | None = None,
@@ -193,7 +194,7 @@ class Worker:
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
-        timeout: float | None = None,
+        timeout: float = 30 * 60,  # 30 minutes
         cache_key: str | None = None,
         cache_ttl: int | None = None,
         on_start: Callable[..., Any] | None = None,
@@ -265,7 +266,7 @@ class Worker:
         schedule: str,
         *,
         name: str | None = None,
-        timeout: float | None = None,
+        timeout: float = 30 * 60,  # 30 minutes
     ) -> Callable[[F], F]:
         """
         Decorator to register a cron job with this worker.
@@ -275,7 +276,7 @@ class Worker:
             async def daily_report():
                 ...
 
-            @worker.cron("*/5 * * * *", timezone="America/New_York")
+            @worker.cron("*/5 * * * *")
             def health_check():
                 ...
         """
@@ -344,7 +345,7 @@ class Worker:
             function_definitions.append(
                 {
                     "name": name,
-                    "type": "task",
+                    "type": FunctionType.TASK,
                     "timeout": handle.definition.timeout,
                     "max_retries": handle.definition.retries,
                     "retry_delay": handle.definition.retry_delay,
@@ -359,7 +360,7 @@ class Worker:
             function_definitions.append(
                 {
                     "name": cron_name,
-                    "type": "cron",
+                    "type": FunctionType.CRON,
                     "schedule": cron_def.schedule,
                     "timeout": cron_def.timeout,
                 }
@@ -370,14 +371,19 @@ class Worker:
             for handler_name in handle.handler_names:
                 if handler_name not in registered_functions:
                     registered_functions.append(handler_name)
-            function_definitions.append(
-                {
-                    "name": pattern,
-                    "type": "event",
-                    "pattern": handle.pattern,
-                    "handlers": handle.handler_names,
-                }
-            )
+            # Expose per-handler config (use first handler as representative)
+            event_def: dict[str, Any] = {
+                "name": pattern,
+                "type": FunctionType.EVENT,
+                "pattern": handle.pattern,
+                "handlers": handle.handler_names,
+            }
+            if handle._handlers:
+                h = handle._handlers[0]
+                event_def["timeout"] = h.timeout
+                event_def["max_retries"] = h.retries
+                event_def["retry_delay"] = h.retry_delay
+            function_definitions.append(event_def)
 
         # Register worker instance and definitions in Redis
         self._started_at = datetime.now(UTC)
@@ -479,11 +485,13 @@ class Worker:
         if not self._redis_client:
             return
         key = f"{WORKER_DEF_PREFIX}:{self.name}"
-        data = json.dumps({
-            "name": self.name,
-            "functions": self._registered_functions,
-            "concurrency": self.concurrency,
-        })
+        data = json.dumps(
+            {
+                "name": self.name,
+                "functions": self._registered_functions,
+                "concurrency": self.concurrency,
+            }
+        )
         await self._redis_client.setex(key, WORKER_DEF_TTL, data)
 
     async def _write_function_definitions(self) -> None:

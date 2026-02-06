@@ -334,7 +334,6 @@ class BaseQueue(ABC):
             key=f"cron:{job.function}",
             status=JobStatus.PENDING,
             schedule=job.schedule,
-            timezone=job.timezone,
             timeout=job.timeout,
             metadata={"cron": True},
         )

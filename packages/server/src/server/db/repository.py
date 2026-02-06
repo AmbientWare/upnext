@@ -22,6 +22,22 @@ class JobRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    def _duration_ms_expr(self):
+        """SQL expression for job duration in milliseconds (dialect-aware)."""
+        try:
+            dialect = self._session.bind.dialect.name  # type: ignore[union-attr]
+        except (AttributeError, TypeError):
+            dialect = "sqlite"
+
+        if dialect == "postgresql":
+            return (
+                extract("epoch", JobHistory.completed_at - JobHistory.started_at) * 1000
+            )
+        return (
+            func.julianday(JobHistory.completed_at)
+            - func.julianday(JobHistory.started_at)
+        ) * 86400000
+
     async def record_job(self, data: dict[str, Any]) -> JobHistory:
         """
         Record a job to history.
@@ -148,6 +164,29 @@ class JobRepository:
             "success_rate": round(success_rate, 2),
         }
 
+    async def get_durations(
+        self,
+        *,
+        function: str,
+        start_date: datetime,
+    ) -> list[float]:
+        """Return all completed job durations (ms) for a function since start_date."""
+        duration_expr = self._duration_ms_expr()
+
+        query = (
+            select(duration_expr.label("duration_ms"))
+            .where(
+                JobHistory.function == function,
+                JobHistory.created_at >= start_date,
+                JobHistory.started_at.isnot(None),
+                JobHistory.completed_at.isnot(None),
+            )
+            .order_by(duration_expr)
+        )
+
+        result = await self._session.execute(query)
+        return [row.duration_ms for row in result.all()]
+
     async def get_hourly_trends(
         self,
         *,
@@ -203,22 +242,7 @@ class JobRepository:
         Returns dict mapping function name to stats dict with:
         runs, successes, failures, avg_duration_ms, last_run_at, last_run_status
         """
-        # Detect dialect for duration calculation
-        try:
-            dialect = self._session.bind.dialect.name  # type: ignore[union-attr]
-        except (AttributeError, TypeError):
-            dialect = "sqlite"
-
-        if dialect == "postgresql":
-            duration_expr = (
-                extract("epoch", JobHistory.completed_at - JobHistory.started_at) * 1000
-            )
-        else:
-            # SQLite
-            duration_expr = (
-                func.julianday(JobHistory.completed_at)
-                - func.julianday(JobHistory.started_at)
-            ) * 86400000
+        duration_expr = self._duration_ms_expr()
 
         run_time_col = func.coalesce(
             JobHistory.completed_at, JobHistory.started_at, JobHistory.created_at

@@ -26,6 +26,9 @@ export function formatDuration(ms: number): string {
 export function formatTimeAgo(date: Date): string {
   const now = new Date();
   const diff = now.getTime() - date.getTime();
+
+  if (diff < 0) return "just now";
+
   const seconds = Math.floor(diff / 1000);
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
@@ -35,6 +38,23 @@ export function formatTimeAgo(date: Date): string {
   if (hours > 0) return `${hours}h ago`;
   if (minutes > 0) return `${minutes}m ago`;
   return `${seconds}s ago`;
+}
+
+export function formatTimeUntil(date: Date): string {
+  const now = new Date();
+  const diff = date.getTime() - now.getTime();
+
+  if (diff <= 0) return "now";
+
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `in ${days}d`;
+  if (hours > 0) return `in ${hours}h`;
+  if (minutes > 0) return `in ${minutes}m`;
+  return `in ${seconds}s`;
 }
 
 export type { JobStatus };

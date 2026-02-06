@@ -29,6 +29,7 @@ from typing import Any
 
 import redis.asyncio as redis
 from shared import Job, JobStatus
+from shared.workers import FUNCTION_KEY_PREFIX
 
 from conduit.engine.queue.base import BaseQueue, DuplicateJobError, QueueStats
 from conduit.engine.queue.redis.constants import (
@@ -1129,6 +1130,8 @@ class RedisQueue(BaseQueue):
         scheduled_key = self._scheduled_key(job.function)
         await client.zadd(scheduled_key, {job.id: next_run_at})
 
+        await self._update_function_next_run(client, job.function, next_run_at)
+
         return True
 
     async def reschedule_cron(self, job: Job, next_run_at: float) -> str:
@@ -1139,7 +1142,6 @@ class RedisQueue(BaseQueue):
             kwargs=job.kwargs,
             key=f"cron:{job.function}",
             schedule=job.schedule,
-            timezone=job.timezone,
             timeout=job.timeout,
             metadata={"cron": True},
         )
@@ -1155,4 +1157,22 @@ class RedisQueue(BaseQueue):
         scheduled_key = self._scheduled_key(new_job.function)
         await client.zadd(scheduled_key, {new_job.id: next_run_at})
 
+        await self._update_function_next_run(client, job.function, next_run_at)
+
         return new_job.id
+
+    async def _update_function_next_run(
+        self, client: redis.Redis, function_name: str, next_run_at: float
+    ) -> None:
+        """Update the function definition in Redis with the next scheduled run time."""
+        func_key = f"{FUNCTION_KEY_PREFIX}:{function_name}"
+        data = await client.get(func_key)
+        if not data:
+            return
+        func_def = json.loads(data)
+        func_def["next_run_at"] = datetime.fromtimestamp(next_run_at, UTC).isoformat()
+        ttl = await client.ttl(func_key)
+        if ttl > 0:
+            await client.setex(func_key, ttl, json.dumps(func_def))
+        else:
+            await client.set(func_key, json.dumps(func_def))
