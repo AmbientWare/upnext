@@ -18,7 +18,9 @@ import socket
 from dataclasses import dataclass
 from typing import Any
 
-from shared.events import EVENTS_STREAM
+from shared.events import EVENTS_PUBSUB_CHANNEL, EVENTS_STREAM, SSEJobEvent
+
+from server.routes.events import _process_event
 
 logger = logging.getLogger(__name__)
 
@@ -288,11 +290,29 @@ class StreamSubscriber:
         data: dict[str, Any],
         worker_id: str,
     ) -> None:
-        """Process a single event by writing to database."""
-        # Import here to avoid circular imports at module load
-        from server.routes.events import _process_event
-
+        """Process a single event by writing to database and publishing to SSE."""
         await _process_event(event_type, data, worker_id)
+        await self._publish_event(event_type, data, worker_id)
+
+    async def _publish_event(
+        self,
+        event_type: str,
+        data: dict[str, Any],
+        worker_id: str,
+    ) -> None:
+        """Publish event data for SSE consumers.
+
+        Uses SSEJobEvent to filter to safe fields only — kwargs, result,
+        traceback, and checkpoint state are excluded automatically.
+        """
+        try:
+            event = SSEJobEvent(type=event_type, worker_id=worker_id, **data)
+            await self._redis.publish(
+                EVENTS_PUBSUB_CHANNEL,
+                event.model_dump_json(exclude_none=True),
+            )
+        except Exception as e:
+            logger.debug(f"Error publishing event: {e}")
 
     async def _ensure_consumer_group(self) -> None:
         """Create consumer group if it doesn't exist."""

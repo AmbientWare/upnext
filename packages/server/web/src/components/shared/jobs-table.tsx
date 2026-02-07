@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
+import { useAutoAnimate } from "@formkit/auto-animate/react";
+import { Inbox } from "lucide-react";
 import { cn, formatDuration, formatTimeAgo } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
 import { ProgressBar } from "./progress-bar";
 import { Panel } from "./panel";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { Job } from "@/lib/types";
 import {
   Table,
@@ -28,6 +31,7 @@ interface JobsTablePanelProps {
   hideFunction?: boolean;
   /** Show status filter tabs in the panel header. */
   showFilters?: boolean;
+  isLoading?: boolean;
   className?: string;
 }
 
@@ -36,9 +40,14 @@ export function JobsTablePanel({
   onJobClick,
   hideFunction,
   showFilters,
+  isLoading = false,
   className,
 }: JobsTablePanelProps) {
   const [filter, setFilter] = useState("all");
+  const [bodyRef] = useAutoAnimate<HTMLTableSectionElement>({
+    duration: 180,
+    easing: "ease-out",
+  });
 
   const filteredJobs = useMemo(
     () => filter === "all" ? jobs : jobs.filter((j) => j.status === filter),
@@ -71,9 +80,62 @@ export function JobsTablePanel({
         ) : undefined
       }
     >
-      {filteredJobs.length === 0 ? (
-        <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-          No jobs found
+      {isLoading ? (
+        <div className="flex flex-col h-full overflow-hidden">
+          <div className="flex-1 overflow-auto">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-card">
+                <TableRow className="text-[10px] text-muted-foreground uppercase tracking-wider border-input hover:bg-transparent">
+                  <TableHead className="text-[10px] text-muted-foreground font-medium h-8">ID</TableHead>
+                  {!hideFunction && (
+                    <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Function</TableHead>
+                  )}
+                  <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Status</TableHead>
+                  <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Duration</TableHead>
+                  <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Worker</TableHead>
+                  <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Age</TableHead>
+                  <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Progress</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <TableRow key={`job-skeleton-${index}`} className="border-border">
+                    <TableCell className="py-1.5">
+                      <Skeleton className="h-3 w-20" />
+                    </TableCell>
+                    {!hideFunction && (
+                      <TableCell className="py-1.5">
+                        <Skeleton className="h-3 w-24" />
+                      </TableCell>
+                    )}
+                    <TableCell className="py-1.5">
+                      <Skeleton className="h-4 w-14" />
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      <Skeleton className="h-3 w-16" />
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      <Skeleton className="h-3 w-24" />
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      <Skeleton className="h-3 w-12" />
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      <Skeleton className="h-2 w-20" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      ) : filteredJobs.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+          <div className="rounded-full bg-muted/60 p-2">
+            <Inbox className="h-4 w-4" />
+          </div>
+          <div className="text-sm font-medium">No jobs yet</div>
+          <div className="text-xs text-muted-foreground/80">Jobs will show up here as workers report progress.</div>
         </div>
       ) : (
         <div className="flex flex-col h-full overflow-hidden">
@@ -92,7 +154,7 @@ export function JobsTablePanel({
                   <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Progress</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody ref={bodyRef}>
                 {filteredJobs.map((job) => (
                   <TableRow
                     key={job.id}

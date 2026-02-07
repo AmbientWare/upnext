@@ -9,11 +9,8 @@ import type {
   DashboardStats,
   FunctionDetailResponse,
   FunctionsListResponse,
-  Job,
   JobListResponse,
-  JobStatsResponse,
   JobTrendsResponse,
-  WorkerInstance,
   WorkersListResponse,
 } from "./types";
 
@@ -87,31 +84,6 @@ export async function getJobs(params: GetJobsParams = {}): Promise<JobListRespon
   return handleResponse<JobListResponse>(response);
 }
 
-export async function getJob(jobId: string): Promise<Job> {
-  const response = await fetch(`${API_BASE}/jobs/${jobId}`);
-  return handleResponse<Job>(response);
-}
-
-export interface GetJobStatsParams {
-  function?: string;
-  after?: string;
-  before?: string;
-}
-
-export async function getJobStats(params: GetJobStatsParams = {}): Promise<JobStatsResponse> {
-  const searchParams = new URLSearchParams();
-
-  if (params.function) searchParams.set('function', params.function);
-  if (params.after) searchParams.set('after', params.after);
-  if (params.before) searchParams.set('before', params.before);
-
-  const query = searchParams.toString();
-  const url = `${API_BASE}/jobs/stats${query ? `?${query}` : ''}`;
-
-  const response = await fetch(url);
-  return handleResponse<JobStatsResponse>(response);
-}
-
 export interface GetJobTrendsParams {
   hours?: number;
   function?: string;
@@ -132,20 +104,6 @@ export async function getJobTrends(params: GetJobTrendsParams = {}): Promise<Job
   return handleResponse<JobTrendsResponse>(response);
 }
 
-export async function cancelJob(jobId: string): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, {
-    method: 'POST',
-  });
-  return handleResponse<{ status: string }>(response);
-}
-
-export async function retryJob(jobId: string): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE}/jobs/${jobId}/retry`, {
-    method: 'POST',
-  });
-  return handleResponse<{ status: string }>(response);
-}
-
 // =============================================================================
 // Workers
 // =============================================================================
@@ -153,11 +111,6 @@ export async function retryJob(jobId: string): Promise<{ status: string }> {
 export async function getWorkers(): Promise<WorkersListResponse> {
   const response = await fetch(`${API_BASE}/workers`);
   return handleResponse<WorkersListResponse>(response);
-}
-
-export async function getWorker(workerId: string): Promise<WorkerInstance> {
-  const response = await fetch(`${API_BASE}/workers/${workerId}`);
-  return handleResponse<WorkerInstance>(response);
 }
 
 // =============================================================================
@@ -219,12 +172,9 @@ export const queryKeys = {
   dashboardStats: ['dashboard', 'stats'] as const,
 
   jobs: (params?: GetJobsParams) => ['jobs', params] as const,
-  job: (id: string) => ['jobs', id] as const,
-  jobStats: (params?: GetJobStatsParams) => ['jobs', 'stats', params] as const,
   jobTrends: (params?: GetJobTrendsParams) => ['jobs', 'trends', params] as const,
 
   workers: ['workers'] as const,
-  worker: (id: string) => ['workers', id] as const,
 
   functions: (params?: GetFunctionsParams) => ['functions', params] as const,
   function: (name: string) => ['functions', name] as const,

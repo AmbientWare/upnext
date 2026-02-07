@@ -4,10 +4,11 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 EVENTS_STREAM = "conduit:status:events"
 API_REQUESTS_STREAM = "conduit:api:requests"
+EVENTS_PUBSUB_CHANNEL = "conduit:status:events:pubsub"
 
 
 class EventType(StrEnum):
@@ -84,6 +85,38 @@ class JobCheckpointEvent(BaseModel):
     job_id: str
     state: dict[str, Any]
     checkpointed_at: datetime
+
+
+class SSEJobEvent(BaseModel):
+    """Event payload streamed to browser clients via SSE.
+
+    Only includes fields the dashboard needs — sensitive data like
+    kwargs, result, traceback, and checkpoint state are excluded.
+    Extra fields from the source event are silently dropped.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    type: str
+    job_id: str = ""
+    worker_id: str = ""
+    function: str | None = None
+    # job.started / job.completed / job.failed
+    attempt: int | None = None
+    max_retries: int | None = None
+    started_at: datetime | None = None
+    # job.completed
+    duration_ms: float | None = None
+    completed_at: datetime | None = None
+    # job.failed
+    error: str | None = None
+    failed_at: datetime | None = None
+    # job.retrying
+    current_attempt: int | None = None
+    next_attempt: int | None = None
+    # job.progress
+    progress: float | None = None
+    message: str | None = None
 
 
 class EventRequest(BaseModel):
