@@ -40,6 +40,14 @@ async def lifespan(app: FastAPI):
         await db.create_tables()
     else:
         logger.info("Database connected (PostgreSQL)")
+        required_tables = {"job_history", "artifacts", "pending_artifacts"}
+        missing_tables = await db.get_missing_tables(required_tables)
+        if missing_tables:
+            raise RuntimeError(
+                "Database schema is missing required tables: "
+                + ", ".join(missing_tables)
+                + ". Run Alembic migrations (e.g. `alembic upgrade head`) before starting."
+            )
 
     # Connect to Redis and start stream subscribers
     subscriber = None

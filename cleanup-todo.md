@@ -47,7 +47,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** wire both endpoints to queue operations (or explicit `501 Not Implemented` until done), enforce state validation, and return truthful status/result payloads.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/jobs.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/queue.py`
 
-- [ ] **[P1] Ensure schema readiness for PostgreSQL startup**
+- [x] **[P1] Ensure schema readiness for PostgreSQL startup**
   Server startup only connects for PostgreSQL and assumes schema is already migrated; missing migrations can cause runtime failures after boot.
   **What to update:** add startup guard to validate required tables/schema version (or run migrations as part of deploy/startup workflow), and fail fast with clear error if schema is stale.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/main.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/alembic/env.py`
