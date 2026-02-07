@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 import { Panel } from "@/components/shared";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getApiTrends, queryKeys } from "@/lib/conduit-api";
+import { BarChart4 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -50,7 +52,7 @@ export function ApiTrendsPanel({ className }: ApiTrendsPanelProps) {
 
   const hours = timeRangeOptions.find((t) => t.value === timeRange)?.hours ?? 24;
 
-  const { data: trendsData } = useQuery({
+  const { data: trendsData, isPending } = useQuery({
     queryKey: queryKeys.apiTrends({ hours }),
     queryFn: () => getApiTrends({ hours }),
     refetchInterval: 30000,
@@ -116,9 +118,20 @@ export function ApiTrendsPanel({ className }: ApiTrendsPanelProps) {
       }
     >
       <div className="flex-1 min-h-0">
-        {data.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-muted-foreground text-xs">
-            No API data available
+        {isPending ? (
+          <div className="h-full flex flex-col gap-3">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="flex-1 w-full" />
+          </div>
+        ) : data.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2">
+            <div className="rounded-full bg-muted/60 p-2">
+              <BarChart4 className="h-4 w-4" />
+            </div>
+            <div className="text-sm font-medium">No API data yet</div>
+            <div className="text-xs text-muted-foreground/80">
+              Trends will populate after API traffic begins.
+            </div>
           </div>
         ) : (
           <ChartContainer config={chartConfig} className="h-full w-full">
@@ -145,6 +158,8 @@ export function ApiTrendsPanel({ className }: ApiTrendsPanelProps) {
                   stackId="a"
                   fill={`var(--color-${status})`}
                   radius={status === "2xx" ? [2, 2, 0, 0] : 0}
+                  animationDuration={300}
+                  animationEasing="ease-out"
                 />
               ))}
             </BarChart>
@@ -154,4 +169,3 @@ export function ApiTrendsPanel({ className }: ApiTrendsPanelProps) {
     </Panel>
   );
 }
-

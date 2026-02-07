@@ -9,6 +9,7 @@ import {
 } from "@/lib/conduit-api";
 import { JobsTablePanel } from "@/components/shared";
 import { SystemOverviewPanel } from "./-components/system-overview-panel";
+import { SystemOverviewSkeleton } from "./-components/skeletons";
 import { TrendsPanel } from "./-components/trends-panel";
 import { ApiTrendsPanel } from "./-components/api-trends-panel";
 
@@ -17,43 +18,49 @@ export const Route = createFileRoute("/dashboard/")({
 });
 
 function DataMatrixDashboard() {
-  const { data: dashboardStats } = useQuery({
+  const { data: dashboardStats, isPending: isDashboardPending } = useQuery({
     queryKey: queryKeys.dashboardStats,
     queryFn: getDashboardStats,
-    refetchInterval: 10000,
+    refetchInterval: 30000,
   });
 
-  const { data: workersData } = useQuery({
+  const { data: workersData, isPending: isWorkersPending } = useQuery({
     queryKey: queryKeys.workers,
     queryFn: getWorkers,
-    refetchInterval: 10000,
+    refetchInterval: 30000,
   });
 
-  const { data: apisData } = useQuery({
+  const { data: apisData, isPending: isApisPending } = useQuery({
     queryKey: queryKeys.apis,
     queryFn: getApis,
-    refetchInterval: 15000,
+    refetchInterval: 45000,
   });
 
-  const { data: jobsData } = useQuery({
+  const { data: jobsData, isPending: isJobsPending } = useQuery({
     queryKey: queryKeys.jobs({ limit: 50 }),
     queryFn: () => getJobs({ limit: 50 }),
-    refetchInterval: 5000,
+    refetchInterval: 30000,
   });
 
   const workers = workersData?.workers ?? [];
   const apis = apisData?.apis ?? [];
   const jobs = jobsData?.jobs ?? [];
 
+  const isOverviewPending = isDashboardPending || isWorkersPending || isApisPending;
+
   return (
     <div className="p-4 flex flex-col gap-3 h-full overflow-auto">
       {/* System Overview */}
-      <SystemOverviewPanel
-        stats={dashboardStats}
-        workers={workers}
-        apis={apis}
-        className="shrink-0"
-      />
+      {isOverviewPending ? (
+        <SystemOverviewSkeleton />
+      ) : (
+        <SystemOverviewPanel
+          stats={dashboardStats}
+          workers={workers}
+          apis={apis}
+          className="shrink-0"
+        />
+      )}
 
       {/* Trends Charts */}
       <div className="flex gap-3 h-56 shrink-0">
@@ -62,7 +69,7 @@ function DataMatrixDashboard() {
       </div>
 
       {/* Recent Jobs */}
-      <JobsTablePanel jobs={jobs} showFilters />
+      <JobsTablePanel jobs={jobs} showFilters isLoading={isJobsPending} />
     </div>
   );
 }

@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { cn, formatTimeAgo } from "@/lib/utils";
 import { getApis, queryKeys } from "@/lib/conduit-api";
-import type { ApiInfo } from "@/lib/types";
-import { Search, X, Circle } from "lucide-react";
+import { Search, X, Cloud } from "lucide-react";
+import { useAnimatedNumber } from "@/hooks/use-animated-number";
+import { ApisTableSkeleton } from "./-components/skeletons";
+import { ApisTable } from "./-components/apis-table";
 import {
   Select,
   SelectContent,
@@ -12,14 +13,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const Route = createFileRoute("/apis/")({
   component: ApisPage,
@@ -31,10 +24,10 @@ function ApisPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(STATUS_DEFAULT);
 
-  const { data: apisData } = useQuery({
+  const { data: apisData, isPending } = useQuery({
     queryKey: queryKeys.apis,
     queryFn: getApis,
-    refetchInterval: 15000,
+    refetchInterval: 45000,
   });
 
   const allApis = apisData?.apis ?? [];
@@ -69,6 +62,11 @@ function ApisPage() {
 
   const avgLatency = filteredApis.length > 0 ? Math.round(totals.avgLatency / filteredApis.length) : 0;
   const requestsPerMin = Math.round(totals.requestsPerMin);
+  const animatedRequestsValue = useAnimatedNumber(requestsPerMin);
+  const animatedLatency = useAnimatedNumber(avgLatency);
+  const animatedRequests = Number.isNaN(Number(animatedRequestsValue))
+    ? animatedRequestsValue
+    : Number(animatedRequestsValue).toLocaleString();
 
   const hasNonDefaultFilters = search || statusFilter !== STATUS_DEFAULT;
 
@@ -118,10 +116,10 @@ function ApisPage() {
 
         <div className="flex items-center gap-4 text-xs">
           <span className="text-muted-foreground">
-            Total: <span className="mono text-muted-foreground">{requestsPerMin.toLocaleString()} req/min</span>
+            Total: <span className="mono text-muted-foreground">{animatedRequests} req/min</span>
           </span>
           <span className="text-muted-foreground">
-            Avg Latency: <span className="mono text-muted-foreground">{avgLatency}ms</span>
+            Avg Latency: <span className="mono text-muted-foreground">{animatedLatency}ms</span>
           </span>
         </div>
 
@@ -132,11 +130,16 @@ function ApisPage() {
 
       {/* APIs Table */}
       <div className="matrix-panel rounded flex-1 overflow-hidden">
-        {filteredApis.length === 0 ? (
+        {isPending ? (
+          <ApisTableSkeleton />
+        ) : filteredApis.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <div className="text-sm font-medium">No APIs found</div>
-            <div className="text-xs mt-1">
-              {hasNonDefaultFilters ? "Try adjusting your filters" : "APIs will appear here when requests are made"}
+            <div className="rounded-full bg-muted/60 p-2 mb-2">
+              <Cloud className="h-4 w-4" />
+            </div>
+            <div className="text-sm font-medium">No API traffic yet</div>
+            <div className="text-xs mt-1 text-muted-foreground/80">
+              {hasNonDefaultFilters ? "Try adjusting your filters" : "APIs will appear here once requests start flowing."}
             </div>
           </div>
         ) : (
@@ -144,75 +147,5 @@ function ApisPage() {
         )}
       </div>
     </div>
-  );
-}
-
-function ApisTable({ apis }: { apis: ApiInfo[] }) {
-  return (
-    <Table>
-      <TableHeader className="sticky top-0 z-10 bg-card">
-        <TableRow className="text-[10px] text-muted-foreground uppercase tracking-wider border-input hover:bg-transparent">
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Name</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Instances</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Endpoints</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Requests (24h)</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Avg Latency</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Error Rate</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {apis.map((api) => (
-          <TableRow key={api.name} className="border-border hover:bg-accent">
-            <TableCell className="py-2">
-              <div className="flex items-center gap-2">
-                <Circle className={cn("w-2 h-2 shrink-0", api.active ? "fill-emerald-400 text-emerald-400" : "fill-muted-foreground/60 text-muted-foreground/60")} />
-                <span className="text-[11px] text-foreground">{api.name}</span>
-              </div>
-            </TableCell>
-            <TableCell className="py-2">
-              {(api.instances ?? []).length > 0 ? (
-                <div className="flex flex-col gap-0.5">
-                  {(api.instances ?? []).map((inst) => (
-                    <div key={inst.id} className="flex items-center gap-1.5">
-                      <span className="mono text-[10px] text-muted-foreground">{inst.id}</span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {inst.host}:{inst.port}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground/60">
-                        {formatTimeAgo(new Date(inst.last_heartbeat))}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-[10px] text-muted-foreground/60">{"\u2014"}</span>
-              )}
-            </TableCell>
-            <TableCell className="mono text-[11px] text-muted-foreground py-2">
-              {api.endpoint_count}
-            </TableCell>
-            <TableCell className="mono text-[11px] text-muted-foreground py-2">
-              {api.requests_24h.toLocaleString()}
-            </TableCell>
-            <TableCell className="mono text-[11px] text-muted-foreground py-2">{Math.round(api.avg_latency_ms)}ms</TableCell>
-            <TableCell className="mono text-[11px] py-2">
-              <span
-                className={cn(
-                  api.error_rate === 0
-                    ? "text-muted-foreground"
-                    : api.error_rate < 1
-                      ? "text-emerald-400"
-                      : api.error_rate < 2
-                        ? "text-amber-400"
-                        : "text-red-400"
-                )}
-              >
-                {api.error_rate.toFixed(1)}%
-              </span>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
   );
 }

@@ -83,7 +83,9 @@ function RootLayout() {
 
           {/* Main Content */}
           <main className="flex-1 overflow-hidden">
-            <Outlet />
+            <div key={router.location.pathname} className="route-fade h-full">
+              <Outlet />
+            </div>
           </main>
         </div>
       </div>
