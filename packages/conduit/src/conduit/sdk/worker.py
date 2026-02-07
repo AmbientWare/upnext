@@ -567,6 +567,7 @@ class Worker:
                 function=function_name,
                 kwargs=kwargs,
             )
+            job.mark_started(self._worker_id or "call")
             ctx = Context.from_job(job)
             set_current_context(ctx)
 

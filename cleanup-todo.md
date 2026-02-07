@@ -37,7 +37,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** store a lock token and release via compare-and-delete Lua script (same pattern used in cleanup service lock release).
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/queue/redis/sweeper.py`
 
-- [ ] **[P3] Normalize `Worker.execute()` started-attempt numbering**
+- [x] **[P3] Normalize `Worker.execute()` started-attempt numbering**
   Direct `Worker.execute()` emits `job.started` with attempt `0`, while the model and normal worker flow treat started attempts as 1-indexed.
   **What to update:** increment/mark attempt before emitting `job.started` (or emit `attempt=1` explicitly) so event semantics stay consistent across execution modes.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/sdk/worker.py`, `/Users/connormclean/Documents/programs/conduit/packages/shared/src/shared/models.py`
