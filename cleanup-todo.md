@@ -82,7 +82,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** add a new CLI subcommand (e.g. `conduit server start`) that launches `server.main:app` with configurable host/port/reload and clear env wiring (`CONDUIT_DATABASE_URL`, `CONDUIT_REDIS_URL`). Reuse existing CLI logging/error UX and document usage.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/cli/__init__.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/cli/run.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/main.py`
 
-- [ ] **[P1] Do not mark stream consumer group as initialized after failed creation**
+- [x] **[P1] Do not mark stream consumer group as initialized after failed creation**
   `StreamSubscriber._ensure_consumer_group()` sets `_group_created=True` even when group creation fails for reasons other than `BUSYGROUP`. This can leave subscriber stuck in a degraded loop that never retries proper group creation.
   **What to update:** set `_group_created=True` only on success or confirmed `BUSYGROUP`; keep retry path for transient Redis errors.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/stream_subscriber.py`
