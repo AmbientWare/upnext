@@ -18,6 +18,7 @@ export function ProgressBar({
   className,
 }: ProgressBarProps) {
   const percentage = Math.min((value / max) * 100, 100);
+  const isActive = percentage > 0 && percentage < 100;
 
   const getColorClass = () => {
     if (color === "auto") {
@@ -37,7 +38,14 @@ export function ProgressBar({
   return (
     <div className={cn("flex items-center gap-2", className)}>
       <div className={cn("flex-1 bg-muted rounded overflow-hidden", size === "sm" ? "h-1.5" : "h-2")}>
-        <div className={cn("h-full rounded transition-all", getColorClass())} style={{ width: `${percentage}%` }} />
+        <div
+          className={cn(
+            "h-full rounded transition-all duration-500 ease-out progress-bar-fill",
+            isActive && "progress-bar-fill-active",
+            getColorClass()
+          )}
+          style={{ width: `${percentage}%` }}
+        />
       </div>
       {showLabel && <span className="mono text-[10px] text-muted-foreground">{percentage.toFixed(0)}%</span>}
     </div>

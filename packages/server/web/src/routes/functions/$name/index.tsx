@@ -4,6 +4,7 @@ import { cn, formatNumber, formatDuration, formatTimeAgo, formatTimeUntil } from
 import { getFunction, getJobs, queryKeys } from "@/lib/conduit-api";
 import type { FunctionType } from "@/lib/types";
 import { Panel, JobsTablePanel } from "@/components/shared";
+import { FunctionDetailSkeleton } from "./-components/skeletons";
 import {
   ArrowLeft,
   Circle,
@@ -39,24 +40,28 @@ function FunctionDetailPage() {
   const decodedName = decodeURIComponent(name);
 
   // Data fetching
-  const { data: fn } = useQuery({
+  const { data: fn, isPending: isFunctionPending } = useQuery({
     queryKey: queryKeys.function(decodedName),
     queryFn: () => getFunction(decodedName),
-    refetchInterval: 10000,
+    refetchInterval: 30000,
   });
 
-  const { data: jobsData } = useQuery({
+  const { data: jobsData, isPending: isJobsPending } = useQuery({
     queryKey: queryKeys.jobs({ function: decodedName, limit: 50 }),
     queryFn: () => getJobs({ function: decodedName, limit: 50 }),
-    refetchInterval: 5000,
+    refetchInterval: 30000,
   });
 
   const jobs = jobsData?.jobs ?? [];
 
+  if (isFunctionPending && !fn) {
+    return <FunctionDetailSkeleton />;
+  }
+
   if (!fn) {
     return (
       <div className="p-4 h-full flex items-center justify-center text-muted-foreground text-sm">
-        Loading...
+        Function not found.
       </div>
     );
   }
@@ -161,6 +166,7 @@ function FunctionDetailPage() {
               label="Last Run"
               value={fn.last_run_at ? formatTimeAgo(new Date(fn.last_run_at)) : "\u2014"}
               sub={fn.last_run_status ?? undefined}
+              animate={false}
             />
           </div>
         </Panel>
@@ -174,6 +180,7 @@ function FunctionDetailPage() {
         jobs={jobs}
         hideFunction
         showFilters
+        isLoading={isJobsPending}
       />
     </div>
   );
