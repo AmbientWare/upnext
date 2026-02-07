@@ -42,7 +42,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** increment/mark attempt before emitting `job.started` (or emit `attempt=1` explicitly) so event semantics stay consistent across execution modes.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/sdk/worker.py`, `/Users/connormclean/Documents/programs/conduit/packages/shared/src/shared/models.py`
 
-- [ ] **[P1] Implement real cancel/retry behavior in jobs API**
+- [x] **[P1] Implement real cancel/retry behavior in jobs API**
   `POST /jobs/{job_id}/cancel` and `POST /jobs/{job_id}/retry` are placeholder stubs that return success-like responses without actually driving queue state.
   **What to update:** wire both endpoints to queue operations (or explicit `501 Not Implemented` until done), enforce state validation, and return truthful status/result payloads.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/jobs.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/queue.py`

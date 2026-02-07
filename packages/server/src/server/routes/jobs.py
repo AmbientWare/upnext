@@ -262,12 +262,16 @@ async def get_job(job_id: str) -> JobHistoryResponse:
 @router.post("/{job_id}/cancel")
 async def cancel_job(job_id: str) -> dict:
     """Cancel a running or queued job."""
-    # TODO: Implement job cancellation via queue
-    return {"success": True}
+    raise HTTPException(
+        status_code=501,
+        detail=f"Job cancellation is not implemented yet for job {job_id}",
+    )
 
 
 @router.post("/{job_id}/retry")
 async def retry_job(job_id: str) -> dict:
     """Retry a failed job."""
-    # TODO: Implement job retry via queue
-    return {"job_id": job_id}
+    raise HTTPException(
+        status_code=501,
+        detail=f"Job retry is not implemented yet for job {job_id}",
+    )
