@@ -67,7 +67,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** add explicit `timeout` parameter to `wait()`/`wait_sync()` (or default to task timeout/no timeout), pass through to `subscribe_job`, and document expected behavior.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/handlers/task_handle.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/queue/base.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/queue/redis/queue.py`
 
-- [ ] **[P2] Apply `--only` filtering before worker initialization in CLI run**
+- [x] **[P2] Apply `--only` filtering before worker initialization in CLI run**
   `conduit run` initializes all discovered workers before applying `--only` filters. Running API-only subsets can still fail due to unrelated worker Redis requirements.
   **What to update:** filter components first, then initialize only workers that will actually run.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/cli/run.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/cli/_display.py`
