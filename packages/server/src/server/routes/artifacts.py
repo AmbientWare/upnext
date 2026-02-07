@@ -1,5 +1,6 @@
 """Artifact routes for job outputs."""
 
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Response
@@ -19,6 +20,17 @@ from server.db.session import get_database
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["artifacts"])
+
+
+def _calculate_artifact_size(data: object) -> int | None:
+    """Compute approximate payload size for inline text/json artifacts."""
+    if data is None:
+        return None
+    if isinstance(data, str):
+        return len(data.encode("utf-8"))
+    if isinstance(data, (dict, list)):
+        return len(json.dumps(data).encode("utf-8"))
+    return None
 
 
 @router.post(
@@ -41,20 +53,13 @@ async def create_artifact(
     Workers call this via ctx.create_artifact() to store outputs
     like text, JSON data, or images.
     """
+    # Size computation is independent of database availability.
+    size_bytes = _calculate_artifact_size(request.data)
+
     try:
         db = get_database()
     except RuntimeError:
         raise HTTPException(status_code=503, detail="Database not available")
-
-    # Calculate size for text/json data
-    size_bytes = None
-    if request.data is not None:
-        if isinstance(request.data, str):
-            size_bytes = len(request.data.encode("utf-8"))
-        elif isinstance(request.data, (dict, list)):
-            import json
-
-            size_bytes = len(json.dumps(request.data).encode("utf-8"))
 
     async with db.session() as session:
         job_repo = JobRepository(session)

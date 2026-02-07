@@ -6,6 +6,7 @@ so only one server instance performs cleanup at a time.
 
 import asyncio
 import logging
+import random
 from uuid import uuid4
 from typing import Any
 
@@ -36,6 +37,7 @@ class CleanupService:
         pending_retention_hours: int = 24,
         pending_promote_batch: int = 500,
         pending_promote_max_loops: int = 20,
+        startup_jitter_seconds: float = 30.0,
     ) -> None:
         self._redis = redis_client
         self._retention_days = retention_days
@@ -43,6 +45,7 @@ class CleanupService:
         self._pending_retention_hours = pending_retention_hours
         self._pending_promote_batch = pending_promote_batch
         self._pending_promote_max_loops = pending_promote_max_loops
+        self._startup_jitter_seconds = max(0.0, startup_jitter_seconds)
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -54,7 +57,8 @@ class CleanupService:
             f"Cleanup service started "
             f"(retention={self._retention_days}d, "
             f"interval={self._interval_seconds // 3600}h, "
-            f"pending_retention={self._pending_retention_hours}h)"
+            f"pending_retention={self._pending_retention_hours}h, "
+            f"startup_jitter={self._startup_jitter_seconds:.0f}s)"
         )
 
     async def stop(self) -> None:
@@ -71,6 +75,12 @@ class CleanupService:
 
     async def _loop(self) -> None:
         """Run cleanup on interval."""
+        # Delay first cleanup run so restart waves do not stampede the lock.
+        if self._startup_jitter_seconds > 0:
+            await asyncio.sleep(random.uniform(0, self._startup_jitter_seconds))
+        else:
+            await asyncio.sleep(self._interval_seconds)
+
         while True:
             await self._run_cleanup()
             await asyncio.sleep(self._interval_seconds)
