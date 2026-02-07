@@ -26,11 +26,14 @@ from shared.schemas import (
     ApiStats,
     ApiTrendHour,
     ApiTrendsResponse,
+    ArtifactCreateResponse,
     ArtifactListResponse,
+    ArtifactQueuedResponse,
     ArtifactResponse,
     CreateArtifactRequest,
     DashboardStats,
     EndpointsListResponse,
+    ErrorResponse,
     FunctionDetailResponse,
     FunctionInfo,
     FunctionsListResponse,
@@ -71,9 +74,12 @@ __all__ = [
     "JobCheckpointEvent",
     # Artifacts
     "ArtifactType",
+    "ArtifactCreateResponse",
+    "ArtifactQueuedResponse",
     "ArtifactResponse",
     "ArtifactListResponse",
     "CreateArtifactRequest",
+    "ErrorResponse",
     # Health
     "HealthResponse",
     # Pattern matching

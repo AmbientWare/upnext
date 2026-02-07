@@ -6,15 +6,23 @@ so only one server instance performs cleanup at a time.
 
 import asyncio
 import logging
+from uuid import uuid4
 from typing import Any
 
-from server.db.repository import JobRepository
+from server.db.repository import ArtifactRepository, JobRepository
 from server.db.session import get_database
 
 logger = logging.getLogger(__name__)
 
 CLEANUP_LOCK_KEY = "conduit:cleanup_lock"
 CLEANUP_LOCK_TTL = 300  # 5 minutes max for cleanup to run
+RELEASE_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+else
+  return 0
+end
+"""
 
 
 class CleanupService:
@@ -25,10 +33,16 @@ class CleanupService:
         redis_client: Any | None = None,
         retention_days: int = 30,
         interval_hours: int = 1,
+        pending_retention_hours: int = 24,
+        pending_promote_batch: int = 500,
+        pending_promote_max_loops: int = 20,
     ) -> None:
         self._redis = redis_client
         self._retention_days = retention_days
         self._interval_seconds = interval_hours * 3600
+        self._pending_retention_hours = pending_retention_hours
+        self._pending_promote_batch = pending_promote_batch
+        self._pending_promote_max_loops = pending_promote_max_loops
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -39,7 +53,8 @@ class CleanupService:
         logger.info(
             f"Cleanup service started "
             f"(retention={self._retention_days}d, "
-            f"interval={self._interval_seconds // 3600}h)"
+            f"interval={self._interval_seconds // 3600}h, "
+            f"pending_retention={self._pending_retention_hours}h)"
         )
 
     async def stop(self) -> None:
@@ -57,17 +72,19 @@ class CleanupService:
     async def _loop(self) -> None:
         """Run cleanup on interval."""
         while True:
-            await asyncio.sleep(self._interval_seconds)
             await self._run_cleanup()
+            await asyncio.sleep(self._interval_seconds)
 
     async def _run_cleanup(self) -> None:
         """Acquire lock and delete old records."""
         acquired = False
+        lock_token: str | None = None
 
         if self._redis:
             try:
+                lock_token = uuid4().hex
                 acquired = await self._redis.set(
-                    CLEANUP_LOCK_KEY, "1", nx=True, ex=CLEANUP_LOCK_TTL
+                    CLEANUP_LOCK_KEY, lock_token, nx=True, ex=CLEANUP_LOCK_TTL
                 )
             except Exception:
                 acquired = False
@@ -81,10 +98,33 @@ class CleanupService:
         try:
             db = get_database()
             async with db.session() as session:
-                repo = JobRepository(session)
-                deleted = await repo.cleanup_old_records(
+                job_repo = JobRepository(session)
+                artifact_repo = ArtifactRepository(session)
+
+                # Reconcile pending artifacts in bounded batches.
+                promoted = 0
+                for _ in range(self._pending_promote_max_loops):
+                    batch = await artifact_repo.promote_ready_pending(
+                        limit=self._pending_promote_batch
+                    )
+                    promoted += batch
+                    if batch < self._pending_promote_batch:
+                        break
+
+                expired_pending = await artifact_repo.cleanup_stale_pending(
+                    retention_hours=self._pending_retention_hours
+                )
+
+                deleted = await job_repo.cleanup_old_records(
                     retention_days=self._retention_days
                 )
+                if promoted > 0:
+                    logger.info(f"Cleanup: promoted {promoted} pending artifacts")
+                if expired_pending > 0:
+                    logger.info(
+                        f"Cleanup: deleted {expired_pending} stale pending artifacts "
+                        f"older than {self._pending_retention_hours} hours"
+                    )
                 if deleted > 0:
                     logger.info(
                         f"Cleanup: deleted {deleted} job records "
@@ -93,8 +133,13 @@ class CleanupService:
         except Exception as e:
             logger.warning(f"Cleanup error: {e}")
         finally:
-            if self._redis:
+            if self._redis and acquired and lock_token:
                 try:
-                    await self._redis.delete(CLEANUP_LOCK_KEY)
+                    await self._redis.eval(
+                        RELEASE_LOCK_SCRIPT,
+                        1,
+                        CLEANUP_LOCK_KEY,
+                        lock_token,
+                    )
                 except Exception:
                     pass

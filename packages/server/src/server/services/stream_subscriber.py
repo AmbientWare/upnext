@@ -20,7 +20,7 @@ from typing import Any
 
 from shared.events import EVENTS_PUBSUB_CHANNEL, EVENTS_STREAM, SSEJobEvent
 
-from server.routes.events import _process_event
+from server.services.event_processing import process_event
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +185,7 @@ class StreamSubscriber:
         """
         events: list[tuple[str, dict[str, Any]]] = []
         event_ids: list[str] = []
+        seen_event_ids: set[str] = set()
 
         # Read new events
         block_ms = 0 if drain else int(self._config.poll_interval * 1000 / 4)
@@ -206,6 +207,9 @@ class StreamSubscriber:
                             if isinstance(event_id, bytes)
                             else event_id
                         )
+                        if eid in seen_event_ids:
+                            continue
+                        seen_event_ids.add(eid)
                         event_ids.append(eid)
                         events.append((eid, self._decode_event_data(event_data)))
         except Exception as e:
@@ -231,11 +235,11 @@ class StreamSubscriber:
                                 if isinstance(event_id, bytes)
                                 else event_id
                             )
-                            if eid not in event_ids:
-                                event_ids.append(eid)
-                                events.append(
-                                    (eid, self._decode_event_data(event_data))
-                                )
+                            if eid in seen_event_ids:
+                                continue
+                            seen_event_ids.add(eid)
+                            event_ids.append(eid)
+                            events.append((eid, self._decode_event_data(event_data)))
 
                         if claimed[1]:
                             logger.debug(f"Claimed {len(claimed[1])} stale events")
@@ -244,6 +248,10 @@ class StreamSubscriber:
 
         if not events:
             return 0
+
+        # Keep processing order stable even when mixing fresh and reclaimed events.
+        # Reclaimed events can be older than newly-read events.
+        events.sort(key=lambda item: self._event_id_sort_key(item[0]))
 
         # Process events
         processed = 0
@@ -255,13 +263,18 @@ class StreamSubscriber:
                 job_id = data.get("job_id", "")
                 worker_id = data.get("worker_id", "")
 
-                # Parse nested data field
-                event_data = {"job_id": job_id}
+                # Parse nested payload and then enforce canonical stream metadata.
+                event_data: dict[str, Any] = {}
                 if "data" in data:
                     try:
-                        event_data.update(json.loads(data["data"]))
+                        parsed = json.loads(data["data"])
+                        if isinstance(parsed, dict):
+                            event_data.update(parsed)
                     except (json.JSONDecodeError, TypeError):
                         pass
+                event_data["job_id"] = job_id
+                event_data.pop("worker_id", None)
+                event_data.pop("type", None)
 
                 await self._handle_event(event_type, event_data, worker_id)
                 processed += 1
@@ -284,6 +297,17 @@ class StreamSubscriber:
 
         return processed
 
+    @staticmethod
+    def _event_id_sort_key(event_id: str) -> tuple[int, int]:
+        """Parse Redis stream event IDs ("<ms>-<seq>") for chronological sorting."""
+        try:
+            ms_str, seq_str = event_id.split("-", 1)
+            return (int(ms_str), int(seq_str))
+        except (ValueError, TypeError):
+            # Keep malformed IDs last, preserving behavior for normal IDs.
+            max_id = 2**63 - 1
+            return (max_id, max_id)
+
     async def _handle_event(
         self,
         event_type: str,
@@ -291,8 +315,9 @@ class StreamSubscriber:
         worker_id: str,
     ) -> None:
         """Process a single event by writing to database and publishing to SSE."""
-        await _process_event(event_type, data, worker_id)
-        await self._publish_event(event_type, data, worker_id)
+        applied = await process_event(event_type, data, worker_id)
+        if applied:
+            await self._publish_event(event_type, data, worker_id)
 
     async def _publish_event(
         self,
