@@ -129,3 +129,47 @@ class Artifact(Base):
 
     def __repr__(self) -> str:
         return f"<Artifact(id={self.id!r}, job_id={self.job_id!r}, name={self.name!r})>"
+
+
+class PendingArtifact(Base):
+    """
+    Staging table for artifacts received before job_history exists.
+
+    Rows are promoted into artifacts once the corresponding job row is persisted.
+    """
+
+    __tablename__ = "pending_artifacts"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Job linkage (no FK by design to allow pre-job buffering)
+    job_id: Mapped[str] = mapped_column(String(36), nullable=False)
+
+    # Artifact identity
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Content
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    data: Mapped[Any] = mapped_column(JSON, nullable=True)
+    path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("ix_pending_artifacts_job_id", "job_id"),
+        Index("ix_pending_artifacts_created_at", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<PendingArtifact(id={self.id!r}, job_id={self.job_id!r}, "
+            f"name={self.name!r})>"
+        )

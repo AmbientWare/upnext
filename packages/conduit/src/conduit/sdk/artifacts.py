@@ -5,12 +5,20 @@ import logging
 from typing import Any, Literal, overload
 
 import aiohttp
+from pydantic import TypeAdapter
 from shared.artifacts import ArtifactType
+from shared.schemas import ArtifactCreateResponse, ErrorResponse
 
 from conduit.config import get_settings
 from conduit.sdk.context import get_current_context
 
 logger = logging.getLogger(__name__)
+
+
+ArtifactCreateResult = ArtifactCreateResponse | ErrorResponse
+
+_artifact_create_response_adapter = TypeAdapter(ArtifactCreateResponse)
+_error_response_adapter = TypeAdapter(ErrorResponse)
 
 
 # TEXT: plain string
@@ -19,7 +27,7 @@ async def create_artifact(
     name: str,
     data: str,
     artifact_type: Literal[ArtifactType.TEXT],
-) -> dict[str, Any]: ...
+) -> ArtifactCreateResult: ...
 
 
 # JSON: dict or list (default)
@@ -28,7 +36,7 @@ async def create_artifact(
     name: str,
     data: dict[str, Any] | list[Any],
     artifact_type: Literal[ArtifactType.JSON] = ...,
-) -> dict[str, Any]: ...
+) -> ArtifactCreateResult: ...
 
 
 # IMAGE: base64 string
@@ -43,7 +51,7 @@ async def create_artifact(
         ArtifactType.GIF,
         ArtifactType.SVG,
     ],
-) -> dict[str, Any]: ...
+) -> ArtifactCreateResult: ...
 
 
 # FILE: base64 string
@@ -58,14 +66,14 @@ async def create_artifact(
         ArtifactType.HTML,
         ArtifactType.BINARY,
     ],
-) -> dict[str, Any]: ...
+) -> ArtifactCreateResult: ...
 
 
 async def create_artifact(
     name: str,
     data: str | dict[str, Any] | list[Any],
     artifact_type: ArtifactType = ArtifactType.JSON,
-) -> dict[str, Any]:
+) -> ArtifactCreateResult:
     """
     Create an artifact for the current job.
 
@@ -83,7 +91,10 @@ async def create_artifact(
         artifact_type: Type of artifact (default: ArtifactType.JSON)
 
     Returns:
-        Dict with artifact info including 'id'
+        ArtifactCreateResult:
+        - Immediate create: `shared.schemas.ArtifactResponse`
+        - Queued create: `shared.schemas.ArtifactQueuedResponse`
+        - Error: `shared.schemas.ErrorResponse`
 
     Example:
         from conduit import create_artifact, ArtifactType
@@ -119,17 +130,31 @@ async def create_artifact(
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status == 200:
+                if resp.status in (200, 202):
                     result = await resp.json()
-                    logger.debug(f"Created artifact '{name}' for job {ctx.job_id}")
-                    return result
+                    if resp.status == 200:
+                        logger.debug(f"Created artifact '{name}' for job {ctx.job_id}")
+                    else:
+                        logger.debug(
+                            f"Queued artifact '{name}' for job {ctx.job_id}"
+                        )
+                    return _artifact_create_response_adapter.validate_python(result)
                 else:
                     text = await resp.text()
                     logger.warning(f"Failed to create artifact: {resp.status} {text}")
-                    return {"error": text, "status": resp.status}
+                    try:
+                        payload = await resp.json()
+                    except Exception:
+                        payload = None
+                    if isinstance(payload, dict):
+                        try:
+                            return _error_response_adapter.validate_python(payload)
+                        except Exception:
+                            pass
+                    return ErrorResponse(detail=text or f"HTTP {resp.status}")
     except Exception as e:
         logger.warning(f"Error creating artifact: {e}")
-        return {"error": str(e)}
+        return ErrorResponse(detail=str(e))
 
 
 # Sync overloads
@@ -138,7 +163,7 @@ def create_artifact_sync(
     name: str,
     data: str,
     artifact_type: Literal[ArtifactType.TEXT],
-) -> dict[str, Any]: ...
+) -> ArtifactCreateResult: ...
 
 
 @overload
@@ -146,7 +171,7 @@ def create_artifact_sync(
     name: str,
     data: dict[str, Any] | list[Any],
     artifact_type: Literal[ArtifactType.JSON] = ...,
-) -> dict[str, Any]: ...
+) -> ArtifactCreateResult: ...
 
 
 @overload
@@ -160,7 +185,7 @@ def create_artifact_sync(
         ArtifactType.GIF,
         ArtifactType.SVG,
     ],
-) -> dict[str, Any]: ...
+) -> ArtifactCreateResult: ...
 
 
 @overload
@@ -174,14 +199,14 @@ def create_artifact_sync(
         ArtifactType.HTML,
         ArtifactType.BINARY,
     ],
-) -> dict[str, Any]: ...
+) -> ArtifactCreateResult: ...
 
 
 def create_artifact_sync(
     name: str,
     data: str | dict[str, Any] | list[Any],
     artifact_type: ArtifactType = ArtifactType.JSON,
-) -> dict[str, Any]:
+) -> ArtifactCreateResult:
     """
     Sync version of create_artifact for use in sync tasks.
 
