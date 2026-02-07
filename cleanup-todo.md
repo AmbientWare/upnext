@@ -92,7 +92,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** avoid passing `contextvars.Context` into process workers; invoke a picklable wrapper/call target for process mode and define a clear context-behavior policy for process tasks.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/job_processor.py`
 
-- [ ] **[P2] Fix default SDK Docker image command path**
+- [x] **[P2] Fix default SDK Docker image command path**
   `packages/conduit/Dockerfile` default CMD runs `conduit run examples/service.py`, but the image does not copy the `examples/` directory. Default container startup can fail with file-not-found.
   **What to update:** either copy `examples/` into the image or change default CMD to a valid in-image target/help command.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/Dockerfile`
