@@ -7,7 +7,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** only ACK successfully applied events; keep failed IDs pending for retry/reclaim, and add structured logging/metrics for failed event IDs.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/stream_subscriber.py`
 
-- [ ] **[P1] Fix job metadata persistence path (`ctx.set_metadata` / checkpoint durability)**
+- [x] **[P1] Fix job metadata persistence path (`ctx.set_metadata` / checkpoint durability)**
   `update_job_metadata()` builds a key using `function=""`, so metadata writes often target a non-existent key and silently do nothing. It also uses `SET` which can drop TTL.
   **What to update:** locate the correct job key by ID (or add a stable job-id index), merge metadata on the actual stored job, and preserve TTL using `SETEX`/`EXPIRE` behavior.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/queue/redis/queue.py`

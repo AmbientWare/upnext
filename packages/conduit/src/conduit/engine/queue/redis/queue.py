@@ -824,9 +824,12 @@ class RedisQueue(BaseQueue):
 
     async def update_job_metadata(self, job_id: str, metadata: dict[str, Any]) -> None:
         client = await self._ensure_connected()
+        if not metadata:
+            return
 
-        temp_job = Job(function="", id=job_id)
-        job_key = self._job_key(temp_job)
+        job_key = await self._find_job_key_by_id(job_id)
+        if job_key is None:
+            return
 
         job_data = await client.get(job_key)
         if not job_data:
@@ -837,7 +840,29 @@ class RedisQueue(BaseQueue):
         )
         job.metadata = job.metadata or {}
         job.metadata.update(metadata)
-        await client.set(job_key, job.to_json())
+
+        ttl = await client.ttl(job_key)
+        serialized = job.to_json()
+        if ttl and ttl > 0:
+            await client.setex(job_key, int(ttl), serialized)
+        else:
+            await client.set(job_key, serialized)
+
+    async def _find_job_key_by_id(self, job_id: str) -> str | None:
+        """Find the stored job key for a job ID across all functions."""
+        client = await self._ensure_connected()
+
+        cursor = 0
+        match = f"{self._key_prefix}:job:*:{job_id}"
+        while True:
+            cursor, keys = await client.scan(cursor=cursor, match=match, count=100)
+            for key in keys:
+                key_str = key.decode() if isinstance(key, bytes) else key
+                if await client.exists(key_str):
+                    return key_str
+            if cursor == 0:
+                break
+        return None
 
     # =========================================================================
     # OPTIONAL - stats
