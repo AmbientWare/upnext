@@ -1,10 +1,11 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { cn, formatNumber, formatDuration } from "@/lib/utils";
 import { getFunctions, queryKeys } from "@/lib/conduit-api";
-import type { FunctionInfo, FunctionType } from "@/lib/types";
-import { Search, X, Circle } from "lucide-react";
+import type { FunctionType } from "@/lib/types";
+import { Search, X, FunctionSquare } from "lucide-react";
+import { FunctionsTableSkeleton } from "./-components/skeletons";
+import { FunctionsTable } from "./-components/functions-table";
 import {
   Select,
   SelectContent,
@@ -12,14 +13,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const Route = createFileRoute("/functions/")({
   component: FunctionsPage,
@@ -32,12 +25,6 @@ const typeOptions: { value: string; label: string }[] = [
   { value: "event", label: "Events" },
 ];
 
-const typeStyles: Record<FunctionType, string> = {
-  task: "bg-blue-500/20 text-blue-400",
-  cron: "bg-violet-500/20 text-violet-400",
-  event: "bg-amber-500/20 text-amber-400",
-};
-
 const STATUS_DEFAULT = "active";
 
 function FunctionsPage() {
@@ -49,7 +36,7 @@ function FunctionsPage() {
   const typeForQuery = selectedType === "all" ? undefined : (selectedType as FunctionType);
 
   // Fetch functions from API
-  const { data: functionsData } = useQuery({
+  const { data: functionsData, isPending } = useQuery({
     queryKey: queryKeys.functions({ type: typeForQuery }),
     queryFn: () => getFunctions({ type: typeForQuery }),
     refetchInterval: 30000,
@@ -179,11 +166,16 @@ function FunctionsPage() {
 
       {/* Functions Table */}
       <div className="matrix-panel rounded flex-1 overflow-hidden">
-        {filteredFunctions.length === 0 ? (
+        {isPending ? (
+          <FunctionsTableSkeleton />
+        ) : filteredFunctions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <div className="text-sm font-medium">No functions found</div>
-            <div className="text-xs mt-1">
-              {hasNonDefaultFilters ? "Try adjusting your filters" : "Functions will appear here when workers register"}
+            <div className="rounded-full bg-muted/60 p-2 mb-2">
+              <FunctionSquare className="h-4 w-4" />
+            </div>
+            <div className="text-sm font-medium">No functions available</div>
+            <div className="text-xs mt-1 text-muted-foreground/80">
+              {hasNonDefaultFilters ? "Try adjusting your filters" : "Functions will appear here when workers register with Conduit."}
             </div>
           </div>
         ) : (
@@ -191,79 +183,5 @@ function FunctionsPage() {
         )}
       </div>
     </div>
-  );
-}
-
-function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
-  const navigate = useNavigate();
-
-  return (
-    <Table>
-      <TableHeader className="sticky top-0 z-10 bg-card">
-        <TableRow className="text-[10px] text-muted-foreground uppercase tracking-wider border-input hover:bg-transparent">
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Name</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Type</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Workers</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">24H Runs</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Success</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Avg Duration</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Timeout</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Retries</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Schedule/Pattern</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {functions.map((fn) => (
-          <TableRow
-            key={fn.name}
-            className="border-border hover:bg-accent cursor-pointer"
-            onClick={() => navigate({ to: "/functions/$name", params: { name: fn.name } })}
-          >
-            <TableCell className="py-2">
-              <div className="flex items-center gap-2">
-                <Circle className={cn("w-2 h-2 shrink-0", fn.active ? "fill-emerald-400 text-emerald-400" : "fill-muted-foreground/60 text-muted-foreground/60")} />
-                <span className="mono text-[11px]">{fn.name}</span>
-              </div>
-            </TableCell>
-            <TableCell className="py-2">
-              <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium", typeStyles[fn.type])}>
-                {fn.type.toUpperCase()}
-              </span>
-            </TableCell>
-            <TableCell className="py-2">
-              {(fn.workers ?? []).length > 0 ? (
-                <div className="flex items-center gap-1 flex-wrap">
-                  {(fn.workers ?? []).map((w) => (
-                    <span key={w} className="text-[10px] px-1.5 py-0.5 rounded bg-muted border border-input text-muted-foreground">
-                      {w}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-[10px] text-muted-foreground/60">{"\u2014"}</span>
-              )}
-            </TableCell>
-            <TableCell className="mono text-[11px] py-2">{formatNumber(fn.runs_24h)}</TableCell>
-            <TableCell className="mono text-[11px] py-2">
-              <span
-                className={cn(
-                  fn.success_rate >= 99
-                    ? "text-emerald-400"
-                    : fn.success_rate >= 95
-                      ? "text-amber-400"
-                      : "text-red-400"
-                )}
-              >
-                {fn.success_rate.toFixed(1)}%
-              </span>
-            </TableCell>
-            <TableCell className="mono text-[11px] text-muted-foreground py-2">{formatDuration(fn.avg_duration_ms)}</TableCell>
-            <TableCell className="mono text-[11px] text-muted-foreground py-2">{fn.timeout ?? "\u2014"}s</TableCell>
-            <TableCell className="mono text-[11px] text-muted-foreground py-2">{fn.max_retries ?? "\u2014"}</TableCell>
-            <TableCell className="mono text-[10px] text-muted-foreground py-2">{fn.schedule || fn.pattern || "\u2014"}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
   );
 }

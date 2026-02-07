@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type JobStatus } from "@/lib/utils";
 import { getJobTrends, queryKeys } from "@/lib/conduit-api";
 import { Panel } from "@/components/shared";
+import { BarChart4 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -114,8 +115,14 @@ export function JobTrendsPanel({ functionName, className }: JobTrendsPanelProps)
     >
       <div className="flex-1 min-h-0">
         {chartData.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-muted-foreground text-xs">
-            No job data available
+          <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2">
+            <div className="rounded-full bg-muted/60 p-2">
+              <BarChart4 className="h-4 w-4" />
+            </div>
+            <div className="text-sm font-medium">No job data yet</div>
+            <div className="text-xs text-muted-foreground/80">
+              Trend activity will show up after runs start.
+            </div>
           </div>
         ) : (
           <ChartContainer config={chartConfig} className="h-full w-full">
@@ -142,6 +149,8 @@ export function JobTrendsPanel({ functionName, className }: JobTrendsPanelProps)
                   stackId="a"
                   fill={`var(--color-${status})`}
                   radius={status === "complete" ? [2, 2, 0, 0] : 0}
+                  animationDuration={300}
+                  animationEasing="ease-out"
                 />
               ))}
             </BarChart>

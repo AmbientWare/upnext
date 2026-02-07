@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from shared.events import (
+    EVENTS_PUBSUB_CHANNEL,
     BatchEventRequest,
     EventRequest,
     EventType,
@@ -20,6 +22,7 @@ from shared.events import (
 
 from server.db.repository import JobRepository
 from server.db.session import get_database
+from server.services import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,45 @@ class BatchEventResponse(BaseModel):
     status: str = "ok"
     processed: int
     errors: int = 0
+
+
+@router.get("/stream")
+async def stream_events() -> StreamingResponse:
+    """Stream job events via Server-Sent Events (SSE)."""
+    redis_client = await get_redis()
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe(EVENTS_PUBSUB_CHANNEL)
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            yield "event: open\ndata: connected\n\n"
+            while True:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=15.0,
+                )
+                if message and message.get("type") == "message":
+                    data = message.get("data")
+                    if isinstance(data, bytes):
+                        data = data.decode()
+                    yield f"data: {data}\n\n"
+                else:
+                    yield ": keep-alive\n\n"
+        except asyncio.CancelledError:
+            pass
+
+        finally:
+            await pubsub.unsubscribe(EVENTS_PUBSUB_CHANNEL)
+            await pubsub.close()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/", response_model=EventResponse)

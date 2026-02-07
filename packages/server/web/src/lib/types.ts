@@ -9,7 +9,6 @@
 
 export type FunctionType = 'task' | 'cron' | 'event';
 export type JobStatus = 'active' | 'complete' | 'failed' | 'retrying';
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 // =============================================================================
 // Job Schemas
@@ -39,15 +38,6 @@ export interface JobListResponse {
   jobs: Job[];
   total: number;
   has_more: boolean;
-}
-
-export interface JobStatsResponse {
-  total: number;
-  success_count: number;
-  failure_count: number;
-  cancelled_count: number;
-  success_rate: number;
-  avg_duration_ms: number | null;
 }
 
 export interface JobTrendHour {
@@ -183,25 +173,6 @@ export interface ApisListResponse {
   total: number;
 }
 
-export interface ApiEndpoint {
-  method: HttpMethod;
-  path: string;
-  requests_24h: number;
-  avg_latency_ms: number;
-  p50_latency_ms: number;
-  p95_latency_ms: number;
-  p99_latency_ms: number;
-  error_rate: number;
-  last_request_at: string | null;
-}
-
-export interface ApiHourlyStat {
-  hour: string;
-  requests: number;
-  errors: number;
-  avg_latency_ms: number;
-}
-
 export interface ApiTrendHour {
   hour: string;
   success_2xx: number;
@@ -237,22 +208,3 @@ export interface DashboardStats {
   recent_failures: Run[];
 }
 
-// =============================================================================
-// Artifact Schemas
-// =============================================================================
-
-export interface Artifact {
-  id: number;
-  job_id: string;
-  name: string;
-  type: string;
-  size_bytes: number | null;
-  data: unknown;
-  path: string | null;
-  created_at: string;
-}
-
-export interface ArtifactListResponse {
-  artifacts: Artifact[];
-  total: number;
-}

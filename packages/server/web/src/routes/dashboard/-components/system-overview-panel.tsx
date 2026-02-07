@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Panel } from "@/components/shared";
 import type { DashboardStats, WorkerInfo, ApiInfo } from "@/lib/types";
+import { useAnimatedNumber } from "@/hooks/use-animated-number";
 
 interface SystemOverviewPanelProps {
   stats: DashboardStats | undefined;
@@ -30,6 +31,16 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
   const avgLatency = stats?.apis.avg_latency_ms ?? 0;
   const errorRate = stats?.apis.error_rate ?? 0;
 
+  const animatedWorkers = useAnimatedNumber(activeCount);
+  const animatedThroughput = useAnimatedNumber(throughputStr);
+  const animatedActiveJobs = useAnimatedNumber(activeJobs);
+  const animatedSuccessRate = useAnimatedNumber(`${successRate.toFixed(1)}%`);
+  const animatedApiReqs = useAnimatedNumber(
+    totalReqPerMin >= 1000 ? `${(totalReqPerMin / 1000).toFixed(1)}K` : `${totalReqPerMin}`
+  );
+  const animatedLatency = useAnimatedNumber(Math.round(avgLatency));
+  const animatedErrorRate = useAnimatedNumber(`${errorRate.toFixed(1)}%`);
+
   return (
     <Panel
       title="System Overview"
@@ -40,7 +51,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
         {/* Workers - with load bar */}
         <div>
           <div className={cn("mono text-3xl font-bold", activeCount > 0 ? "text-foreground" : "text-muted-foreground")}>
-            {activeCount}
+            {animatedWorkers}
           </div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Workers</div>
           <div className="mono text-xs text-muted-foreground mt-1">{loadPct}% load</div>
@@ -48,13 +59,13 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
 
         {/* Throughput */}
         <div>
-          <div className="mono text-3xl font-bold text-foreground">{throughputStr}</div>
+          <div className="mono text-3xl font-bold text-foreground">{animatedThroughput}</div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Jobs/min</div>
         </div>
 
         {/* Active Jobs */}
         <div>
-          <div className="mono text-3xl font-bold text-foreground">{activeJobs}</div>
+          <div className="mono text-3xl font-bold text-foreground">{animatedActiveJobs}</div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Active Jobs</div>
         </div>
 
@@ -64,7 +75,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
             "mono text-3xl font-bold",
             successRate >= 99 ? "text-emerald-400" : successRate >= 95 ? "text-amber-400" : "text-red-400"
           )}>
-            {successRate.toFixed(1)}%
+            {animatedSuccessRate}
           </div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Success Rate</div>
         </div>
@@ -72,7 +83,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
         {/* API Req/min */}
         <div>
           <div className="mono text-3xl font-bold text-foreground">
-            {totalReqPerMin >= 1000 ? `${(totalReqPerMin / 1000).toFixed(1)}K` : totalReqPerMin}
+            {animatedApiReqs}
           </div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">API Req/min</div>
         </div>
@@ -83,7 +94,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
             "mono text-3xl font-bold",
             avgLatency < 100 ? "text-emerald-400" : avgLatency < 500 ? "text-amber-400" : "text-red-400"
           )}>
-            {Math.round(avgLatency)}
+            {animatedLatency}
           </div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Latency (ms)</div>
         </div>
@@ -94,7 +105,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
             "mono text-3xl font-bold",
             errorRate < 1 ? "text-emerald-400" : errorRate < 5 ? "text-amber-400" : "text-red-400"
           )}>
-            {errorRate.toFixed(1)}%
+            {animatedErrorRate}
           </div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Error Rate</div>
         </div>
