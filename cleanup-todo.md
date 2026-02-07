@@ -87,7 +87,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** set `_group_created=True` only on success or confirmed `BUSYGROUP`; keep retry path for transient Redis errors.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/stream_subscriber.py`
 
-- [ ] **[P1] Fix process executor path for sync tasks (unpicklable context object)**
+- [x] **[P1] Fix process executor path for sync tasks (unpicklable context object)**
   Process mode currently sends `ctx_copy.run` to `ProcessPoolExecutor`. `_contextvars.Context` is not picklable, so this path fails for process-based execution.
   **What to update:** avoid passing `contextvars.Context` into process workers; invoke a picklable wrapper/call target for process mode and define a clear context-behavior policy for process tasks.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/job_processor.py`

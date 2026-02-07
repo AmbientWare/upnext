@@ -37,6 +37,19 @@ from conduit.types import SyncExecutor
 logger = logging.getLogger(__name__)
 
 
+def _run_sync_task_with_context(
+    func: Callable[..., Any],
+    kwargs: dict[str, Any],
+    ctx: Context,
+) -> Any:
+    """Process-pool wrapper that sets context in the child process."""
+    set_current_context(ctx)
+    try:
+        return func(**kwargs)
+    finally:
+        set_current_context(None)
+
+
 class JobProcessor:
     """
     High-performance async job processor for Conduit.
@@ -410,11 +423,20 @@ class JobProcessor:
             else:
                 # Sync function - run in thread/process pool
                 loop = asyncio.get_running_loop()
-                func_with_args = partial(task_def.func, **kwargs)
-                ctx_copy = contextvars.copy_context()
-                result = await loop.run_in_executor(
-                    self._sync_pool, ctx_copy.run, func_with_args
-                )
+                if isinstance(self._sync_pool, ProcessPoolExecutor):
+                    result = await loop.run_in_executor(
+                        self._sync_pool,
+                        _run_sync_task_with_context,
+                        task_def.func,
+                        kwargs,
+                        ctx,
+                    )
+                else:
+                    func_with_args = partial(task_def.func, **kwargs)
+                    ctx_copy = contextvars.copy_context()
+                    result = await loop.run_in_executor(
+                        self._sync_pool, ctx_copy.run, func_with_args
+                    )
 
             return result
 
