@@ -79,6 +79,31 @@ class JobRepository:
         result = await self._session.execute(query)
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _apply_job_list_filters(
+        query: Any,
+        *,
+        function: str | None = None,
+        status: str | list[str] | None = None,
+        worker_id: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> Any:
+        """Apply common filters for job list/count queries."""
+        if function:
+            query = query.where(JobHistory.function == function)
+        if isinstance(status, str) and status:
+            query = query.where(JobHistory.status == status)
+        elif isinstance(status, list) and status:
+            query = query.where(JobHistory.status.in_(status))
+        if worker_id:
+            query = query.where(JobHistory.worker_id == worker_id)
+        if start_date:
+            query = query.where(JobHistory.created_at >= start_date)
+        if end_date:
+            query = query.where(JobHistory.created_at <= end_date)
+        return query
+
     async def list_jobs(
         self,
         *,
@@ -106,24 +131,41 @@ class JobRepository:
             List of matching jobs
         """
         query = select(JobHistory).order_by(JobHistory.created_at.desc())
-
-        if function:
-            query = query.where(JobHistory.function == function)
-        if isinstance(status, str) and status:
-            query = query.where(JobHistory.status == status)
-        elif isinstance(status, list) and status:
-            query = query.where(JobHistory.status.in_(status))
-        if worker_id:
-            query = query.where(JobHistory.worker_id == worker_id)
-        if start_date:
-            query = query.where(JobHistory.created_at >= start_date)
-        if end_date:
-            query = query.where(JobHistory.created_at <= end_date)
+        query = self._apply_job_list_filters(
+            query,
+            function=function,
+            status=status,
+            worker_id=worker_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         query = query.limit(limit).offset(offset)
 
         result = await self._session.execute(query)
         return list(result.scalars().all())
+
+    async def count_jobs(
+        self,
+        *,
+        function: str | None = None,
+        status: str | list[str] | None = None,
+        worker_id: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> int:
+        """Count jobs with the same filters used by list_jobs."""
+        query = select(func.count(JobHistory.id))
+        query = self._apply_job_list_filters(
+            query,
+            function=function,
+            status=status,
+            worker_id=worker_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        result = await self._session.execute(query)
+        return int(result.scalar() or 0)
 
     async def get_stats(
         self,

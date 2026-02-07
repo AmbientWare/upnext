@@ -52,7 +52,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** add startup guard to validate required tables/schema version (or run migrations as part of deploy/startup workflow), and fail fast with clear error if schema is stale.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/main.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/alembic/env.py`
 
-- [ ] **[P2] Replace approximate jobs total with deterministic count**
+- [x] **[P2] Replace approximate jobs total with deterministic count**
   Jobs list currently reports `total=len(page)+offset`, which is not the real total and can break pagination semantics in UI/manual testing.
   **What to update:** add a count query with matching filters and return exact total (or explicitly rename field/contract if approximation is intended).
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/jobs.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/db/repository.py`

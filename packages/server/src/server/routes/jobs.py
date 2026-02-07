@@ -62,6 +62,13 @@ async def list_jobs(
             limit=limit + 1,
             offset=offset,
         )
+        total = await repo.count_jobs(
+            function=function,
+            status=status,
+            worker_id=worker_id,
+            start_date=after,
+            end_date=before,
+        )
 
         # Check if there are more results
         has_more = len(jobs) > limit
@@ -94,7 +101,7 @@ async def list_jobs(
 
         return JobListResponse(
             jobs=job_responses,
-            total=len(job_responses) + offset,  # Approximate total
+            total=total,
             has_more=has_more,
         )
 
