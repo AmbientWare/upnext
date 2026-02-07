@@ -6,6 +6,7 @@ from conduit.cli._console import console
 from conduit.cli.call import call
 from conduit.cli.list import list_cmd
 from conduit.cli.run import run
+from conduit.cli.server import start as server_start
 
 app = typer.Typer(
     name="conduit",
@@ -42,3 +43,11 @@ def main(
 app.command()(run)
 app.command()(call)
 app.command("list")(list_cmd)
+
+server_app = typer.Typer(
+    help="Hosted Conduit server commands.",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+server_app.command("start")(server_start)
+app.add_typer(server_app, name="server")

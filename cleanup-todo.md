@@ -77,7 +77,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** monitor service tasks with `asyncio.wait(..., FIRST_EXCEPTION)` or done callbacks, surface exceptions, trigger coordinated shutdown, and exit non-zero on unrecoverable startup/runtime failures.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/runner.py`
 
-- [ ] **[P2] Add `conduit server start` CLI command for hosted server startup**
+- [x] **[P2] Add `conduit server start` CLI command for hosted server startup**
   There is currently no first-class Conduit CLI command to start the actual hosted server implementation in `packages/server`.
   **What to update:** add a new CLI subcommand (e.g. `conduit server start`) that launches `server.main:app` with configurable host/port/reload and clear env wiring (`CONDUIT_DATABASE_URL`, `CONDUIT_REDIS_URL`). Reuse existing CLI logging/error UX and document usage.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/cli/__init__.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/cli/run.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/main.py`
