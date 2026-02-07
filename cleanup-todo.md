@@ -12,7 +12,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** locate the correct job key by ID (or add a stable job-id index), merge metadata on the actual stored job, and preserve TTL using `SETEX`/`EXPIRE` behavior.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/queue/redis/queue.py`
 
-- [ ] **[P1] Make checkpoint persistence SQLAlchemy-safe**
+- [x] **[P1] Make checkpoint persistence SQLAlchemy-safe**
   Checkpoint updates mutate `existing.metadata_` in place, and plain JSON columns do not always mark in-place mutations as dirty; updates may not commit.
   **What to update:** either reassign a new dict (`existing.metadata_ = {...}`) when checkpointing or use SQLAlchemy mutable JSON support for tracked in-place mutation.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/event_processing.py`
