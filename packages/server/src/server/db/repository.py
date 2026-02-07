@@ -83,7 +83,8 @@ class JobRepository:
         self,
         *,
         function: str | None = None,
-        status: str | None = None,
+        status: str | list[str] | None = None,
+        worker_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         limit: int = 100,
@@ -94,7 +95,8 @@ class JobRepository:
 
         Args:
             function: Filter by function name
-            status: Filter by status
+            status: Filter by status (single value or list)
+            worker_id: Filter by worker ID
             start_date: Filter by created_at >= start_date
             end_date: Filter by created_at <= end_date
             limit: Maximum results to return
@@ -107,8 +109,12 @@ class JobRepository:
 
         if function:
             query = query.where(JobHistory.function == function)
-        if status:
+        if isinstance(status, str) and status:
             query = query.where(JobHistory.status == status)
+        elif isinstance(status, list) and status:
+            query = query.where(JobHistory.status.in_(status))
+        if worker_id:
+            query = query.where(JobHistory.worker_id == worker_id)
         if start_date:
             query = query.where(JobHistory.created_at >= start_date)
         if end_date:

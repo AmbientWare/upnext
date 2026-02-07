@@ -22,7 +22,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** add attempt/time freshness checks before applying failure updates; ignore stale failure events consistently with started-event logic.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/event_processing.py`
 
-- [ ] **[P2] Align jobs API filtering with request contract**
+- [x] **[P2] Align jobs API filtering with request contract**
   The route accepts `worker_id` and multi-status query params, but repository filtering only supports a single status and does not apply worker filtering.
   **What to update:** extend repository query API to support `worker_id` and `status IN (...)`, then wire route params through directly.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/jobs.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/db/repository.py`

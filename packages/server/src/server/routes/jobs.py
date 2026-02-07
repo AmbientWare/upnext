@@ -55,7 +55,8 @@ async def list_jobs(
         # Get one more than limit to check if there are more
         jobs = await repo.list_jobs(
             function=function,
-            status=status[0] if status and len(status) == 1 else None,
+            status=status,
+            worker_id=worker_id,
             start_date=after,
             end_date=before,
             limit=limit + 1,
