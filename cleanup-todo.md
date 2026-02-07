@@ -57,7 +57,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** add a count query with matching filters and return exact total (or explicitly rename field/contract if approximation is intended).
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/jobs.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/db/repository.py`
 
-- [ ] **[P1] Fix SDK parallel helpers contract mismatch (`submit` return type)**
+- [x] **[P1] Fix SDK parallel helpers contract mismatch (`submit` return type)**
   `sdk.parallel.map_tasks` and `submit_many` assume `task.submit()` returns `Future`, but `TaskHandle.submit()` currently returns `job_id: str`. This breaks these helpers at runtime (`str` has no `.result()`).
   **What to update:** unify the contract: either make `TaskHandle.submit()` return `Future` or update parallel helpers to work with job IDs plus queue access. Ensure `gather/submit_many/map_tasks` examples match real behavior.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/sdk/parallel.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/handlers/task_handle.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/sdk/task.py`
