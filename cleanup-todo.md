@@ -72,7 +72,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** filter components first, then initialize only workers that will actually run.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/cli/run.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/cli/_display.py`
 
-- [ ] **[P1] Fail fast when any service task crashes during `run_services` startup/runtime**
+- [x] **[P1] Fail fast when any service task crashes during `run_services` startup/runtime**
   `run_services()` waits only on shutdown signal and does not monitor API/worker task failures. A crashed worker/API task can silently die while process keeps running.
   **What to update:** monitor service tasks with `asyncio.wait(..., FIRST_EXCEPTION)` or done callbacks, surface exceptions, trigger coordinated shutdown, and exit non-zero on unrecoverable startup/runtime failures.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/runner.py`
