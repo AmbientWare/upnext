@@ -6,6 +6,7 @@ Moves scheduled jobs to streams when they become due.
 import asyncio
 import logging
 import time
+from uuid import uuid4
 from typing import TYPE_CHECKING
 
 from conduit.engine.queue.redis.constants import DEFAULT_STREAM_MAXLEN
@@ -14,6 +15,14 @@ if TYPE_CHECKING:
     from conduit.engine.queue.redis.queue import RedisQueue
 
 logger = logging.getLogger(__name__)
+
+RELEASE_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+else
+  return 0
+end
+"""
 
 
 class Sweeper:
@@ -64,9 +73,10 @@ class Sweeper:
         while not self._stop_event.is_set():
             try:
                 # Try to acquire lock (expires after 60s to prevent deadlock)
+                lock_token = uuid4().hex
                 acquired = await client.set(
                     lock_key,
-                    self._queue._consumer_id,
+                    lock_token,
                     nx=True,
                     ex=60,
                 )
@@ -75,7 +85,7 @@ class Sweeper:
                     try:
                         await self._do_sweep()
                     finally:
-                        await client.delete(lock_key)
+                        await client.eval(RELEASE_LOCK_SCRIPT, 1, lock_key, lock_token)
 
             except Exception as e:
                 logger.debug(f"Sweep error: {e}")

@@ -32,7 +32,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** wrap Redis-backed handlers with graceful fallbacks (503 or empty payloads per endpoint contract), and keep behavior consistent across functions/workers/apis/events routes.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/functions.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/workers.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/apis.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/events.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/redis.py`
 
-- [ ] **[P3] Make sweeper distributed-lock release ownership-safe**
+- [x] **[P3] Make sweeper distributed-lock release ownership-safe**
   Sweeper lock release currently uses unconditional `DEL`; if lock TTL expires and another instance acquires it, the first instance can accidentally delete the new owner’s lock.
   **What to update:** store a lock token and release via compare-and-delete Lua script (same pattern used in cleanup service lock release).
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/queue/redis/sweeper.py`
