@@ -2,6 +2,7 @@
 -- KEYS[1] = dedup_key (SET for dedup tracking)
 -- KEYS[2] = job_key (job data storage)
 -- KEYS[3] = stream_key or scheduled_key (destination)
+-- KEYS[4] = job_index_key (job ID -> job key mapping)
 -- ARGV[1] = dedup_value (job.key for dedup)
 -- ARGV[2] = job_data (JSON)
 -- ARGV[3] = job_ttl_seconds
@@ -15,6 +16,7 @@
 local dedup_key = KEYS[1]
 local job_key = KEYS[2]
 local dest_key = KEYS[3]
+local job_index_key = KEYS[4]
 
 local dedup_value = ARGV[1]
 local job_data = ARGV[2]
@@ -37,6 +39,7 @@ end
 
 -- Store job data with TTL
 redis.call("SETEX", job_key, job_ttl, job_data)
+redis.call("SETEX", job_index_key, job_ttl, job_key)
 
 -- Add to destination (stream for immediate, ZSET for scheduled)
 if scheduled_time > 0 then

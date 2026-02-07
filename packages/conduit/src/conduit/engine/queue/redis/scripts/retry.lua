@@ -2,6 +2,7 @@
 -- KEYS[1] = stream_key (for XACK)
 -- KEYS[2] = job_key (job data storage)
 -- KEYS[3] = dest_key (stream or scheduled ZSET)
+-- KEYS[4] = job_index_key (job ID -> job key mapping)
 -- ARGV[1] = consumer_group
 -- ARGV[2] = message_id (can be empty)
 -- ARGV[3] = job_data (JSON)
@@ -16,6 +17,7 @@
 local stream_key = KEYS[1]
 local job_key = KEYS[2]
 local dest_key = KEYS[3]
+local job_index_key = KEYS[4]
 
 local consumer_group = ARGV[1]
 local message_id = ARGV[2]
@@ -33,6 +35,7 @@ end
 
 -- Store updated job data with TTL
 redis.call("SETEX", job_key, job_ttl, job_data)
+redis.call("SETEX", job_index_key, job_ttl, job_key)
 
 -- Add to destination (stream for immediate, ZSET for scheduled)
 if delay > 0 then
