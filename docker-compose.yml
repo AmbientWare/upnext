@@ -59,6 +59,7 @@ services:
       - "8080:8080"
     environment:
       PYTHONUNBUFFERED: "1"
+      CONDUIT_DATABASE_URL: postgresql+asyncpg://conduit:conduit@postgres:5432/conduit
       DATABASE_URL: postgresql+asyncpg://conduit:conduit@postgres:5432/conduit
       CONDUIT_REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0

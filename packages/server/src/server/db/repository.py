@@ -9,7 +9,7 @@ from sqlalchemy import case, delete, extract, func, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.db.models import Artifact, JobHistory
+from server.db.models import Artifact, JobHistory, PendingArtifact
 
 
 class JobRepository:
@@ -361,6 +361,115 @@ class ArtifactRepository:
         self._session.add(artifact)
         await self._session.flush()
         return artifact
+
+    async def create_pending(
+        self,
+        job_id: str,
+        name: str,
+        artifact_type: str,
+        data: Any | None = None,
+        size_bytes: int | None = None,
+        path: str | None = None,
+    ) -> PendingArtifact:
+        """Create a pending artifact when the job row is not yet available."""
+        pending = PendingArtifact(
+            job_id=job_id,
+            name=name,
+            type=artifact_type,
+            data=data,
+            size_bytes=size_bytes,
+            path=path,
+        )
+        self._session.add(pending)
+        await self._session.flush()
+        return pending
+
+    async def promote_pending_for_job(self, job_id: str) -> int:
+        """
+        Promote pending artifacts into the main artifacts table for a job.
+
+        Uses row-level locking where supported to avoid double-promotion.
+        Returns number of promoted rows.
+        """
+        pending_query = (
+            select(PendingArtifact)
+            .where(PendingArtifact.job_id == job_id)
+            .order_by(PendingArtifact.id.asc())
+            .with_for_update(skip_locked=True)
+        )
+        pending_result = await self._session.execute(pending_query)
+        pending_rows = list(pending_result.scalars().all())
+        return await self._promote_pending_rows(pending_rows)
+
+    async def promote_ready_pending(self, *, limit: int = 500) -> int:
+        """
+        Promote pending artifacts whose job rows now exist.
+
+        This is used as a background safety net when event-triggered promotion
+        was missed for any reason.
+        """
+        if limit <= 0:
+            return 0
+
+        ready_ids_query = (
+            select(PendingArtifact.id)
+            .where(
+                select(JobHistory.id)
+                .where(JobHistory.id == PendingArtifact.job_id)
+                .exists()
+            )
+            .order_by(PendingArtifact.id.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        ready_ids_result = await self._session.execute(ready_ids_query)
+        ready_ids = list(ready_ids_result.scalars().all())
+        if not ready_ids:
+            return 0
+
+        ready_rows_query = (
+            select(PendingArtifact)
+            .where(PendingArtifact.id.in_(ready_ids))
+            .order_by(PendingArtifact.id.asc())
+        )
+        ready_rows_result = await self._session.execute(ready_rows_query)
+        ready_rows = list(ready_rows_result.scalars().all())
+        return await self._promote_pending_rows(ready_rows)
+
+    async def cleanup_stale_pending(self, *, retention_hours: int = 24) -> int:
+        """Delete pending artifacts older than retention window."""
+        cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
+        result = await self._session.execute(
+            delete(PendingArtifact).where(PendingArtifact.created_at < cutoff)
+        )
+        return result.rowcount if result.rowcount else 0  # type: ignore[return-value]
+
+    async def _promote_pending_rows(
+        self, pending_rows: list[PendingArtifact]
+    ) -> int:
+        """Promote rows into artifacts and remove source pending rows atomically."""
+        if not pending_rows:
+            return 0
+
+        pending_ids = [row.id for row in pending_rows]
+        for row in pending_rows:
+            self._session.add(
+                Artifact(
+                    job_id=row.job_id,
+                    name=row.name,
+                    type=row.type,
+                    size_bytes=row.size_bytes,
+                    data=row.data,
+                    path=row.path,
+                    created_at=row.created_at,
+                )
+            )
+
+        await self._session.flush()
+        await self._session.execute(
+            delete(PendingArtifact).where(PendingArtifact.id.in_(pending_ids))
+        )
+        return len(pending_rows)
 
     async def get_by_id(self, artifact_id: int) -> Artifact | None:
         """Get an artifact by ID."""

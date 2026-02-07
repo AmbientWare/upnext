@@ -1,4 +1,4 @@
-import { useCallback, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryKeys, type GetJobsParams } from "@/lib/conduit-api";
 import { useEventSource } from "@/hooks/use-event-source";
@@ -12,6 +12,16 @@ const EVENT_STREAM_URL = "/api/v1/events/stream";
 
 /** Minimum interval between dashboard stats refetches (ms). */
 const STATS_THROTTLE_MS = 5_000;
+/** Minimum interval between function detail refetches triggered by SSE (ms). */
+const FUNCTION_THROTTLE_MS = 3_000;
+/** Apply streamed events with a tiny delay for stable, ordered UI updates. */
+const EVENT_STEP_MS = 40;
+/** Use a faster cadence when backlog grows to avoid UI lag. */
+const EVENT_BURST_STEP_MS = 8;
+/** Backlog level considered a burst. */
+const BURST_QUEUE_THRESHOLD = 50;
+/** Hard cap for queued stream events to avoid unbounded memory growth. */
+const MAX_QUEUE_LENGTH = 2_000;
 
 /** Event types that change aggregate counts and warrant a stats refetch. */
 const STATE_CHANGE_EVENTS = new Set([
@@ -98,7 +108,7 @@ function patchExistingJob(
   old: JobListResponse | undefined,
   patch: Partial<Job> & { id: string }
 ): JobListResponse | undefined {
-  if (!old) return old;
+  if (!old || !Array.isArray(old.jobs)) return old;
 
   const index = old.jobs.findIndex((j) => j.id === patch.id);
   if (index < 0) return old;
@@ -108,23 +118,45 @@ function patchExistingJob(
   return { ...old, jobs: updated };
 }
 
+/** Iterate all cached job-list queries (excluding jobs stats/trends queries). */
+function forEachJobsListQuery(
+  queryClient: QueryClient,
+  callback: (queryKey: readonly unknown[], params: GetJobsParams | undefined) => void
+) {
+  const queries = queryClient.getQueryCache().findAll({ queryKey: ["jobs"] });
+
+  for (const query of queries) {
+    const params = query.queryKey[1] as GetJobsParams | string | undefined;
+
+    // Skip non-job-list queries (e.g. ["jobs", "stats", ...] or ["jobs", "trends", ...])
+    if (typeof params === "string") continue;
+
+    callback(query.queryKey, params);
+  }
+}
+
+/** Update existing jobs in matching job-list caches only. */
+function updateExistingJob(
+  queryClient: QueryClient,
+  patch: Partial<Job> & { id: string }
+) {
+  forEachJobsListQuery(queryClient, (queryKey) => {
+    queryClient.setQueryData<JobListResponse>(queryKey, (old) =>
+      patchExistingJob(old, patch)
+    );
+  });
+}
+
 /** Insert a new job into matching job list caches only. */
 function insertNewJob(
   queryClient: QueryClient,
   patch: Partial<Job> & { id: string }
 ) {
-  const queries = queryClient.getQueryCache().findAll({ queryKey: ["jobs"] });
-
-  for (const query of queries) {
-    const params = query.queryKey[1] as GetJobsParams | undefined;
-
-    // Skip non-job-list queries (e.g. ["jobs", "stats", ...] or ["jobs", "trends", ...])
-    if (typeof params === "string") continue;
-
+  forEachJobsListQuery(queryClient, (queryKey, params) => {
     // If filtered by function, only insert if it matches
-    if (params?.function && params.function !== patch.function) continue;
+    if (params?.function && params.function !== patch.function) return;
 
-    queryClient.setQueryData<JobListResponse>(query.queryKey, (old) => {
+    queryClient.setQueryData<JobListResponse>(queryKey, (old) => {
       if (!old) return old;
       // Don't insert duplicates
       if (old.jobs.some((j) => j.id === patch.id)) return old;
@@ -150,12 +182,73 @@ function insertNewJob(
       };
       return { ...old, jobs: [newJob, ...old.jobs], total: old.total + 1 };
     });
-  }
+  });
 }
 
 export function EventStreamProvider({ children }: EventStreamProviderProps) {
   const queryClient = useQueryClient();
   const lastStatsInvalidation = useRef(0);
+  const lastFunctionInvalidation = useRef<Record<string, number>>({});
+  const eventQueue = useRef<JobEvent[]>([]);
+  const eventTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyStreamEvent = useCallback(
+    (payload: JobEvent) => {
+      const patch = jobPatchFromEvent(payload);
+      if (!patch?.id) return;
+      const patchWithId = patch as Partial<Job> & { id: string };
+
+      if (payload.type === "job.started") {
+        // New job — insert only into caches whose function filter matches
+        insertNewJob(queryClient, patchWithId);
+      } else {
+        // Update existing job across matching job-list caches only
+        updateExistingJob(queryClient, patchWithId);
+      }
+
+      // State-change events: throttled stats + function invalidation
+      if (STATE_CHANGE_EVENTS.has(payload.type)) {
+        const now = Date.now();
+        if (now - lastStatsInvalidation.current > STATS_THROTTLE_MS) {
+          lastStatsInvalidation.current = now;
+          queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+        }
+
+        if (payload.function) {
+          const lastByFunction = lastFunctionInvalidation.current;
+          const previous = lastByFunction[payload.function] ?? 0;
+          if (now - previous > FUNCTION_THROTTLE_MS) {
+            lastByFunction[payload.function] = now;
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.function(payload.function),
+            });
+          }
+        }
+      }
+    },
+    [queryClient]
+  );
+
+  const drainQueue = useCallback(() => {
+    eventTimer.current = null;
+    if (eventQueue.current.length === 0) return;
+
+    const batchSize =
+      eventQueue.current.length > BURST_QUEUE_THRESHOLD ? 8 : 1;
+    for (let i = 0; i < batchSize; i += 1) {
+      const next = eventQueue.current.shift();
+      if (!next) break;
+      applyStreamEvent(next);
+    }
+
+    if (eventQueue.current.length > 0) {
+      const delay =
+        eventQueue.current.length > BURST_QUEUE_THRESHOLD
+          ? EVENT_BURST_STEP_MS
+          : EVENT_STEP_MS;
+      eventTimer.current = setTimeout(drainQueue, delay);
+    }
+  }, [applyStreamEvent]);
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
@@ -169,38 +262,49 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
         return;
       }
 
-      const patch = jobPatchFromEvent(payload);
-      if (!patch?.id) return;
-      const patchWithId = patch as Partial<Job> & { id: string };
-
-      if (payload.type === "job.started") {
-        // New job — insert only into caches whose function filter matches
-        insertNewJob(queryClient, patchWithId);
-      } else {
-        // Update existing job across all job list caches
-        queryClient.setQueriesData<JobListResponse>(
-          { queryKey: ["jobs"] },
-          (old) => patchExistingJob(old, patchWithId)
-        );
+      // Keep only the latest queued progress event per job.
+      if (payload.type === "job.progress") {
+        for (let i = eventQueue.current.length - 1; i >= 0; i -= 1) {
+          const queued = eventQueue.current[i];
+          if (queued.job_id !== payload.job_id) continue;
+          if (queued.type === "job.progress") {
+            eventQueue.current[i] = payload;
+            if (!eventTimer.current) {
+              eventTimer.current = setTimeout(drainQueue, 0);
+            }
+            return;
+          }
+          break;
+        }
       }
 
-      // State-change events: throttled stats + function invalidation
-      if (STATE_CHANGE_EVENTS.has(payload.type)) {
-        const now = Date.now();
-        if (now - lastStatsInvalidation.current > STATS_THROTTLE_MS) {
-          lastStatsInvalidation.current = now;
-          queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+      eventQueue.current.push(payload);
+      if (eventQueue.current.length > MAX_QUEUE_LENGTH) {
+        const dropIndex = eventQueue.current.findIndex(
+          (queued) => queued.type === "job.progress"
+        );
+        if (dropIndex >= 0) {
+          eventQueue.current.splice(dropIndex, 1);
+        } else {
+          eventQueue.current.shift();
         }
-
-        if (payload.function) {
-          queryClient.invalidateQueries({
-            queryKey: queryKeys.function(payload.function),
-          });
-        }
+      }
+      if (!eventTimer.current) {
+        eventTimer.current = setTimeout(drainQueue, 0);
       }
     },
-    [queryClient]
+    [drainQueue]
   );
+
+  useEffect(() => {
+    return () => {
+      if (eventTimer.current) {
+        clearTimeout(eventTimer.current);
+        eventTimer.current = null;
+      }
+      eventQueue.current = [];
+    };
+  }, []);
 
   useEventSource(EVENT_STREAM_URL, {
     onMessage: handleMessage,

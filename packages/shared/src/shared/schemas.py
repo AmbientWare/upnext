@@ -120,6 +120,23 @@ class CreateArtifactRequest(BaseModel):
     data: Any = None
 
 
+class ArtifactQueuedResponse(BaseModel):
+    """Artifact accepted but queued until the job row is available."""
+
+    status: Literal["queued"] = "queued"
+    job_id: str
+    pending_id: int
+
+
+ArtifactCreateResponse = ArtifactResponse | ArtifactQueuedResponse
+
+
+class ErrorResponse(BaseModel):
+    """Standard API error payload."""
+
+    detail: str
+
+
 # =============================================================================
 # Run/Job Schemas
 # =============================================================================

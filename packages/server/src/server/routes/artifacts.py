@@ -1,15 +1,20 @@
 """Artifact routes for job outputs."""
 
+import json
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
+from sqlalchemy.exc import IntegrityError
 from shared.schemas import (
+    ArtifactCreateResponse,
     ArtifactListResponse,
+    ArtifactQueuedResponse,
     ArtifactResponse,
     CreateArtifactRequest,
+    ErrorResponse,
 )
 
-from server.db.repository import ArtifactRepository
+from server.db.repository import ArtifactRepository, JobRepository
 from server.db.session import get_database
 
 logger = logging.getLogger(__name__)
@@ -17,53 +22,113 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["artifacts"])
 
 
-@router.post("/jobs/{job_id}/artifacts", response_model=ArtifactResponse)
+def _calculate_artifact_size(data: object) -> int | None:
+    """Compute approximate payload size for inline text/json artifacts."""
+    if data is None:
+        return None
+    if isinstance(data, str):
+        return len(data.encode("utf-8"))
+    if isinstance(data, (dict, list)):
+        return len(json.dumps(data).encode("utf-8"))
+    return None
+
+
+@router.post(
+    "/jobs/{job_id}/artifacts",
+    response_model=ArtifactCreateResponse,
+    responses={
+        202: {
+            "model": ArtifactQueuedResponse,
+            "description": "Artifact queued until the job row is available.",
+        },
+        503: {"model": ErrorResponse, "description": "Database not available."},
+    },
+)
 async def create_artifact(
-    job_id: str, request: CreateArtifactRequest
-) -> ArtifactResponse:
+    job_id: str, request: CreateArtifactRequest, response: Response
+) -> ArtifactCreateResponse:
     """
     Create an artifact for a job.
 
     Workers call this via ctx.create_artifact() to store outputs
     like text, JSON data, or images.
     """
+    # Size computation is independent of database availability.
+    size_bytes = _calculate_artifact_size(request.data)
+
     try:
         db = get_database()
     except RuntimeError:
         raise HTTPException(status_code=503, detail="Database not available")
 
     async with db.session() as session:
+        job_repo = JobRepository(session)
         repo = ArtifactRepository(session)
 
-        # Calculate size for text/json data
-        size_bytes = None
-        if request.data is not None:
-            if isinstance(request.data, str):
-                size_bytes = len(request.data.encode("utf-8"))
-            elif isinstance(request.data, (dict, list)):
-                import json
+        if await job_repo.get_by_id(job_id):
+            try:
+                artifact = await repo.create(
+                    job_id=job_id,
+                    name=request.name,
+                    artifact_type=request.type,
+                    data=request.data,
+                    size_bytes=size_bytes,
+                )
 
-                size_bytes = len(json.dumps(request.data).encode("utf-8"))
+                logger.debug(f"Created artifact '{request.name}' for job {job_id}")
+                return ArtifactResponse(
+                    id=artifact.id,
+                    job_id=artifact.job_id,
+                    name=artifact.name,
+                    type=artifact.type,
+                    size_bytes=artifact.size_bytes,
+                    data=artifact.data,
+                    path=artifact.path,
+                    created_at=artifact.created_at,
+                )
+            except IntegrityError:
+                # Job row disappeared between existence check and insert. Queue
+                # instead of failing so artifact capture remains reliable.
+                await session.rollback()
+                pending = await repo.create_pending(
+                    job_id=job_id,
+                    name=request.name,
+                    artifact_type=request.type,
+                    data=request.data,
+                    size_bytes=size_bytes,
+                )
+                logger.debug(
+                    "Queued artifact '%s' after insert race for job %s (pending_id=%s)",
+                    request.name,
+                    job_id,
+                    pending.id,
+                )
+                response.status_code = 202
+                return ArtifactQueuedResponse(
+                    status="queued",
+                    job_id=job_id,
+                    pending_id=pending.id,
+                )
 
-        artifact = await repo.create(
+        pending = await repo.create_pending(
             job_id=job_id,
             name=request.name,
             artifact_type=request.type,
             data=request.data,
             size_bytes=size_bytes,
         )
+        logger.debug(
+            "Queued artifact '%s' for job %s (pending_id=%s)",
+            request.name,
+            job_id,
+            pending.id,
+        )
+        response.status_code = 202
 
-        logger.debug(f"Created artifact '{request.name}' for job {job_id}")
-
-        return ArtifactResponse(
-            id=artifact.id,
-            job_id=artifact.job_id,
-            name=artifact.name,
-            type=artifact.type,
-            size_bytes=artifact.size_bytes,
-            data=artifact.data,
-            path=artifact.path,
-            created_at=artifact.created_at,
+        return ArtifactQueuedResponse(
+            status="queued",
+            job_id=job_id,
+            pending_id=pending.id,
         )
 
 
@@ -97,7 +162,14 @@ async def list_artifacts(job_id: str) -> ArtifactListResponse:
         )
 
 
-@router.get("/artifacts/{artifact_id}", response_model=ArtifactResponse)
+@router.get(
+    "/artifacts/{artifact_id}",
+    response_model=ArtifactResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Artifact not found."},
+        503: {"model": ErrorResponse, "description": "Database not available."},
+    },
+)
 async def get_artifact(artifact_id: int) -> ArtifactResponse:
     """Get an artifact by ID."""
     try:
@@ -124,7 +196,13 @@ async def get_artifact(artifact_id: int) -> ArtifactResponse:
         )
 
 
-@router.delete("/artifacts/{artifact_id}")
+@router.delete(
+    "/artifacts/{artifact_id}",
+    responses={
+        404: {"model": ErrorResponse, "description": "Artifact not found."},
+        503: {"model": ErrorResponse, "description": "Database not available."},
+    },
+)
 async def delete_artifact(artifact_id: int) -> dict:
     """Delete an artifact."""
     try:
