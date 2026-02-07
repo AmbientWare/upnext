@@ -17,7 +17,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** either reassign a new dict (`existing.metadata_ = {...}`) when checkpointing or use SQLAlchemy mutable JSON support for tracked in-place mutation.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/event_processing.py`
 
-- [ ] **[P1] Guard `job.failed` updates against stale/out-of-order events**
+- [x] **[P1] Guard `job.failed` updates against stale/out-of-order events**
   `job.started` has stale-attempt protections, but `job.failed` does not. Replay or out-of-order failed events can overwrite newer state.
   **What to update:** add attempt/time freshness checks before applying failure updates; ignore stale failure events consistently with started-event logic.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/event_processing.py`
