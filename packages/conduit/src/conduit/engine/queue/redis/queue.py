@@ -902,7 +902,7 @@ class RedisQueue(BaseQueue):
             queued=queued_count, active=active_count, scheduled=scheduled_count
         )
 
-    async def subscribe_job(self, job_id: str, timeout: float = 30.0) -> str:
+    async def subscribe_job(self, job_id: str, timeout: float | None = None) -> str:
         client = await self._ensure_connected()
 
         job = await self.get_job(job_id)
@@ -913,16 +913,21 @@ class RedisQueue(BaseQueue):
         await pubsub.subscribe(f"conduit:job:{job_id}")
 
         try:
-            deadline = time.time() + timeout
+            deadline = None if timeout is None else time.time() + timeout
 
-            while time.time() < deadline:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    break
+            while True:
+                if deadline is not None:
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        break
 
-                async with asyncio.timeout(remaining):
+                    async with asyncio.timeout(remaining):
+                        message = await pubsub.get_message(
+                            ignore_subscribe_messages=True, timeout=remaining
+                        )
+                else:
                     message = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=remaining
+                        ignore_subscribe_messages=True, timeout=1.0
                     )
 
                 if message and message["type"] == "message":

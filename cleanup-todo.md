@@ -62,7 +62,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** unify the contract: either make `TaskHandle.submit()` return `Future` or update parallel helpers to work with job IDs plus queue access. Ensure `gather/submit_many/map_tasks` examples match real behavior.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/sdk/parallel.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/handlers/task_handle.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/sdk/task.py`
 
-- [ ] **[P1] Remove hidden 30s timeout from `TaskHandle.wait()`**
+- [x] **[P1] Remove hidden 30s timeout from `TaskHandle.wait()`**
   `TaskHandle.wait()` calls `queue.subscribe_job(job_id)` with default timeout (30s). Long-running tasks can time out even when worker/task timeouts are much longer.
   **What to update:** add explicit `timeout` parameter to `wait()`/`wait_sync()` (or default to task timeout/no timeout), pass through to `subscribe_job`, and document expected behavior.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/handlers/task_handle.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/queue/base.py`, `/Users/connormclean/Documents/programs/conduit/packages/conduit/src/conduit/engine/queue/redis/queue.py`

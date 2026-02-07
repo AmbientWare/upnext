@@ -80,13 +80,20 @@ class TaskHandle(Generic[P]):
         job_id = await queue.enqueue(job)
         return Future(job_id=job_id, queue=queue)
 
-    async def wait(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]:
+    async def wait(
+        self,
+        *args: P.args,
+        wait_timeout: float | None = None,
+        **kwargs: P.kwargs,
+    ) -> TaskResult[Any]:
         """Submit and wait for a job to complete, returning the result.
 
         Parameters are typed based on the original function signature.
+        By default, wait timeout matches the task definition timeout.
         """
         future = await self.submit(*args, **kwargs)
-        return await future.result()
+        timeout = self.definition.timeout if wait_timeout is None else wait_timeout
+        return await future.result(timeout=timeout)
 
     def submit_sync(self, *args: P.args, **kwargs: P.kwargs) -> Future[Any]:
         """Submit task for background execution from a sync context.
@@ -96,13 +103,18 @@ class TaskHandle(Generic[P]):
         """
         return asyncio.run(self.submit(*args, **kwargs))
 
-    def wait_sync(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]:
+    def wait_sync(
+        self,
+        *args: P.args,
+        wait_timeout: float | None = None,
+        **kwargs: P.kwargs,
+    ) -> TaskResult[Any]:
         """Submit and wait for completion from a sync context.
 
         Blocks until the job completes and returns the result.
         Cannot be called from inside a running event loop.
         """
-        return asyncio.run(self.wait(*args, **kwargs))
+        return asyncio.run(self.wait(*args, wait_timeout=wait_timeout, **kwargs))
 
     def _merge_args_kwargs(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]

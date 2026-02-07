@@ -210,7 +210,7 @@ class BaseQueue(ABC):
     async def subscribe_job(
         self,
         job_id: str,
-        timeout: float = 30.0,
+        timeout: float | None = None,
     ) -> str:
         """
         Wait for job completion.
@@ -220,7 +220,7 @@ class BaseQueue(ABC):
 
         Args:
             job_id: Job ID to wait for
-            timeout: Maximum seconds to wait
+            timeout: Maximum seconds to wait (None waits indefinitely)
 
         Returns:
             Final job status
@@ -228,13 +228,18 @@ class BaseQueue(ABC):
         Raises:
             TimeoutError: If timeout reached before completion
         """
-        deadline = time.time() + timeout
         poll_interval = 0.1
 
-        while time.time() < deadline:
+        deadline = None if timeout is None else time.time() + timeout
+
+        while True:
             job = await self.get_job(job_id)
             if job and job.status.is_terminal():
                 return job.status.value
+
+            if deadline is None:
+                await asyncio.sleep(poll_interval)
+                continue
 
             remaining = deadline - time.time()
             if remaining <= 0:
