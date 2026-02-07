@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { useAutoAnimate } from "@formkit/auto-animate/react";
 import { Inbox } from "lucide-react";
 import { cn, formatDuration, formatTimeAgo } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
@@ -44,10 +43,6 @@ export function JobsTablePanel({
   className,
 }: JobsTablePanelProps) {
   const [filter, setFilter] = useState("all");
-  const [bodyRef] = useAutoAnimate<HTMLTableSectionElement>({
-    duration: 180,
-    easing: "ease-out",
-  });
 
   const filteredJobs = useMemo(
     () => filter === "all" ? jobs : jobs.filter((j) => j.status === filter),
@@ -154,7 +149,7 @@ export function JobsTablePanel({
                   <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Progress</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody ref={bodyRef}>
+              <TableBody>
                 {filteredJobs.map((job) => (
                   <TableRow
                     key={job.id}
