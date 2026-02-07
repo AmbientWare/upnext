@@ -25,8 +25,11 @@ router = APIRouter(prefix="/apis", tags=["apis"])
 @router.get("", response_model=ApisListResponse)
 async def list_apis() -> ApisListResponse:
     """List all tracked APIs grouped by name, with active instances."""
-    reader = await get_metrics_reader()
-    raw = await reader.get_apis()
+    try:
+        reader = await get_metrics_reader()
+        raw = await reader.get_apis()
+    except RuntimeError:
+        raw = []
 
     # Fetch active instances and group by api_name
     try:
@@ -69,8 +72,11 @@ async def list_apis() -> ApisListResponse:
 @router.get("/detail", response_model=EndpointsListResponse)
 async def list_endpoints() -> EndpointsListResponse:
     """List all tracked API endpoints (per-endpoint detail)."""
-    reader = await get_metrics_reader()
-    raw = await reader.get_endpoints()
+    try:
+        reader = await get_metrics_reader()
+        raw = await reader.get_endpoints()
+    except RuntimeError:
+        raw = []
     endpoints = [ApiEndpoint(**ep) for ep in raw]
     return EndpointsListResponse(endpoints=endpoints, total=len(endpoints))
 
@@ -80,8 +86,11 @@ async def get_api_trends(
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
 ) -> ApiTrendsResponse:
     """Get hourly API response trends for charts."""
-    reader = await get_metrics_reader()
-    raw = await reader.get_hourly_trends(hours)
+    try:
+        reader = await get_metrics_reader()
+        raw = await reader.get_hourly_trends(hours)
+    except RuntimeError:
+        raw = []
     hourly = [ApiTrendHour(**h) for h in raw]
     return ApiTrendsResponse(hourly=hourly)
 
@@ -89,8 +98,11 @@ async def get_api_trends(
 @router.get("/{method}/{path:path}", response_model=ApiDetailResponse)
 async def get_endpoint(method: str, path: str) -> ApiDetailResponse:
     """Get detailed info for a specific API endpoint."""
-    reader = await get_metrics_reader()
-    raw = await reader.get_endpoints()
+    try:
+        reader = await get_metrics_reader()
+        raw = await reader.get_endpoints()
+    except RuntimeError:
+        raw = []
     key = f"{method.upper()}:/{path}"
 
     for ep in raw:

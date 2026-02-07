@@ -72,8 +72,13 @@ async def list_functions(
     day_ago = now - timedelta(hours=24)
 
     # Fetch function definitions and active workers from Redis
-    func_defs = await get_function_definitions()
-    active_workers = await list_worker_instances()
+    # (gracefully degrade when Redis is unavailable).
+    try:
+        func_defs = await get_function_definitions()
+        active_workers = await list_worker_instances()
+    except RuntimeError:
+        func_defs = {}
+        active_workers = []
 
     # Build function → worker instance counts (deduplicated by name)
     # Workers register handler names (e.g., "on_order_send_confirmation") in their
@@ -221,8 +226,12 @@ async def get_function(name: str) -> FunctionDetailResponse:
     day_ago = now - timedelta(hours=24)
 
     # Fetch function definitions and active workers from Redis
-    func_defs = await get_function_definitions()
-    active_workers = await list_worker_instances()
+    try:
+        func_defs = await get_function_definitions()
+        active_workers = await list_worker_instances()
+    except RuntimeError:
+        func_defs = {}
+        active_workers = []
 
     # If this is an event handler name, resolve to the parent event config
     func_config = func_defs.get(name, {"type": FunctionType.TASK})

@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import AsyncGenerator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from shared.events import (
@@ -39,7 +39,10 @@ class BatchEventResponse(BaseModel):
 @router.get("/stream")
 async def stream_events() -> StreamingResponse:
     """Stream job events via Server-Sent Events (SSE)."""
-    redis_client = await get_redis()
+    try:
+        redis_client = await get_redis()
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(EVENTS_PUBSUB_CHANNEL)
 

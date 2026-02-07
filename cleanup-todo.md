@@ -27,7 +27,7 @@ Use this checklist to track reliability and correctness fixes found during code 
   **What to update:** extend repository query API to support `worker_id` and `status IN (...)`, then wire route params through directly.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/jobs.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/db/repository.py`
 
-- [ ] **[P2] Add graceful Redis-unavailable behavior for Redis-backed routes**
+- [x] **[P2] Add graceful Redis-unavailable behavior for Redis-backed routes**
   Startup allows no-Redis mode, but several routes call `get_redis()` directly and can 500 if Redis is not connected.
   **What to update:** wrap Redis-backed handlers with graceful fallbacks (503 or empty payloads per endpoint contract), and keep behavior consistent across functions/workers/apis/events routes.
   **Primary files:** `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/functions.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/workers.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/apis.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/routes/events.py`, `/Users/connormclean/Documents/programs/conduit/packages/server/src/server/services/redis.py`
