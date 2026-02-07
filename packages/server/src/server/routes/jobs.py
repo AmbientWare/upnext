@@ -55,11 +55,19 @@ async def list_jobs(
         # Get one more than limit to check if there are more
         jobs = await repo.list_jobs(
             function=function,
-            status=status[0] if status and len(status) == 1 else None,
+            status=status,
+            worker_id=worker_id,
             start_date=after,
             end_date=before,
             limit=limit + 1,
             offset=offset,
+        )
+        total = await repo.count_jobs(
+            function=function,
+            status=status,
+            worker_id=worker_id,
+            start_date=after,
+            end_date=before,
         )
 
         # Check if there are more results
@@ -93,7 +101,7 @@ async def list_jobs(
 
         return JobListResponse(
             jobs=job_responses,
-            total=len(job_responses) + offset,  # Approximate total
+            total=total,
             has_more=has_more,
         )
 
@@ -261,12 +269,16 @@ async def get_job(job_id: str) -> JobHistoryResponse:
 @router.post("/{job_id}/cancel")
 async def cancel_job(job_id: str) -> dict:
     """Cancel a running or queued job."""
-    # TODO: Implement job cancellation via queue
-    return {"success": True}
+    raise HTTPException(
+        status_code=501,
+        detail=f"Job cancellation is not implemented yet for job {job_id}",
+    )
 
 
 @router.post("/{job_id}/retry")
 async def retry_job(job_id: str) -> dict:
     """Retry a failed job."""
-    # TODO: Implement job retry via queue
-    return {"job_id": job_id}
+    raise HTTPException(
+        status_code=501,
+        detail=f"Job retry is not implemented yet for job {job_id}",
+    )

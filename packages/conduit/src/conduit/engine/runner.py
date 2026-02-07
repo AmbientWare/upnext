@@ -39,6 +39,8 @@ async def run_services(
     Signal handling:
     - First SIGINT/SIGTERM: Graceful shutdown (stop services, wait for completion)
     - Second SIGINT/SIGTERM (after 0.5s): Force exit immediately
+    Raises:
+        RuntimeError: If any API/worker task crashes or exits unexpectedly before shutdown.
     """
     stop_event = asyncio.Event()
     shutting_down: bool = False
@@ -66,57 +68,89 @@ async def run_services(
         stop_event.set()
 
     loop = asyncio.get_running_loop()
+    failure: tuple[str, BaseException | None] | None = None
+
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, handle_signal)
 
-    # Disable signal handling in components (we handle it at this level)
-    for api in apis:
-        api.handle_signals = False
-    for worker in workers:
-        worker.handle_signals = False
+    try:
+        # Disable signal handling in components (we handle it at this level)
+        for api in apis:
+            api.handle_signals = False
+        for worker in workers:
+            worker.handle_signals = False
 
-    # Start all services
-    tasks: list[asyncio.Task[None]] = []
-    for api in apis:
-        tasks.append(asyncio.create_task(api.start()))
-    for worker in workers:
-        tasks.append(asyncio.create_task(worker.start()))
-
-    # Wait for shutdown signal
-    await stop_event.wait()
-
-    # --- Graceful shutdown ---
-
-    # Signal APIs to stop (non-blocking)
-    for api in apis:
-        api.stop()
-
-    # Stop workers (waits for graceful shutdown)
-    for worker in workers:
-        try:
-            await worker.stop(timeout=worker_timeout)
-        except Exception:
-            logger.debug(
-                f"Exception during worker '{worker.name}' shutdown", exc_info=True
+        # Start all services
+        tasks: list[asyncio.Task[None]] = []
+        for api in apis:
+            tasks.append(asyncio.create_task(api.start(), name=f"api:{api.name}"))
+        for worker in workers:
+            tasks.append(
+                asyncio.create_task(worker.start(), name=f"worker:{worker.name}")
             )
 
-    # Wait for API tasks to finish
-    if tasks:
-        _, pending = await asyncio.wait(tasks, timeout=api_timeout)
-        for task in pending:
-            task.cancel()
-        if pending:
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.gather(*pending, return_exceptions=True)
+        # Wait for shutdown signal OR first crashed/exited service task.
+        stop_waiter = asyncio.create_task(stop_event.wait(), name="shutdown-waiter")
+        done, _ = await asyncio.wait(
+            [*tasks, stop_waiter], return_when=asyncio.FIRST_COMPLETED
+        )
 
-    # --- Cleanup ---
+        if stop_waiter not in done:
+            for task in done:
+                if task is stop_waiter:
+                    continue
+                if task.cancelled():
+                    failure = (task.get_name(), None)
+                else:
+                    exc = task.exception()
+                    failure = (task.get_name(), exc)
+                break
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.remove_signal_handler(sig)
+            stop_event.set()
 
-    # Remove rich handlers to prevent errors during Python shutdown
-    for handler in logging.root.handlers[:]:
-        if "rich" in handler.__class__.__module__:
-            logging.root.removeHandler(handler)
+        stop_waiter.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stop_waiter
 
-    logging.shutdown()
+        # --- Graceful shutdown ---
+
+        # Signal APIs to stop (non-blocking)
+        for api in apis:
+            api.stop()
+
+        # Stop workers (waits for graceful shutdown)
+        for worker in workers:
+            try:
+                await worker.stop(timeout=worker_timeout)
+            except Exception:
+                logger.debug(
+                    f"Exception during worker '{worker.name}' shutdown", exc_info=True
+                )
+
+        # Wait for service tasks to finish
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=api_timeout)
+            for task in pending:
+                task.cancel()
+            if pending:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.gather(*pending, return_exceptions=True)
+
+        if failure:
+            task_name, exc = failure
+            if exc is None:
+                raise RuntimeError(
+                    f"Service '{task_name}' exited unexpectedly; shutting down."
+                )
+            raise RuntimeError(f"Service '{task_name}' crashed; shutting down.") from exc
+    finally:
+        # --- Cleanup ---
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.remove_signal_handler(sig)
+
+        # Remove rich handlers to prevent errors during Python shutdown
+        for handler in logging.root.handlers[:]:
+            if "rich" in handler.__class__.__module__:
+                logging.root.removeHandler(handler)
+
+        logging.shutdown()

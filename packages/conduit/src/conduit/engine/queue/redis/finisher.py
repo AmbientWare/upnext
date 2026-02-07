@@ -113,10 +113,11 @@ class Finisher:
                 if self._queue._finish_sha:
                     pipe.evalsha(
                         self._queue._finish_sha,
-                        5,
+                        6,
                         stream_key,
                         self._queue._result_key(job.id),
                         self._queue._job_key(job),
+                        self._queue._job_index_key(job.id),
                         self._queue._dedup_key(job.function),
                         f"conduit:job:{job.id}",
                         self._queue._consumer_group,
@@ -134,6 +135,7 @@ class Finisher:
                         self._queue._result_key(job.id), 3600, job.to_json().encode()
                     )
                     pipe.delete(self._queue._job_key(job))
+                    pipe.delete(self._queue._job_index_key(job.id))
                     if job.key:
                         pipe.srem(self._queue._dedup_key(job.function), job.key)
                     pipe.publish(f"conduit:job:{job.id}", completed.status.value)

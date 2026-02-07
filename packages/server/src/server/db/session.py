@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from server.db.models import Base
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 if TYPE_CHECKING:
@@ -100,6 +101,16 @@ class Database:
         """Drop all tables (for testing)."""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
+
+    async def get_missing_tables(self, required_tables: set[str]) -> list[str]:
+        """Return required table names that are missing from the current schema."""
+        async with self.engine.connect() as conn:
+            missing = await conn.run_sync(
+                lambda sync_conn: sorted(
+                    required_tables - set(inspect(sync_conn).get_table_names())
+                )
+            )
+        return list(missing)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:

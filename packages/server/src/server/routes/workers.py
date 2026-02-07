@@ -23,8 +23,11 @@ router = APIRouter(prefix="/workers", tags=["workers"])
 @router.get("", response_model=WorkersListResponse)
 async def list_workers_route() -> WorkersListResponse:
     """List all workers with active instances, matching API pattern."""
-    worker_defs = await get_worker_definitions()
-    all_instances = await list_worker_instances()
+    try:
+        worker_defs = await get_worker_definitions()
+        all_instances = await list_worker_instances()
+    except RuntimeError:
+        return WorkersListResponse(workers=[], total=0)
 
     # Group instances by worker_name
     instances_by_name: dict[str, list[WorkerInstance]] = {}
@@ -67,7 +70,10 @@ async def list_workers_route() -> WorkersListResponse:
 @router.get("/{worker_id}", response_model=WorkerInstance)
 async def get_worker_route(worker_id: str) -> WorkerInstance:
     """Get a specific worker instance by ID."""
-    instance = await get_worker_instance(worker_id)
+    try:
+        instance = await get_worker_instance(worker_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
     if not instance:
         raise HTTPException(status_code=404, detail=f"Worker {worker_id} not found")

@@ -71,12 +71,12 @@ class Future[T]:
         """Get the job ID."""
         return self._job_id
 
-    async def result(self, timeout: float = 30.0) -> TaskResult[T]:
+    async def result(self, timeout: float | None = None) -> TaskResult[T]:
         """
         Wait for the job to complete and return the result.
 
         Args:
-            timeout: Maximum time to wait in seconds
+            timeout: Maximum time to wait in seconds (None waits indefinitely)
 
         Returns:
             TaskResult containing the value, status, and execution metadata

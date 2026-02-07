@@ -183,8 +183,12 @@ class StreamSubscriber:
         Returns:
             Number of events processed
         """
+        if not await self._ensure_consumer_group():
+            return 0
+
         events: list[tuple[str, dict[str, Any]]] = []
         event_ids: list[str] = []
+        ack_ids: list[str] = []
         seen_event_ids: set[str] = set()
 
         # Read new events
@@ -278,22 +282,30 @@ class StreamSubscriber:
 
                 await self._handle_event(event_type, event_data, worker_id)
                 processed += 1
+                ack_ids.append(event_id)
 
             except Exception as e:
                 errors += 1
                 logger.warning(f"Error processing event {event_id}: {e}")
 
-        # ACK all events (even failed ones to prevent infinite retry)
-        if event_ids:
+        # ACK only successfully processed events.
+        # Failed events stay pending and can be retried/reclaimed later.
+        if ack_ids:
             try:
                 await self._redis.xack(
-                    self._config.stream, self._config.group, *event_ids
+                    self._config.stream, self._config.group, *ack_ids
                 )
             except Exception as e:
                 logger.warning(f"Error ACKing events: {e}")
 
-        if processed > 0:
-            logger.debug(f"Processed {processed} events ({errors} errors)")
+        if processed > 0 or errors > 0:
+            logger.debug(
+                "Processed %s events (%s errors, %s acked, %s pending)",
+                processed,
+                errors,
+                len(ack_ids),
+                len(event_ids) - len(ack_ids),
+            )
 
         return processed
 
@@ -339,10 +351,10 @@ class StreamSubscriber:
         except Exception as e:
             logger.debug(f"Error publishing event: {e}")
 
-    async def _ensure_consumer_group(self) -> None:
+    async def _ensure_consumer_group(self) -> bool:
         """Create consumer group if it doesn't exist."""
         if self._group_created:
-            return
+            return True
 
         try:
             await self._redis.xgroup_create(
@@ -352,12 +364,15 @@ class StreamSubscriber:
                 mkstream=True,
             )
             logger.debug(f"Created consumer group '{self._config.group}'")
+            self._group_created = True
+            return True
         except Exception as e:
             # BUSYGROUP means group already exists - that's fine
-            if "BUSYGROUP" not in str(e):
-                logger.warning(f"Consumer group creation issue: {e}")
-
-        self._group_created = True
+            if "BUSYGROUP" in str(e):
+                self._group_created = True
+                return True
+            logger.warning(f"Consumer group creation issue: {e}")
+            return False
 
     def _decode_event_data(
         self,

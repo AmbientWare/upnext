@@ -10,7 +10,7 @@ from shared.models import Job
 from conduit.engine.queue.base import BaseQueue
 from conduit.engine.registry import TaskDefinition
 from conduit.sdk.context import Context, get_current_context, set_current_context
-from conduit.sdk.task import TaskResult
+from conduit.sdk.task import Future, TaskResult
 
 if TYPE_CHECKING:
     from conduit.sdk.worker import Worker
@@ -68,8 +68,8 @@ class TaskHandle(Generic[P]):
             raise RuntimeError("Worker not started. Call worker.start() first.")
         return self._queue
 
-    async def submit(self, *args: P.args, **kwargs: P.kwargs) -> str:
-        """Submit task for background execution, return job ID.
+    async def submit(self, *args: P.args, **kwargs: P.kwargs) -> Future[Any]:
+        """Submit task for background execution, return a Future.
 
         Parameters are typed based on the original function signature.
         """
@@ -77,48 +77,44 @@ class TaskHandle(Generic[P]):
         # Convert positional args to kwargs based on function signature
         merged_kwargs = self._merge_args_kwargs(args, kwargs)
         job = self._create_job(merged_kwargs)
-        return await queue.enqueue(job)
+        job_id = await queue.enqueue(job)
+        return Future(job_id=job_id, queue=queue)
 
-    async def wait(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]:
+    async def wait(
+        self,
+        *args: P.args,
+        wait_timeout: float | None = None,
+        **kwargs: P.kwargs,
+    ) -> TaskResult[Any]:
         """Submit and wait for a job to complete, returning the result.
 
         Parameters are typed based on the original function signature.
+        By default, wait timeout matches the task definition timeout.
         """
-        job_id = await self.submit(*args, **kwargs)
-        queue = self._ensure_queue()
+        future = await self.submit(*args, **kwargs)
+        timeout = self.definition.timeout if wait_timeout is None else wait_timeout
+        return await future.result(timeout=timeout)
 
-        status = await queue.subscribe_job(job_id)
-        job = await queue.get_job(job_id)
-        if not job:
-            raise RuntimeError(f"Job {job_id} not found after completion")
-
-        return TaskResult(
-            value=job.result,
-            job_id=job.id,
-            function=job.function,
-            status=status,
-            error=job.error,
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-            attempts=job.attempts,
-            parent_id=job.metadata.get("parent_id"),
-        )
-
-    def submit_sync(self, *args: P.args, **kwargs: P.kwargs) -> str:
+    def submit_sync(self, *args: P.args, **kwargs: P.kwargs) -> Future[Any]:
         """Submit task for background execution from a sync context.
 
-        Blocks until the job is enqueued and returns the job ID.
+        Blocks until the job is enqueued and returns a Future.
         Cannot be called from inside a running event loop.
         """
         return asyncio.run(self.submit(*args, **kwargs))
 
-    def wait_sync(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]:
+    def wait_sync(
+        self,
+        *args: P.args,
+        wait_timeout: float | None = None,
+        **kwargs: P.kwargs,
+    ) -> TaskResult[Any]:
         """Submit and wait for completion from a sync context.
 
         Blocks until the job completes and returns the result.
         Cannot be called from inside a running event loop.
         """
-        return asyncio.run(self.wait(*args, **kwargs))
+        return asyncio.run(self.wait(*args, wait_timeout=wait_timeout, **kwargs))
 
     def _merge_args_kwargs(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]

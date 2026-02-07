@@ -20,5 +20,5 @@ WORKDIR /app/packages/conduit
 # Ensure Python output is not buffered
 ENV PYTHONUNBUFFERED=1
 
-# Default: run the example e-commerce service
-CMD ["uv", "run", "conduit", "run", "examples/service.py"]
+# Default: show CLI help (no examples are bundled into the image)
+CMD ["uv", "run", "conduit", "--help"]

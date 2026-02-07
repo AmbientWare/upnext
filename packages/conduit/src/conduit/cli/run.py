@@ -45,6 +45,7 @@ def run(
     setup_logging(verbose=verbose)
 
     apis, workers = discover_objects(files)
+    apis, workers = filter_components(apis, workers, only)
 
     try:
         for w in workers:
@@ -52,8 +53,6 @@ def run(
     except ValueError as e:
         error_panel(str(e), title="Configuration error")
         raise typer.Exit(1)
-
-    apis, workers = filter_components(apis, workers, only)
 
     # Determine redis URL for display (from first worker that has one, or first API)
     display_redis_url = next(

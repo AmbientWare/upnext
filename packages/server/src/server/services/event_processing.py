@@ -199,9 +199,45 @@ async def _handle_job_failed(event: JobFailedEvent) -> None:
 
             existing = await repo.get_by_id(event.job_id)
             if existing:
+                existing_attempts = existing.attempts or 0
+                existing_completed_at = _as_utc_aware(existing.completed_at)
+                incoming_failed_at = _as_utc_aware(event.failed_at)
+                is_stale_attempt = event.attempt < existing_attempts
+                is_older_terminal_failure = (
+                    existing.status in {"complete", "failed"}
+                    and event.attempt <= existing_attempts
+                    and existing_completed_at is not None
+                    and incoming_failed_at is not None
+                    and incoming_failed_at <= existing_completed_at
+                )
+                is_duplicate_failure = (
+                    existing.status == "failed"
+                    and event.attempt == existing_attempts
+                    and existing_completed_at is not None
+                    and incoming_failed_at is not None
+                    and incoming_failed_at <= existing_completed_at
+                )
+
+                if is_stale_attempt or is_older_terminal_failure or is_duplicate_failure:
+                    logger.debug(
+                        "Ignoring stale job.failed for %s "
+                        "(existing=%s/%s completed_at=%s, incoming=%s/%s)",
+                        event.job_id,
+                        existing.status,
+                        existing_attempts,
+                        existing_completed_at.isoformat()
+                        if existing_completed_at
+                        else None,
+                        event.attempt,
+                        incoming_failed_at.isoformat() if incoming_failed_at else None,
+                    )
+                    return
+
                 existing.status = "failed"
                 existing.error = event.error
                 existing.completed_at = event.failed_at
+                existing.attempts = max(existing_attempts, event.attempt)
+                existing.max_retries = max(existing.max_retries or 0, event.max_retries)
             else:
                 await repo.record_job(
                     {
@@ -280,8 +316,11 @@ async def _handle_job_checkpoint(event: JobCheckpointEvent) -> None:
             repo = JobRepository(session)
             existing = await repo.get_by_id(event.job_id)
             if existing:
-                existing.metadata_["checkpoint"] = event.state
-                existing.metadata_["checkpoint_at"] = event.checkpointed_at.isoformat()
+                metadata = dict(existing.metadata_ or {})
+                metadata["checkpoint"] = event.state
+                metadata["checkpoint_at"] = event.checkpointed_at.isoformat()
+                # Reassign JSON to ensure SQLAlchemy marks column as dirty.
+                existing.metadata_ = metadata
     except RuntimeError:
         logger.debug("Database not available, skipping checkpoint persistence")
 

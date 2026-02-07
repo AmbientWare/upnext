@@ -67,6 +67,7 @@ class RedisQueue(BaseQueue):
         conduit:fn:{function}:scheduled  - ZSET for delayed jobs (score = run_at)
         conduit:fn:{function}:dedup      - SET for deduplication keys
         conduit:job:{function}:{id}      - Job data (with TTL)
+        conduit:job_index:{id}           - Job ID -> job key mapping (with TTL)
         conduit:result:{job_id}          - Job result (with TTL)
     """
 
@@ -243,6 +244,9 @@ class RedisQueue(BaseQueue):
     def _job_key(self, job: Job) -> str:
         return self._key("job", job.function, job.id)
 
+    def _job_index_key(self, job_id: str) -> str:
+        return self._key("job_index", job_id)
+
     def _result_key(self, job_id: str) -> str:
         return self._key("result", job_id)
 
@@ -258,6 +262,7 @@ class RedisQueue(BaseQueue):
         scheduled_key = self._scheduled_key(job.function)
         dedup_key = self._dedup_key(job.function)
         job_key = self._job_key(job)
+        job_index_key = self._job_index_key(job.id)
 
         job.mark_queued()
 
@@ -270,10 +275,11 @@ class RedisQueue(BaseQueue):
 
             result = await client.evalsha(
                 self._enqueue_sha,
-                3,
+                4,
                 dedup_key,
                 job_key,
                 dest_key,
+                job_index_key,
                 job.key or "",
                 job.to_json(),
                 str(self._job_ttl_seconds),
@@ -295,6 +301,7 @@ class RedisQueue(BaseQueue):
                 await client.expire(dedup_key, self._job_ttl_seconds)
 
             await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
+            await client.setex(job_index_key, self._job_ttl_seconds, job_key)
 
             if delay > 0:
                 await client.zadd(scheduled_key, {job.id: time.time() + delay})
@@ -585,16 +592,18 @@ class RedisQueue(BaseQueue):
 
         result_key = self._result_key(job.id)
         job_key = self._job_key(job)
+        job_index_key = self._job_index_key(job.id)
         dedup_key = self._dedup_key(job.function)
         pubsub_channel = f"conduit:job:{job.id}"
 
         if self._finish_sha:
             await client.evalsha(
                 self._finish_sha,
-                5,
+                6,
                 stream_key,
                 result_key,
                 job_key,
+                job_index_key,
                 dedup_key,
                 pubsub_channel,
                 self._consumer_group,
@@ -609,6 +618,7 @@ class RedisQueue(BaseQueue):
                 await client.xack(stream_key, self._consumer_group, msg_id)
             await client.setex(result_key, 3600, job.to_json().encode())
             await client.delete(job_key)
+            await client.delete(job_index_key)
             if job.key:
                 await client.srem(dedup_key, job.key)
             await client.publish(pubsub_channel, status.value)
@@ -632,6 +642,7 @@ class RedisQueue(BaseQueue):
         job.mark_queued("Re-queued for retry")
 
         job_key = self._job_key(job)
+        job_index_key = self._job_index_key(job.id)
         dest_key = (
             self._scheduled_key(job.function)
             if delay > 0
@@ -646,10 +657,11 @@ class RedisQueue(BaseQueue):
         if self._retry_sha and old_stream_key:
             await client.evalsha(
                 self._retry_sha,
-                3,  # number of keys
+                4,  # number of keys
                 old_stream_key,
                 job_key,
                 dest_key,
+                job_index_key,
                 self._consumer_group,
                 msg_id or "",
                 job.to_json(),
@@ -665,6 +677,7 @@ class RedisQueue(BaseQueue):
                 await client.xack(old_stream_key, self._consumer_group, msg_id)
 
             await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
+            await client.setex(job_index_key, self._job_ttl_seconds, job_key)
 
             if delay > 0:
                 await client.zadd(dest_key, {job.id: time.time() + delay})
@@ -679,67 +692,55 @@ class RedisQueue(BaseQueue):
     async def cancel(self, job_id: str) -> bool:
         """Cancel a job."""
         client = await self._ensure_connected()
+        job_key = await self._find_job_key_by_id(job_id)
+        if job_key is None:
+            return False
 
-        cursor = 0
-        while True:
-            cursor, keys = await client.scan(
-                cursor=cursor,
-                match=f"{self._key_prefix}:job:*:{job_id}",
-                count=100,
+        job_data = await client.get(job_key)
+        if not job_data:
+            return False
+
+        job_str = job_data.decode() if isinstance(job_data, bytes) else job_data
+        job = Job.from_json(job_str)
+
+        if job.status.is_terminal():
+            return False
+
+        # Update job status for result storage
+        job.status = JobStatus.CANCELLED
+        job.completed_at = datetime.now(UTC)
+
+        msg_id = job.metadata.get("_stream_msg_id") if job.metadata else None
+        stream_key = self._stream_key(job.function)
+        result_key = self._result_key(job.id)
+        job_index_key = self._job_index_key(job.id)
+        pubsub_channel = f"conduit:job:{job.id}"
+
+        # Use Lua script for atomic cancellation if available
+        if self._cancel_sha:
+            await client.evalsha(
+                self._cancel_sha,
+                5,  # number of keys
+                stream_key,
+                result_key,
+                job_key,
+                job_index_key,
+                pubsub_channel,
+                self._consumer_group,
+                msg_id or "",
+                job.to_json(),
+                "3600",
             )
+        else:
+            # Fallback without Lua
+            if msg_id:
+                await client.xack(stream_key, self._consumer_group, msg_id)
+            await client.setex(result_key, 3600, job.to_json().encode())
+            await client.delete(job_key)
+            await client.delete(job_index_key)
+            await client.publish(pubsub_channel, JobStatus.CANCELLED.value)
 
-            for job_key in keys:
-                key_str = job_key.decode() if isinstance(job_key, bytes) else job_key
-                job_data = await client.get(key_str)
-
-                if job_data:
-                    job_str = (
-                        job_data.decode() if isinstance(job_data, bytes) else job_data
-                    )
-                    job = Job.from_json(job_str)
-
-                    if job.status.is_terminal():
-                        return False
-
-                    # Update job status for result storage
-                    job.status = JobStatus.CANCELLED
-                    job.completed_at = datetime.now(UTC)
-
-                    msg_id = (
-                        job.metadata.get("_stream_msg_id") if job.metadata else None
-                    )
-                    stream_key = self._stream_key(job.function)
-                    result_key = self._result_key(job.id)
-                    pubsub_channel = f"conduit:job:{job.id}"
-
-                    # Use Lua script for atomic cancellation if available
-                    if self._cancel_sha:
-                        await client.evalsha(
-                            self._cancel_sha,
-                            4,  # number of keys
-                            stream_key,
-                            result_key,
-                            key_str,
-                            pubsub_channel,
-                            self._consumer_group,
-                            msg_id or "",
-                            job.to_json(),
-                            "3600",
-                        )
-                    else:
-                        # Fallback without Lua
-                        if msg_id:
-                            await client.xack(stream_key, self._consumer_group, msg_id)
-                        await client.setex(result_key, 3600, job.to_json().encode())
-                        await client.delete(key_str)
-                        await client.publish(pubsub_channel, JobStatus.CANCELLED.value)
-
-                    return True
-
-            if cursor == 0:
-                break
-
-        return False
+        return True
 
     async def get_job(self, job_id: str) -> Job | None:
         """Get a job by ID."""
@@ -755,31 +756,17 @@ class RedisQueue(BaseQueue):
             )
             return Job.from_json(result_str)
 
-        # Scan for active job
-        cursor = 0
-        while True:
-            cursor, keys = await client.scan(
-                cursor=cursor,
-                match=f"{self._key_prefix}:job:*:{job_id}",
-                count=100,
-            )
+        # Lookup active job via ID index, fallback to SCAN for backward compatibility.
+        job_key = await self._find_job_key_by_id(job_id)
+        if job_key is None:
+            return None
 
-            for job_key in keys:
-                key_str = job_key.decode() if isinstance(job_key, bytes) else job_key
-                job_data = await client.get(key_str)
+        job_data = await client.get(job_key)
+        if not job_data:
+            return None
 
-                if job_data:
-                    job_str = (
-                        job_data.decode() if isinstance(job_data, bytes) else job_data
-                    )
-                    job = Job.from_json(job_str)
-
-                    return job
-
-            if cursor == 0:
-                break
-
-        return None
+        job_str = job_data.decode() if isinstance(job_data, bytes) else job_data
+        return Job.from_json(job_str)
 
     # =========================================================================
     # OPTIONAL - progress, heartbeat, metadata
@@ -824,9 +811,12 @@ class RedisQueue(BaseQueue):
 
     async def update_job_metadata(self, job_id: str, metadata: dict[str, Any]) -> None:
         client = await self._ensure_connected()
+        if not metadata:
+            return
 
-        temp_job = Job(function="", id=job_id)
-        job_key = self._job_key(temp_job)
+        job_key = await self._find_job_key_by_id(job_id)
+        if job_key is None:
+            return
 
         job_data = await client.get(job_key)
         if not job_data:
@@ -837,7 +827,47 @@ class RedisQueue(BaseQueue):
         )
         job.metadata = job.metadata or {}
         job.metadata.update(metadata)
-        await client.set(job_key, job.to_json())
+
+        ttl = await client.ttl(job_key)
+        serialized = job.to_json()
+        if ttl and ttl > 0:
+            await client.setex(job_key, int(ttl), serialized)
+        else:
+            await client.set(job_key, serialized)
+
+    async def _find_job_key_by_id(self, job_id: str) -> str | None:
+        """Find stored job key for a job ID using index first, SCAN as fallback."""
+        client = await self._ensure_connected()
+        index_key = self._job_index_key(job_id)
+
+        indexed_job_key = await client.get(index_key)
+        if indexed_job_key:
+            job_key = (
+                indexed_job_key.decode()
+                if isinstance(indexed_job_key, bytes)
+                else indexed_job_key
+            )
+            if await client.exists(job_key):
+                return job_key
+            # Stale index entry — clear and fall back to scan.
+            await client.delete(index_key)
+
+        cursor = 0
+        match = f"{self._key_prefix}:job:*:{job_id}"
+        while True:
+            cursor, keys = await client.scan(cursor=cursor, match=match, count=100)
+            for key in keys:
+                key_str = key.decode() if isinstance(key, bytes) else key
+                if await client.exists(key_str):
+                    ttl = await client.ttl(key_str)
+                    if ttl and ttl > 0:
+                        await client.setex(index_key, int(ttl), key_str)
+                    else:
+                        await client.set(index_key, key_str)
+                    return key_str
+            if cursor == 0:
+                break
+        return None
 
     # =========================================================================
     # OPTIONAL - stats
@@ -877,7 +907,7 @@ class RedisQueue(BaseQueue):
             queued=queued_count, active=active_count, scheduled=scheduled_count
         )
 
-    async def subscribe_job(self, job_id: str, timeout: float = 30.0) -> str:
+    async def subscribe_job(self, job_id: str, timeout: float | None = None) -> str:
         client = await self._ensure_connected()
 
         job = await self.get_job(job_id)
@@ -888,16 +918,21 @@ class RedisQueue(BaseQueue):
         await pubsub.subscribe(f"conduit:job:{job_id}")
 
         try:
-            deadline = time.time() + timeout
+            deadline = None if timeout is None else time.time() + timeout
 
-            while time.time() < deadline:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    break
+            while True:
+                if deadline is not None:
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        break
 
-                async with asyncio.timeout(remaining):
+                    async with asyncio.timeout(remaining):
+                        message = await pubsub.get_message(
+                            ignore_subscribe_messages=True, timeout=remaining
+                        )
+                else:
                     message = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=remaining
+                        ignore_subscribe_messages=True, timeout=1.0
                     )
 
                 if message and message["type"] == "message":
