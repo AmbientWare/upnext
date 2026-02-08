@@ -51,6 +51,7 @@ class JobRepository:
         history = JobHistory(
             id=data["job_id"],
             function=data["function"],
+            function_name=data.get("function_name", data["function"]),
             status=data["status"],
             created_at=data.get("created_at"),
             scheduled_at=data.get("scheduled_at"),
@@ -60,6 +61,8 @@ class JobRepository:
             max_retries=data.get("max_retries", 0),
             timeout=data.get("timeout"),
             worker_id=data.get("worker_id"),
+            parent_id=data.get("parent_id"),
+            root_id=data.get("root_id", data["job_id"]),
             progress=data.get("progress", 0.0),
             kwargs=data.get("kwargs", {}),
             metadata_=data.get("metadata", {}),
@@ -78,6 +81,47 @@ class JobRepository:
 
         result = await self._session.execute(query)
         return result.scalar_one_or_none()
+
+    async def list_job_subtree(self, job_id: str) -> list[JobHistory]:
+        """
+        List a job and all recursive descendants by parent_id lineage.
+
+        Descendants are discovered breadth-first for stable query behavior
+        across SQLite/PostgreSQL backends.
+        """
+        root = await self.get_by_id(job_id)
+        if root is None:
+            return []
+
+        parent_id_expr = JobHistory.parent_id
+        jobs_by_id: dict[str, JobHistory] = {root.id: root}
+        frontier: set[str] = {root.id}
+
+        while frontier:
+            query = select(JobHistory).where(parent_id_expr.in_(list(frontier)))
+            result = await self._session.execute(query)
+            children = list(result.scalars().all())
+
+            next_frontier: set[str] = set()
+            for child in children:
+                if child.id in jobs_by_id:
+                    continue
+                jobs_by_id[child.id] = child
+                next_frontier.add(child.id)
+
+            frontier = next_frontier
+
+        def timeline_sort_key(job: JobHistory) -> tuple[datetime, str]:
+            return (
+                job.started_at
+                or job.created_at
+                or job.scheduled_at
+                or job.completed_at
+                or datetime.min.replace(tzinfo=UTC),
+                job.id,
+            )
+
+        return sorted(jobs_by_id.values(), key=timeline_sort_key)
 
     @staticmethod
     def _apply_job_list_filters(
@@ -119,7 +163,7 @@ class JobRepository:
         List jobs with optional filtering.
 
         Args:
-            function: Filter by function name
+            function: Filter by function key
             status: Filter by status (single value or list)
             worker_id: Filter by worker ID
             start_date: Filter by created_at >= start_date
@@ -281,13 +325,13 @@ class JobRepository:
         start_date: datetime,
     ) -> dict[str, dict[str, Any]]:
         """
-        Get aggregated job stats per function in a single query.
+        Get aggregated job stats per function key in a single query.
 
         Uses window functions to compute both aggregate stats (counts, avg duration)
         and last-run info (status, timestamp) in one table scan, then filters to
         one row per function.
 
-        Returns dict mapping function name to stats dict with:
+        Returns dict mapping function key to stats dict with:
         runs, successes, failures, avg_duration_ms, last_run_at, last_run_status
         """
         duration_expr = self._duration_ms_expr()

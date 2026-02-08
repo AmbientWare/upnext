@@ -64,7 +64,7 @@ async def _handle_job_started(
     logger.debug(
         "Job started: %s (%s) attempt=%s worker=%s",
         event.job_id,
-        event.function,
+        event.function_name,
         event.attempt,
         event.worker_id or worker_id,
     )
@@ -74,6 +74,10 @@ async def _handle_job_started(
         async with db.session() as session:
             repo = JobRepository(session)
             existing = await repo.get_by_id(event.job_id)
+            parent_id = event.parent_id
+            root_id = event.root_id
+            event_metadata = dict(event.metadata or {})
+
             if existing:
                 existing_attempts = existing.attempts or 0
                 existing_started_at = _as_utc_aware(existing.started_at)
@@ -113,25 +117,37 @@ async def _handle_job_started(
                     return False
 
                 existing.status = "active"
+                existing.function = event.function
+                existing.function_name = event.function_name
                 existing.attempts = max(existing_attempts, event.attempt)
                 existing.worker_id = event.worker_id or worker_id
+                existing.parent_id = parent_id
+                existing.root_id = root_id
                 existing.started_at = event.started_at
                 existing.completed_at = None
                 existing.progress = 0.0
                 existing.error = None
                 existing.result = None
+                if event_metadata:
+                    merged_metadata = dict(existing.metadata_ or {})
+                    merged_metadata.update(event_metadata)
+                    existing.metadata_ = merged_metadata
             else:
                 await repo.record_job(
                     {
                         "job_id": event.job_id,
                         "function": event.function,
+                        "function_name": event.function_name,
                         "status": "active",
                         "kwargs": event.kwargs,
                         "attempts": event.attempt,
                         "max_retries": event.max_retries,
                         "worker_id": event.worker_id or worker_id,
+                        "parent_id": parent_id,
+                        "root_id": root_id,
                         "started_at": event.started_at,
                         "created_at": event.started_at,
+                        "metadata": event_metadata,
                     }
                 )
 
@@ -148,7 +164,7 @@ async def _handle_job_completed(event: JobCompletedEvent) -> None:
     logger.debug(
         "Job completed: %s (%s) duration=%sms",
         event.job_id,
-        event.function,
+        event.function_name,
         event.duration_ms,
     )
 
@@ -160,18 +176,26 @@ async def _handle_job_completed(event: JobCompletedEvent) -> None:
             existing = await repo.get_by_id(event.job_id)
             if existing:
                 existing.status = "complete"
+                existing.function = event.function
+                existing.function_name = event.function_name
                 existing.result = event.result
                 existing.completed_at = event.completed_at
+                existing.attempts = max(existing.attempts or 0, event.attempt)
+                existing.parent_id = event.parent_id
+                existing.root_id = event.root_id
                 existing.progress = 1.0
             else:
                 await repo.record_job(
                     {
                         "job_id": event.job_id,
                         "function": event.function,
+                        "function_name": event.function_name,
                         "status": "complete",
                         "result": event.result,
                         "completed_at": event.completed_at,
                         "attempts": event.attempt,
+                        "parent_id": event.parent_id,
+                        "root_id": event.root_id,
                         "progress": 1.0,
                     }
                 )
@@ -187,7 +211,7 @@ async def _handle_job_failed(event: JobFailedEvent) -> None:
     logger.debug(
         "Job failed: %s (%s) error=%s will_retry=%s",
         event.job_id,
-        event.function,
+        event.function_name,
         event.error[:100],
         event.will_retry,
     )
@@ -234,20 +258,27 @@ async def _handle_job_failed(event: JobFailedEvent) -> None:
                     return
 
                 existing.status = "failed"
+                existing.function = event.function
+                existing.function_name = event.function_name
                 existing.error = event.error
                 existing.completed_at = event.failed_at
                 existing.attempts = max(existing_attempts, event.attempt)
                 existing.max_retries = max(existing.max_retries or 0, event.max_retries)
+                existing.parent_id = event.parent_id
+                existing.root_id = event.root_id
             else:
                 await repo.record_job(
                     {
                         "job_id": event.job_id,
                         "function": event.function,
+                        "function_name": event.function_name,
                         "status": "failed",
                         "error": event.error,
                         "completed_at": event.failed_at,
                         "attempts": event.attempt,
                         "max_retries": event.max_retries,
+                        "parent_id": event.parent_id,
+                        "root_id": event.root_id,
                     }
                 )
 
@@ -262,7 +293,7 @@ async def _handle_job_retrying(event: JobRetryingEvent) -> None:
     logger.debug(
         "Job retrying: %s (%s) attempt %s -> %s delay=%ss",
         event.job_id,
-        event.function,
+        event.function_name,
         event.current_attempt,
         event.next_attempt,
         event.delay_seconds,
@@ -276,8 +307,12 @@ async def _handle_job_retrying(event: JobRetryingEvent) -> None:
             existing = await repo.get_by_id(event.job_id)
             if existing:
                 existing.status = "retrying"
+                existing.function = event.function
+                existing.function_name = event.function_name
                 existing.attempts = event.current_attempt
                 existing.error = event.error
+                existing.parent_id = event.parent_id
+                existing.root_id = event.root_id
                 await session.flush()
                 await _promote_pending_artifacts(session, event.job_id)
     except RuntimeError:
@@ -300,6 +335,8 @@ async def _handle_job_progress(event: JobProgressEvent) -> None:
             existing = await repo.get_by_id(event.job_id)
             if existing:
                 existing.progress = event.progress
+                existing.parent_id = event.parent_id
+                existing.root_id = event.root_id
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
 
@@ -321,6 +358,8 @@ async def _handle_job_checkpoint(event: JobCheckpointEvent) -> None:
                 metadata["checkpoint_at"] = event.checkpointed_at.isoformat()
                 # Reassign JSON to ensure SQLAlchemy marks column as dirty.
                 existing.metadata_ = metadata
+                existing.parent_id = event.parent_id
+                existing.root_id = event.root_id
     except RuntimeError:
         logger.debug("Database not available, skipping checkpoint persistence")
 
@@ -328,12 +367,16 @@ async def _handle_job_checkpoint(event: JobCheckpointEvent) -> None:
 async def _process_job_started(
     data: dict[str, Any], worker_id: str | None
 ) -> bool:
+    if "function_name" not in data and "function" in data:
+        data = {**data, "function_name": data["function"]}
     return await _handle_job_started(JobStartedEvent(**data), worker_id)
 
 
 async def _process_job_completed(
     data: dict[str, Any], _: str | None
 ) -> bool:
+    if "function_name" not in data and "function" in data:
+        data = {**data, "function_name": data["function"]}
     await _handle_job_completed(JobCompletedEvent(**data))
     return True
 
@@ -341,6 +384,8 @@ async def _process_job_completed(
 async def _process_job_failed(
     data: dict[str, Any], _: str | None
 ) -> bool:
+    if "function_name" not in data and "function" in data:
+        data = {**data, "function_name": data["function"]}
     await _handle_job_failed(JobFailedEvent(**data))
     return True
 
@@ -348,6 +393,8 @@ async def _process_job_failed(
 async def _process_job_retrying(
     data: dict[str, Any], _: str | None
 ) -> bool:
+    if "function_name" not in data and "function" in data:
+        data = {**data, "function_name": data["function"]}
     await _handle_job_retrying(JobRetryingEvent(**data))
     return True
 

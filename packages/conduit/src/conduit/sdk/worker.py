@@ -30,6 +30,7 @@ from shared.workers import (
 
 from conduit.config import get_settings
 from conduit.engine.cron import calculate_next_cron_run
+from conduit.engine.function_identity import build_function_key
 from conduit.engine.handlers import EventHandle, TaskHandle
 from conduit.engine.job_processor import JobProcessor
 from conduit.engine.queue import RedisQueue
@@ -102,6 +103,7 @@ class Worker:
     _status_buffer: StatusPublisher | None = field(default=None, init=False)
     _started_at: datetime | None = field(default=None, init=False)
     _registered_functions: list[str] = field(default_factory=list, init=False)
+    _function_name_map: dict[str, str] = field(default_factory=dict, init=False)
     _function_definitions: list[dict[str, Any]] = field(
         default_factory=list, init=False
     )
@@ -174,6 +176,7 @@ class Worker:
         self,
         __func: None = None,
         *,
+        name: str | None = None,
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
@@ -191,6 +194,7 @@ class Worker:
         self,
         __func: Callable[..., Any] | None = None,
         *,
+        name: str | None = None,
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
@@ -227,10 +231,21 @@ class Worker:
         """
 
         def decorator(fn: Callable[..., Any]) -> TaskHandle[Any]:
-            task_name = fn.__name__
+            task_name = name or fn.__name__
+            function_key = build_function_key(
+                "task",
+                module=fn.__module__,
+                qualname=fn.__qualname__,
+                name=task_name,
+            )
+            if task_name in self._task_handles:
+                raise ValueError(
+                    f"Task name '{task_name}' is already registered on worker '{self.name}'"
+                )
 
             definition = self._registry.register_task(
-                name=task_name,
+                name=function_key,
+                display_name=task_name,
                 func=fn,
                 retries=retries,
                 retry_delay=retry_delay,
@@ -247,6 +262,7 @@ class Worker:
 
             handle = TaskHandle(
                 name=task_name,
+                function_key=function_key,
                 func=fn,
                 definition=definition,
                 _worker=self,
@@ -283,17 +299,26 @@ class Worker:
 
         def decorator(func: F) -> F:
             cron_name = name or func.__name__
+            function_key = build_function_key(
+                "cron",
+                module=func.__module__,
+                qualname=func.__qualname__,
+                name=cron_name,
+                schedule=schedule,
+            )
 
             definition = self._registry.register_cron(
+                key=function_key,
+                display_name=cron_name,
                 schedule=schedule,
                 func=func,
-                name=cron_name,
                 timeout=timeout,
             )
 
             # Also register as a task so worker can execute it
             self._registry.register_task(
-                name=cron_name,
+                name=function_key,
+                display_name=cron_name,
                 func=func,
                 timeout=timeout,
             )
@@ -335,16 +360,20 @@ class Worker:
 
         worker_id = self.initialize(worker_id_prefix="worker")
 
-        # Build registered function names and definitions
+        # Build registered function keys and definitions
         registered_functions: list[str] = []
+        function_name_map: dict[str, str] = {}
         function_definitions: list[dict[str, Any]] = []
 
         # Add tasks
-        for name, handle in self._task_handles.items():
-            registered_functions.append(name)
+        for display_name, handle in self._task_handles.items():
+            function_key = handle.function_key
+            registered_functions.append(function_key)
+            function_name_map[function_key] = display_name
             function_definitions.append(
                 {
-                    "name": name,
+                    "key": function_key,
+                    "name": display_name,
                     "type": FunctionType.TASK,
                     "timeout": handle.definition.timeout,
                     "max_retries": handle.definition.retries,
@@ -354,40 +383,43 @@ class Worker:
 
         # Add crons
         for cron_def in self._crons:
-            cron_name = cron_def.name or cron_def.func.__name__
-            if cron_name not in registered_functions:
-                registered_functions.append(cron_name)
+            if cron_def.key not in registered_functions:
+                registered_functions.append(cron_def.key)
+            function_name_map[cron_def.key] = cron_def.display_name
             function_definitions.append(
                 {
-                    "name": cron_name,
+                    "key": cron_def.key,
+                    "name": cron_def.display_name,
                     "type": FunctionType.CRON,
                     "schedule": cron_def.schedule,
                     "timeout": cron_def.timeout,
                 }
             )
 
-        # Add event handlers
-        for pattern, handle in self._event_handles.items():
-            for handler_name in handle.handler_names:
-                if handler_name not in registered_functions:
-                    registered_functions.append(handler_name)
-            # Expose per-handler config (use first handler as representative)
-            event_def: dict[str, Any] = {
-                "name": pattern,
-                "type": FunctionType.EVENT,
-                "pattern": handle.pattern,
-                "handlers": handle.handler_names,
-            }
-            if handle._handlers:
-                h = handle._handlers[0]
-                event_def["timeout"] = h.timeout
-                event_def["max_retries"] = h.retries
-                event_def["retry_delay"] = h.retry_delay
-            function_definitions.append(event_def)
+        # Add event handlers (one definition per handler key)
+        for handle in self._event_handles.values():
+            for handler in handle.handler_configs():
+                handler_key = handler["key"]
+                handler_name = handler["name"]
+                if handler_key not in registered_functions:
+                    registered_functions.append(handler_key)
+                function_name_map[handler_key] = handler_name
+                function_definitions.append(
+                    {
+                        "key": handler_key,
+                        "name": handler_name,
+                        "type": FunctionType.EVENT,
+                        "pattern": handle.pattern,
+                        "timeout": handler["timeout"],
+                        "max_retries": handler["max_retries"],
+                        "retry_delay": handler["retry_delay"],
+                    }
+                )
 
         # Register worker instance and definitions in Redis
         self._started_at = datetime.now(UTC)
         self._registered_functions = registered_functions
+        self._function_name_map = function_name_map
         self._function_definitions = function_definitions
         await self._write_worker_heartbeat()
         await self._write_worker_definition()
@@ -418,16 +450,16 @@ class Worker:
     async def _seed_crons(self) -> None:
         """Seed cron jobs using Redis-based scheduling."""
         for cron_def in self._crons:
-            job_name = cron_def.name or cron_def.func.__name__
             next_run = calculate_next_cron_run(cron_def.schedule)
 
             job = Job(
-                function=job_name,
+                function=cron_def.key,
+                function_name=cron_def.display_name,
                 kwargs={},
-                key=f"cron:{job_name}",
+                key=f"cron:{cron_def.key}",
                 timeout=cron_def.timeout,
                 schedule=cron_def.schedule,
-                metadata={"cron": True},
+                metadata={"cron": True, "cron_name": cron_def.display_name},
             )
 
             try:
@@ -436,11 +468,17 @@ class Worker:
                         job, next_run.timestamp()
                     )
                     if was_seeded:
-                        logger.debug(f"Seeded cron '{job_name}' → {next_run}")
+                        logger.debug(
+                            f"Seeded cron '{cron_def.display_name}' ({cron_def.key}) → {next_run}"
+                        )
                     else:
-                        logger.debug(f"Cron '{job_name}' already registered")
+                        logger.debug(
+                            f"Cron '{cron_def.display_name}' ({cron_def.key}) already registered"
+                        )
             except Exception as e:
-                logger.error(f"Failed to seed cron job '{job_name}': {e}")
+                logger.error(
+                    f"Failed to seed cron job '{cron_def.display_name}' ({cron_def.key}): {e}"
+                )
 
     def _worker_data(self) -> str:
         """Build JSON worker data for Redis."""
@@ -460,6 +498,7 @@ class Worker:
                 "started_at": self._started_at.isoformat() if self._started_at else "",
                 "last_heartbeat": datetime.now(UTC).isoformat(),
                 "functions": self._registered_functions,
+                "function_names": self._function_name_map,
                 "concurrency": self.concurrency,
                 "active_jobs": active_jobs,
                 "jobs_processed": jobs_processed,
@@ -489,6 +528,7 @@ class Worker:
             {
                 "name": self.name,
                 "functions": self._registered_functions,
+                "function_names": self._function_name_map,
                 "concurrency": self.concurrency,
             }
         )
@@ -497,7 +537,7 @@ class Worker:
     async def _write_function_definitions(self) -> None:
         """Write function definitions to Redis with a 30-day TTL.
 
-        Keys are `conduit:functions:{name}` — a config registry refreshed
+        Keys are `conduit:functions:{key}` — a config registry refreshed
         each time a worker starts.  Active/inactive is determined by live
         worker heartbeats, not by key existence.  The 30-day TTL ensures
         stale definitions self-clean (matches API registry TTL).
@@ -505,10 +545,10 @@ class Worker:
         if not self._redis_client:
             return
         for func_def in self._function_definitions:
-            name = func_def.get("name")
-            if not name:
+            function_key = func_def.get("key")
+            if not function_key:
                 continue
-            key = f"{FUNCTION_KEY_PREFIX}:{name}"
+            key = f"{FUNCTION_KEY_PREFIX}:{function_key}"
             await self._redis_client.setex(key, FUNCTION_DEF_TTL, json.dumps(func_def))
 
     async def _heartbeat_loop(self) -> None:
@@ -535,7 +575,7 @@ class Worker:
         runs the specified function once, and then shuts down cleanly.
 
         Args:
-            function_name: Name of the task to execute
+            function_name: Task display name or stable function key
             kwargs: Arguments to pass to the function
 
         Returns:
@@ -551,6 +591,11 @@ class Worker:
         # Find the function
         task_handle = self._task_handles.get(function_name)
         if not task_handle:
+            task_handle = next(
+                (h for h in self._task_handles.values() if h.function_key == function_name),
+                None,
+            )
+        if not task_handle:
             available = list(self._task_handles.keys())
             raise ValueError(
                 f"Function '{function_name}' not found. "
@@ -560,13 +605,15 @@ class Worker:
         # Shared initialization (queue, emit, task handles, worker ID, status buffer)
         self.initialize(worker_id_prefix="call")
 
-        job: Job | None = None
+        job = Job(
+            function=task_handle.function_key,
+            function_name=task_handle.name,
+            kwargs=kwargs,
+        )
+
         try:
-            # Create job and context
-            job = Job(
-                function=function_name,
-                kwargs=kwargs,
-            )
+            # Initialize job and execution context
+            job.root_id = job.id
             job.mark_started(self._worker_id or "call")
             ctx = Context.from_job(job)
             set_current_context(ctx)
@@ -574,7 +621,14 @@ class Worker:
             # Report job started
             if self._status_buffer:
                 await self._status_buffer.record_job_started(
-                    job.id, job.function, job.attempts, job.max_retries
+                    job.id,
+                    job.function,
+                    job.function_name,
+                    job.attempts,
+                    job.max_retries,
+                    parent_id=job.parent_id,
+                    root_id=job.root_id,
+                    metadata=job.metadata,
                 )
 
             # Execute the function
@@ -590,18 +644,30 @@ class Worker:
             # Report job completed
             if self._status_buffer:
                 await self._status_buffer.record_job_completed(
-                    job.id, job.function, result=result, duration_ms=duration_ms
+                    job.id,
+                    job.function,
+                    job.function_name,
+                    root_id=job.root_id,
+                    parent_id=job.parent_id,
+                    attempt=job.attempts,
+                    result=result,
+                    duration_ms=duration_ms,
                 )
 
             return result
 
         except Exception as e:
             # Report job failed
-            if self._status_buffer and job:
+            if self._status_buffer:
                 await self._status_buffer.record_job_failed(
                     job.id,
                     job.function,
+                    job.function_name,
+                    root_id=job.root_id,
                     error=str(e),
+                    attempt=job.attempts,
+                    max_retries=job.max_retries,
+                    parent_id=job.parent_id,
                     traceback=traceback.format_exc(),
                     will_retry=False,
                 )

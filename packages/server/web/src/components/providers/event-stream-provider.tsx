@@ -36,6 +36,9 @@ interface JobEvent {
   job_id?: string;
   worker_id?: string;
   function?: string;
+  function_name?: string;
+  parent_id?: string;
+  root_id?: string;
   attempt?: number;
   max_retries?: number;
   started_at?: string;
@@ -59,8 +62,11 @@ function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
       return {
         id: job_id,
         function: event.function ?? "",
+        function_name: event.function_name ?? event.function ?? "",
         status: "active",
         worker_id: event.worker_id ?? null,
+        parent_id: event.parent_id ?? null,
+        root_id: event.root_id ?? job_id,
         attempts: event.attempt ?? 1,
         max_retries: event.max_retries ?? 0,
         started_at: event.started_at ?? null,
@@ -118,6 +124,31 @@ function patchExistingJob(
   return { ...old, jobs: updated };
 }
 
+function createJobFromPatch(patch: Partial<Job> & { id: string }): Job {
+  return {
+    id: patch.id,
+    function: patch.function ?? "",
+    function_name: patch.function_name ?? patch.function ?? "",
+    status: "active",
+    created_at: patch.created_at ?? null,
+    scheduled_at: null,
+    started_at: patch.started_at ?? null,
+    completed_at: null,
+    attempts: patch.attempts ?? 1,
+    max_retries: patch.max_retries ?? 0,
+    timeout: null,
+    worker_id: patch.worker_id ?? null,
+    parent_id: patch.parent_id ?? null,
+    root_id: patch.root_id ?? patch.id,
+    progress: 0,
+    kwargs: {},
+    metadata: patch.metadata ?? {},
+    result: null,
+    error: null,
+    duration_ms: null,
+  };
+}
+
 /** Iterate all cached job-list queries (excluding jobs stats/trends queries). */
 function forEachJobsListQuery(
   queryClient: QueryClient,
@@ -160,29 +191,65 @@ function insertNewJob(
       if (!old) return old;
       // Don't insert duplicates
       if (old.jobs.some((j) => j.id === patch.id)) return old;
-
-      const newJob: Job = {
-        id: patch.id,
-        function: patch.function ?? "",
-        status: "active",
-        created_at: patch.created_at ?? null,
-        scheduled_at: null,
-        started_at: patch.started_at ?? null,
-        completed_at: null,
-        attempts: patch.attempts ?? 1,
-        max_retries: patch.max_retries ?? 0,
-        timeout: null,
-        worker_id: patch.worker_id ?? null,
-        progress: 0,
-        kwargs: {},
-        metadata: {},
-        result: null,
-        error: null,
-        duration_ms: null,
-      };
+      const newJob = createJobFromPatch(patch);
       return { ...old, jobs: [newJob, ...old.jobs], total: old.total + 1 };
     });
   });
+}
+
+function updateJobDetailCache(
+  queryClient: QueryClient,
+  patch: Partial<Job> & { id: string }
+) {
+  queryClient.setQueryData<Job>(queryKeys.job(patch.id), (old) => {
+    if (!old) return old;
+    return { ...old, ...patch };
+  });
+}
+
+function upsertTimelineJob(
+  old: JobListResponse | undefined,
+  patch: Partial<Job> & { id: string },
+  payload: JobEvent,
+  rootJobId: string
+): JobListResponse | undefined {
+  if (!old) return old;
+
+  const index = old.jobs.findIndex((j) => j.id === patch.id);
+  if (index >= 0) {
+    const updated = [...old.jobs];
+    updated[index] = { ...updated[index], ...patch };
+    return { ...old, jobs: updated };
+  }
+
+  if (payload.type !== "job.started") return old;
+
+  const payloadRootId = payload.root_id ?? patch.root_id ?? patch.id;
+  const matchesRoot = payloadRootId === rootJobId;
+  const hasParentInTree = !!payload.parent_id && old.jobs.some((j) => j.id === payload.parent_id);
+  const isRoot = patch.id === rootJobId;
+  if (!matchesRoot && !hasParentInTree && !isRoot) return old;
+
+  const newJob = createJobFromPatch(patch);
+  return { ...old, jobs: [...old.jobs, newJob], total: old.total + 1 };
+}
+
+function updateTimelineCaches(
+  queryClient: QueryClient,
+  patch: Partial<Job> & { id: string },
+  payload: JobEvent
+) {
+  const queries = queryClient.getQueryCache().findAll({
+    queryKey: ["jobs", "timeline"],
+  });
+
+  for (const query of queries) {
+    const rootJobId = query.queryKey[2];
+    if (typeof rootJobId !== "string") continue;
+    queryClient.setQueryData<JobListResponse>(query.queryKey, (old) =>
+      upsertTimelineJob(old, patch, payload, rootJobId)
+    );
+  }
 }
 
 export function EventStreamProvider({ children }: EventStreamProviderProps) {
@@ -205,6 +272,8 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
         // Update existing job across matching job-list caches only
         updateExistingJob(queryClient, patchWithId);
       }
+      updateJobDetailCache(queryClient, patchWithId);
+      updateTimelineCaches(queryClient, patchWithId, payload);
 
       // State-change events: throttled stats + function invalidation
       if (STATE_CHANGE_EVENTS.has(payload.type)) {
@@ -229,7 +298,7 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
     [queryClient]
   );
 
-  const drainQueue = useCallback(() => {
+  const drainQueue = useCallback(function drainQueueImpl() {
     eventTimer.current = null;
     if (eventQueue.current.length === 0) return;
 
@@ -246,7 +315,7 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
         eventQueue.current.length > BURST_QUEUE_THRESHOLD
           ? EVENT_BURST_STEP_MS
           : EVENT_STEP_MS;
-      eventTimer.current = setTimeout(drainQueue, delay);
+      eventTimer.current = setTimeout(drainQueueImpl, delay);
     }
   }, [applyStreamEvent]);
 

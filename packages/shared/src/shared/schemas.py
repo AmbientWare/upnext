@@ -29,6 +29,7 @@ class JobHistoryResponse(BaseModel):
 
     id: str
     function: str
+    function_name: str
     status: str
     created_at: datetime | None = None
     scheduled_at: datetime | None = None
@@ -38,6 +39,8 @@ class JobHistoryResponse(BaseModel):
     max_retries: int = 0
     timeout: float | None = None
     worker_id: str | None = None
+    parent_id: str | None = None
+    root_id: str
     progress: float = 0.0
     kwargs: dict[str, Any] = {}
     metadata: dict[str, Any] = {}
@@ -147,6 +150,7 @@ class Run(BaseModel):
 
     id: str
     function: str
+    function_name: str
     status: str
     started_at: str | None = None
     completed_at: str | None = None
@@ -170,6 +174,7 @@ class WorkerInstance(BaseModel):
     started_at: str
     last_heartbeat: str
     functions: list[str] = []
+    function_names: dict[str, str] = {}
     concurrency: int = 1
     active_jobs: int = 0
     jobs_processed: int = 0
@@ -185,6 +190,7 @@ class WorkerInfo(BaseModel):
     instance_count: int = 0
     instances: list[WorkerInstance] = []
     functions: list[str] = []
+    function_names: dict[str, str] = {}
     concurrency: int = 0
 
 
@@ -294,6 +300,7 @@ class ApiTrendsResponse(BaseModel):
 class FunctionInfo(BaseModel):
     """Function info."""
 
+    key: str
     name: str
     type: FunctionType
     active: bool = False

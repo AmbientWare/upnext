@@ -101,6 +101,7 @@ class Job:
 
     # Identity
     function: str
+    function_name: str = ""
     kwargs: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=_generate_job_id)
     key: str = ""  # Deduplication key (defaults to id if not set)
@@ -130,6 +131,8 @@ class Job:
     retry_delay: float = 1.0  # Base delay in seconds between retries
     retry_backoff: float = 2.0  # Exponential backoff multiplier
     worker_id: str | None = None
+    parent_id: str | None = None
+    root_id: str = ""
 
     # Progress tracking
     progress: float = 0.0
@@ -150,6 +153,10 @@ class Job:
         """Set defaults after initialization."""
         if not self.key:
             self.key = self.id
+        if not self.root_id:
+            self.root_id = self.id
+        if not self.function_name:
+            self.function_name = self.function
 
     def _record_transition(
         self,
@@ -173,6 +180,7 @@ class Job:
             "id": self.id,
             "key": self.key,
             "function": self.function,
+            "function_name": self.function_name,
             "kwargs": self.kwargs,
             "status": self.status.value,
             "scheduled_at": self.scheduled_at.isoformat(),
@@ -187,6 +195,8 @@ class Job:
             "retry_delay": self.retry_delay,
             "retry_backoff": self.retry_backoff,
             "worker_id": self.worker_id,
+            "parent_id": self.parent_id,
+            "root_id": self.root_id,
             "progress": self.progress,
             "metadata": self.metadata,
             "result": self.result,
@@ -203,6 +213,7 @@ class Job:
             id=data["id"],
             key=data["key"],
             function=data["function"],
+            function_name=data.get("function_name", data["function"]),
             kwargs=data.get("kwargs", {}),
             status=JobStatus(data["status"]),
             scheduled_at=datetime.fromisoformat(data["scheduled_at"]),
@@ -223,6 +234,8 @@ class Job:
             retry_delay=data.get("retry_delay", 1.0),
             retry_backoff=data.get("retry_backoff", 2.0),
             worker_id=data.get("worker_id"),
+            parent_id=data.get("parent_id"),
+            root_id=data.get("root_id", data["id"]),
             progress=data.get("progress", 0.0),
             metadata=data.get("metadata", {}),
             result=data.get("result"),

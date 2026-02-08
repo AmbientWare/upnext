@@ -31,7 +31,7 @@ def _calculate_duration_ms(
 
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
-    function: str | None = Query(None, description="Filter by function name"),
+    function: str | None = Query(None, description="Filter by function key"),
     status: list[str] | None = Query(None, description="Filter by status"),
     worker_id: str | None = Query(None, description="Filter by worker ID"),
     after: datetime | None = Query(None, description="Filter by created after"),
@@ -80,6 +80,7 @@ async def list_jobs(
             JobHistoryResponse(
                 id=job.id,
                 function=job.function,
+                function_name=job.function_name,
                 status=job.status,
                 created_at=job.created_at,
                 scheduled_at=job.scheduled_at,
@@ -89,6 +90,8 @@ async def list_jobs(
                 max_retries=job.max_retries,
                 timeout=job.timeout,
                 worker_id=job.worker_id,
+                parent_id=job.parent_id,
+                root_id=job.root_id,
                 progress=job.progress,
                 kwargs=job.kwargs,
                 metadata=job.metadata_,
@@ -108,7 +111,7 @@ async def list_jobs(
 
 @router.get("/stats", response_model=JobStatsResponse)
 async def get_job_stats(
-    function: str | None = Query(None, description="Filter by function name"),
+    function: str | None = Query(None, description="Filter by function key"),
     after: datetime | None = Query(None, description="Filter by start date"),
     before: datetime | None = Query(None, description="Filter by end date"),
 ) -> JobStatsResponse:
@@ -151,7 +154,7 @@ async def get_job_stats(
 @router.get("/trends", response_model=JobTrendsResponse)
 async def get_job_trends(
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
-    function: str | None = Query(None, description="Filter by function name"),
+    function: str | None = Query(None, description="Filter by function key"),
     type: str | None = Query(None, description="Filter by function type"),
 ) -> JobTrendsResponse:
     """
@@ -226,6 +229,57 @@ def _empty_trends(hours: int) -> JobTrendsResponse:
     return JobTrendsResponse(hourly=hourly)
 
 
+@router.get("/{job_id}/timeline", response_model=JobListResponse)
+async def get_job_timeline(job_id: str) -> JobListResponse:
+    """
+    Get one job's full execution timeline (root job + descendant jobs).
+
+    Descendants are identified recursively via parent_id.
+    """
+    try:
+        db = get_database()
+    except RuntimeError:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    async with db.session() as session:
+        repo = JobRepository(session)
+        jobs = await repo.list_job_subtree(job_id)
+        if not jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        return JobListResponse(
+            jobs=[
+                JobHistoryResponse(
+                    id=job.id,
+                    function=job.function,
+                    function_name=job.function_name,
+                    status=job.status,
+                    created_at=job.created_at,
+                    scheduled_at=job.scheduled_at,
+                    started_at=job.started_at,
+                    completed_at=job.completed_at,
+                    attempts=job.attempts,
+                    max_retries=job.max_retries,
+                    timeout=job.timeout,
+                    worker_id=job.worker_id,
+                    parent_id=job.parent_id,
+                    root_id=job.root_id,
+                    progress=job.progress,
+                    kwargs=job.kwargs,
+                    metadata=job.metadata_,
+                    result=job.result,
+                    error=job.error,
+                    duration_ms=_calculate_duration_ms(
+                        job.started_at, job.completed_at
+                    ),
+                )
+                for job in jobs
+            ],
+            total=len(jobs),
+            has_more=False,
+        )
+
+
 @router.get("/{job_id}", response_model=JobHistoryResponse)
 async def get_job(job_id: str) -> JobHistoryResponse:
     """
@@ -248,6 +302,7 @@ async def get_job(job_id: str) -> JobHistoryResponse:
         return JobHistoryResponse(
             id=job.id,
             function=job.function,
+            function_name=job.function_name,
             status=job.status,
             created_at=job.created_at,
             scheduled_at=job.scheduled_at,
@@ -257,6 +312,8 @@ async def get_job(job_id: str) -> JobHistoryResponse:
             max_retries=job.max_retries,
             timeout=job.timeout,
             worker_id=job.worker_id,
+            parent_id=job.parent_id,
+            root_id=job.root_id,
             progress=job.progress,
             kwargs=job.kwargs,
             metadata=job.metadata_,

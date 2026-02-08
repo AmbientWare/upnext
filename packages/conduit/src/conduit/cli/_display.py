@@ -30,7 +30,7 @@ def worker_lines(
 
     # Handler lines
     task_names = list(worker.tasks.keys())
-    cron_names = [c.name or c.func.__name__ for c in worker.crons]
+    cron_names = [c.display_name for c in worker.crons]
     event_patterns = list(worker.events.keys())
 
     def add_handler_line(label: str, count: int, names: list[str]) -> None:

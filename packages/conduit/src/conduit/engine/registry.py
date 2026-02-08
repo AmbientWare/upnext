@@ -12,7 +12,10 @@ from shared.patterns import matches_event_pattern
 class TaskDefinition:
     """Metadata for a registered task function."""
 
+    # Stable internal identity key (used for queue routing and worker matching).
     name: str
+    # Human-readable label for UI/logs.
+    display_name: str
     func: Callable[..., Any]
     is_async: bool
 
@@ -54,9 +57,10 @@ class EventDefinition:
     """Metadata for a registered event."""
 
     event: str
+    key: str
+    display_name: str
     func: Callable[..., Any]
     is_async: bool
-    name: str | None = None
     # Retry configuration (propagated to TaskDefinition)
     retries: int = 0
     retry_delay: float = 1.0
@@ -68,10 +72,11 @@ class EventDefinition:
 class CronDefinition:
     """Metadata for a registered cron job."""
 
+    key: str
+    display_name: str
     schedule: str  # Cron expression
     func: Callable[..., Any]
     is_async: bool
-    name: str | None = None
     timeout: float = 30 * 60  # 30 minutes
 
 
@@ -141,6 +146,7 @@ class Registry:
         name: str,
         func: Callable[..., Any],
         *,
+        display_name: str | None = None,
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
@@ -179,6 +185,7 @@ class Registry:
 
         definition = TaskDefinition(
             name=name,
+            display_name=display_name or name,
             func=func,
             is_async=asyncio.iscoroutinefunction(func),
             retries=retries,
@@ -199,7 +206,8 @@ class Registry:
 
     def register_event(
         self,
-        name: str,
+        key: str,
+        display_name: str,
         func: Callable[..., Any],
         *,
         event: str,
@@ -211,18 +219,20 @@ class Registry:
         """Register an event."""
         definition = EventDefinition(
             event=event,
+            key=key,
+            display_name=display_name,
             func=func,
             is_async=asyncio.iscoroutinefunction(func),
-            name=name,
             retries=retries,
             retry_delay=retry_delay,
             retry_backoff=retry_backoff,
             timeout=timeout,
         )
 
-        # Register by name for worker lookup (with retry/timeout config)
-        self._tasks[name] = TaskDefinition(
-            name=name,
+        # Register by key for worker lookup (with retry/timeout config)
+        self._tasks[key] = TaskDefinition(
+            name=key,
+            display_name=display_name,
             func=func,
             is_async=asyncio.iscoroutinefunction(func),
             retries=retries,
@@ -240,27 +250,27 @@ class Registry:
 
     def register_cron(
         self,
+        *,
+        key: str,
+        display_name: str,
         schedule: str,
         func: Callable[..., Any],
-        *,
-        name: str | None = None,
         timeout: float = 30 * 60,  # 30 minutes
     ) -> CronDefinition:
         """Register a cron job."""
-        job_name = name or func.__name__
-
-        if job_name in self._crons:
-            raise ValueError(f"Cron job '{job_name}' is already registered")
+        if key in self._crons:
+            raise ValueError(f"Cron job '{key}' is already registered")
 
         definition = CronDefinition(
+            key=key,
+            display_name=display_name,
             schedule=schedule,
             func=func,
             is_async=asyncio.iscoroutinefunction(func),
-            name=job_name,
             timeout=timeout,
         )
 
-        self._crons[job_name] = definition
+        self._crons[key] = definition
         return definition
 
     def register_app(
@@ -310,7 +320,7 @@ class Registry:
         return definition
 
     def get_task(self, name: str) -> TaskDefinition | None:
-        """Get a registered task by name."""
+        """Get a registered task by stable key."""
         return self._tasks.get(name)
 
     def get_events_for_event_name(self, name: str) -> list[EventDefinition]:
@@ -328,7 +338,7 @@ class Registry:
         return matching
 
     def get_cron(self, name: str) -> CronDefinition | None:
-        """Get a registered cron job by name."""
+        """Get a registered cron job by stable key."""
         return self._crons.get(name)
 
     def get_app(self, name: str) -> AppDefinition | None:
@@ -363,5 +373,5 @@ class Registry:
         self._apps.clear()
 
     def get_task_names(self) -> list[str]:
-        """Get all registered task names."""
+        """Get all registered task keys."""
         return list(self._tasks.keys())

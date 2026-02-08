@@ -29,7 +29,10 @@ class TaskResult[T]:
     """Unique identifier for this job execution."""
 
     function: str
-    """Name of the task function that was executed."""
+    """Stable function key that was executed."""
+
+    function_name: str
+    """Human-readable function name."""
 
     status: str = "complete"
     """Final status: 'complete', 'failed', or 'cancelled'."""
@@ -48,6 +51,9 @@ class TaskResult[T]:
 
     parent_id: str | None = None
     """Parent job ID if this was spawned from another task."""
+
+    root_id: str = ""
+    """Root job ID for the execution lineage."""
 
     @property
     def ok(self) -> bool:
@@ -93,12 +99,14 @@ class Future[T]:
             value=job.result,
             job_id=job.id,
             function=job.function,
+            function_name=job.function_name,
             status=status,
             error=job.error,
             started_at=job.started_at,
             completed_at=job.completed_at,
             attempts=job.attempts,
-            parent_id=job.metadata.get("parent_id"),
+            parent_id=job.parent_id,
+            root_id=job.root_id,
         )
 
     async def cancel(self) -> bool:

@@ -307,6 +307,8 @@ class JobProcessor:
 
             # Mark job as started (records state transition)
             job.mark_started(self._worker_id)
+            if not job.root_id:
+                job.root_id = job.id
 
             # Get task definition
             task_def = self._registry.get_task(job.function)
@@ -326,11 +328,23 @@ class JobProcessor:
                 if job.max_retries > 0
                 else ""
             )
-            logger.debug(f"Starting {job.function}{attempt_info}")
+            logger.debug(
+                "Starting %s (%s)%s",
+                job.function_name,
+                job.function,
+                attempt_info,
+            )
 
             if self._status_buffer:
                 await self._status_buffer.record_job_started(
-                    job.id, job.function, job.attempts, job.max_retries
+                    job.id,
+                    job.function,
+                    job.function_name,
+                    job.attempts,
+                    job.max_retries,
+                    parent_id=job.parent_id,
+                    root_id=job.root_id,
+                    metadata=job.metadata,
                 )
 
             # Execute job (track for auto-heartbeating)
@@ -489,19 +503,31 @@ class JobProcessor:
             await self._status_buffer.record_job_completed(
                 job.id,
                 job.function,
+                job.function_name,
+                root_id=job.root_id,
+                parent_id=job.parent_id,
+                attempt=job.attempts,
                 result=result,
                 duration_ms=duration_ms,
             )
 
         duration_str = f" in {duration_ms:.0f}ms" if duration_ms else ""
-        logger.debug(f"Completed {job.function}{duration_str}")
+        logger.debug(
+            "Completed %s (%s)%s",
+            job.function_name,
+            job.function,
+            duration_str,
+        )
 
         # Reschedule cron jobs for next execution
         if job.is_cron:
             next_run_at = self._calculate_next_cron_run(job.schedule)
             await self._queue.reschedule_cron(job, next_run_at)
             logger.debug(
-                f"Rescheduled cron {job.function} → {datetime.fromtimestamp(next_run_at, UTC)}"
+                "Rescheduled cron %s (%s) → %s",
+                job.function_name,
+                job.function,
+                datetime.fromtimestamp(next_run_at, UTC),
             )
 
         # Call on_complete hook
@@ -547,10 +573,13 @@ class JobProcessor:
                 await self._status_buffer.record_job_retrying(
                     job.id,
                     job.function,
+                    job.function_name,
+                    job.root_id,
                     error_msg,
                     delay,
                     current_attempt=job.attempts,
                     next_attempt=job.attempts + 1,
+                    parent_id=job.parent_id,
                 )
 
             # Reschedule job
@@ -576,8 +605,13 @@ class JobProcessor:
                 await self._status_buffer.record_job_failed(
                     job.id,
                     job.function,
+                    job.function_name,
+                    job.root_id,
                     error_msg,
-                    error_traceback,
+                    attempt=job.attempts,
+                    max_retries=job.max_retries,
+                    parent_id=job.parent_id,
+                    traceback=error_traceback,
                     will_retry=False,
                 )
 
@@ -587,7 +621,10 @@ class JobProcessor:
                 next_run_at = self._calculate_next_cron_run(job.schedule)
                 await self._queue.reschedule_cron(job, next_run_at)
                 logger.debug(
-                    f"Rescheduled cron {job.function} → {datetime.fromtimestamp(next_run_at, UTC)}"
+                    "Rescheduled cron %s (%s) → %s",
+                    job.function_name,
+                    job.function,
+                    datetime.fromtimestamp(next_run_at, UTC),
                 )
 
             # Call on_complete hook
@@ -643,7 +680,12 @@ class JobContextBackend:
     async def set_progress(self, job_id: str, progress: float) -> None:
         await self._queue.update_progress(job_id, progress)
         if self._status_buffer:
-            await self._status_buffer.record_job_progress(job_id, progress)
+            await self._status_buffer.record_job_progress(
+                job_id,
+                self._job.root_id,
+                progress,
+                parent_id=self._job.parent_id,
+            )
 
     async def set_metadata(self, job_id: str, key: str, value: Any) -> None:
         """Store a metadata value for this job."""
@@ -666,7 +708,12 @@ class JobContextBackend:
         # Store checkpoint in job metadata under special key
         await self.set_metadata(job_id, "_checkpoint", state)
         if self._status_buffer:
-            await self._status_buffer.record_job_checkpoint(job_id, state)
+            await self._status_buffer.record_job_checkpoint(
+                job_id,
+                self._job.root_id,
+                state,
+                parent_id=self._job.parent_id,
+            )
 
     async def log(self, job_id: str, level: str, message: str, **extra: Any) -> None:
         """Send a log entry for this job."""

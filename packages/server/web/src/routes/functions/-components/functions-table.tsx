@@ -43,9 +43,9 @@ export function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
       <TableBody ref={bodyRef}>
         {functions.map((fn) => (
           <TableRow
-            key={fn.name}
+            key={fn.key}
             className="border-border hover:bg-accent cursor-pointer"
-            onClick={() => navigate({ to: "/functions/$name", params: { name: fn.name } })}
+            onClick={() => navigate({ to: "/functions/$name", params: { name: fn.key } })}
           >
             <TableCell className="py-2">
               <div className="flex items-center gap-2">

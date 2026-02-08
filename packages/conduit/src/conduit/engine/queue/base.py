@@ -38,7 +38,7 @@ class BaseQueue(ABC):
         tasks like batch fetching, sweep loops, etc.
 
         Args:
-            functions: List of function names this worker handles.
+            functions: List of function keys this worker handles.
         """
         pass
 
@@ -335,13 +335,15 @@ class BaseQueue(ABC):
         """
         new_job = Job(
             function=job.function,
+            function_name=job.function_name,
             kwargs=job.kwargs,
             key=f"cron:{job.function}",
             status=JobStatus.PENDING,
             schedule=job.schedule,
             timeout=job.timeout,
-            metadata={"cron": True},
+            metadata=dict(job.metadata or {}),
         )
+        new_job.metadata.setdefault("cron", True)
 
         delay = max(0.0, next_run_at - time.time())
         return await self.enqueue(new_job, delay=delay)

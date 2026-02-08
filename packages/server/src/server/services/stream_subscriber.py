@@ -343,7 +343,11 @@ class StreamSubscriber:
         traceback, and checkpoint state are excluded automatically.
         """
         try:
-            event = SSEJobEvent(type=event_type, worker_id=worker_id, **data)
+            event = SSEJobEvent(
+                type=event_type,
+                worker_id=worker_id,
+                **data,
+            )
             await self._redis.publish(
                 EVENTS_PUBSUB_CHANNEL,
                 event.model_dump_json(exclude_none=True),
@@ -376,12 +380,12 @@ class StreamSubscriber:
 
     def _decode_event_data(
         self,
-        data: dict[bytes | str, bytes | str],
+        data: dict[Any, Any],
     ) -> dict[str, str]:
         """Decode bytes to strings in event data."""
         result = {}
         for k, v in data.items():
-            key = k.decode() if isinstance(k, bytes) else k
-            value = v.decode() if isinstance(v, bytes) else v
+            key = k.decode() if isinstance(k, bytes) else str(k)
+            value = v.decode() if isinstance(v, bytes) else str(v)
             result[key] = value
         return result

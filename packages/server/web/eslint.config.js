@@ -19,5 +19,17 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      'react-refresh/only-export-components': [
+        'error',
+        { allowConstantExport: true },
+      ],
+    },
+  },
+  {
+    files: ['src/components/ui/{badge,button,tabs}.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
   },
 ])

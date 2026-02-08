@@ -1,9 +1,16 @@
 {
   "include": [
     "packages/conduit/src",
-    "packages/api/src",
+    "packages/server/src",
     "packages/shared/src"
   ],
+  "extraPaths": [
+    "packages/conduit/src",
+    "packages/server/src",
+    "packages/shared/src"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
   "pythonVersion": "3.13",
   "typeCheckingMode": "standard",
   "reportMissingTypeStubs": false

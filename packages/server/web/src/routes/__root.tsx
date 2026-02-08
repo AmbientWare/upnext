@@ -16,6 +16,7 @@ function RootLayout() {
     if (path.startsWith("/workers")) return "Workers";
     if (path.startsWith("/apis")) return "APIs";
     if (path.startsWith("/functions")) return "Functions";
+    if (path.startsWith("/jobs")) return "Jobs";
     return "Dashboard";
   };
 

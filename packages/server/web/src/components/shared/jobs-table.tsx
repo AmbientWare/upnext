@@ -153,12 +153,15 @@ export function JobsTablePanel({
                 {filteredJobs.map((job) => (
                   <TableRow
                     key={job.id}
-                    onClick={() => onJobClick?.(job)}
-                    className="border-border hover:bg-accent cursor-pointer"
+                    onClick={onJobClick ? () => onJobClick(job) : undefined}
+                    className={cn(
+                      "border-border hover:bg-accent",
+                      onJobClick && "cursor-pointer"
+                    )}
                   >
                     <TableCell className="mono text-[11px] text-muted-foreground py-1.5">{job.id.slice(0, 12)}</TableCell>
                     {!hideFunction && (
-                      <TableCell className="text-[11px] py-1.5">{job.function}</TableCell>
+                      <TableCell className="text-[11px] py-1.5">{job.function_name || job.function}</TableCell>
                     )}
                     <TableCell className="py-1.5">
                       <StatusBadge status={job.status} />

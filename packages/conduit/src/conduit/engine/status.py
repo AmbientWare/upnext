@@ -110,7 +110,7 @@ class StatusPublisher:
                     "job_id": job_id,
                     "worker_id": self._worker_id,
                     "ts": str(time.time()),
-                    "data": json.dumps(data),
+                    "data": json.dumps(data, default=str),
                 },
                 maxlen=self._config.max_stream_len,
             )
@@ -122,14 +122,22 @@ class StatusPublisher:
         self,
         job_id: str,
         function: str,
+        function_name: str,
         attempt: int,
         max_retries: int,
+        root_id: str,
+        parent_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Record job started event."""
         await self.record(
             "job.started",
             job_id,
             function=function,
+            function_name=function_name,
+            parent_id=parent_id,
+            root_id=root_id,
+            metadata=metadata or {},
             attempt=attempt,
             max_retries=max_retries,
             started_at=datetime.now(UTC).isoformat(),
@@ -139,6 +147,10 @@ class StatusPublisher:
         self,
         job_id: str,
         function: str,
+        function_name: str,
+        root_id: str,
+        parent_id: str | None = None,
+        attempt: int = 1,
         result: Any = None,
         duration_ms: float | None = None,
     ) -> None:
@@ -147,6 +159,10 @@ class StatusPublisher:
             "job.completed",
             job_id,
             function=function,
+            function_name=function_name,
+            parent_id=parent_id,
+            root_id=root_id,
+            attempt=attempt,
             result=self._serialize_value(result),
             duration_ms=duration_ms,
             completed_at=datetime.now(UTC).isoformat(),
@@ -156,7 +172,12 @@ class StatusPublisher:
         self,
         job_id: str,
         function: str,
+        function_name: str,
+        root_id: str,
         error: str,
+        attempt: int = 1,
+        max_retries: int = 0,
+        parent_id: str | None = None,
         traceback: str | None = None,
         will_retry: bool = False,
     ) -> None:
@@ -165,7 +186,12 @@ class StatusPublisher:
             "job.failed",
             job_id,
             function=function,
+            function_name=function_name,
+            parent_id=parent_id,
+            root_id=root_id,
             error=error,
+            attempt=attempt,
+            max_retries=max_retries,
             traceback=traceback,
             will_retry=will_retry,
             failed_at=datetime.now(UTC).isoformat(),
@@ -175,16 +201,22 @@ class StatusPublisher:
         self,
         job_id: str,
         function: str,
+        function_name: str,
+        root_id: str,
         error: str,
         delay: float,
         current_attempt: int,
         next_attempt: int,
+        parent_id: str | None = None,
     ) -> None:
         """Record job retrying event."""
         await self.record(
             "job.retrying",
             job_id,
             function=function,
+            function_name=function_name,
+            parent_id=parent_id,
+            root_id=root_id,
             error=error,
             delay_seconds=delay,
             current_attempt=current_attempt,
@@ -195,13 +227,17 @@ class StatusPublisher:
     async def record_job_progress(
         self,
         job_id: str,
+        root_id: str,
         progress: float,
+        parent_id: str | None = None,
         message: str | None = None,
     ) -> None:
         """Record job progress event."""
         await self.record(
             "job.progress",
             job_id,
+            parent_id=parent_id,
+            root_id=root_id,
             progress=progress,
             message=message,
             updated_at=datetime.now(UTC).isoformat(),
@@ -210,12 +246,16 @@ class StatusPublisher:
     async def record_job_checkpoint(
         self,
         job_id: str,
+        root_id: str,
         state: dict[str, Any],
+        parent_id: str | None = None,
     ) -> None:
         """Record job checkpoint event."""
         await self.record(
             "job.checkpoint",
             job_id,
+            parent_id=parent_id,
+            root_id=root_id,
             state=state,
             checkpointed_at=datetime.now(UTC).isoformat(),
         )

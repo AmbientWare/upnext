@@ -1174,12 +1174,14 @@ class RedisQueue(BaseQueue):
 
         new_job = Job(
             function=job.function,
+            function_name=job.function_name,
             kwargs=job.kwargs,
             key=f"cron:{job.function}",
             schedule=job.schedule,
             timeout=job.timeout,
-            metadata={"cron": True},
+            metadata=dict(job.metadata or {}),
         )
+        new_job.metadata.setdefault("cron", True)
         new_job.mark_queued("Cron job rescheduled")
 
         cron_registry = self._cron_registry_key()

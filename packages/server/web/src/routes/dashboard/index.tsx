@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   getDashboardStats,
@@ -18,6 +18,8 @@ export const Route = createFileRoute("/dashboard/")({
 });
 
 function DataMatrixDashboard() {
+  const navigate = useNavigate();
+
   const { data: dashboardStats, isPending: isDashboardPending } = useQuery({
     queryKey: queryKeys.dashboardStats,
     queryFn: getDashboardStats,
@@ -69,7 +71,12 @@ function DataMatrixDashboard() {
       </div>
 
       {/* Recent Jobs */}
-      <JobsTablePanel jobs={jobs} showFilters isLoading={isJobsPending} />
+      <JobsTablePanel
+        jobs={jobs}
+        showFilters
+        isLoading={isJobsPending}
+        onJobClick={(job) => navigate({ to: "/jobs/$jobId", params: { jobId: job.id } })}
+      />
     </div>
   );
 }

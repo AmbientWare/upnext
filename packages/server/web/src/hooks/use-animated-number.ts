@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_DURATION = 500;
 
@@ -38,24 +38,22 @@ const parseValue = (input: string | number): ParsedValue | null => {
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 export function useAnimatedNumber(value: string | number, duration = DEFAULT_DURATION) {
-  const [display, setDisplay] = useState<string>(() =>
-    typeof value === "number" ? value.toString() : value
-  );
+  const fallbackDisplay = typeof value === "number" ? value.toString() : value;
+  const parsedValue = useMemo(() => parseValue(value), [value]);
+  const [display, setDisplay] = useState<string>(fallbackDisplay);
   const previous = useRef<ParsedValue | null>(parseValue(value));
   const frame = useRef<number | null>(null);
 
   useEffect(() => {
-    const nextParsed = parseValue(value);
-    if (!nextParsed) {
-      setDisplay(typeof value === "number" ? value.toString() : value);
-      previous.current = nextParsed;
+    if (!parsedValue) {
+      previous.current = null;
       return;
     }
 
-    const startParsed = previous.current ?? nextParsed;
+    const startParsed = previous.current ?? parsedValue;
     const startValue = startParsed.value;
-    const endValue = nextParsed.value;
-    const decimals = nextParsed.decimals;
+    const endValue = parsedValue.value;
+    const decimals = parsedValue.decimals;
 
     if (frame.current) {
       cancelAnimationFrame(frame.current);
@@ -69,21 +67,21 @@ export function useAnimatedNumber(value: string | number, duration = DEFAULT_DUR
       const eased = easeOutCubic(progress);
       const currentValue = startValue + (endValue - startValue) * eased;
       const formatted = currentValue.toFixed(decimals);
-      setDisplay(`${nextParsed.prefix}${formatted}${nextParsed.suffix}`);
+      setDisplay(`${parsedValue.prefix}${formatted}${parsedValue.suffix}`);
       if (progress < 1) {
         frame.current = requestAnimationFrame(tick);
       }
     };
 
     frame.current = requestAnimationFrame(tick);
-    previous.current = nextParsed;
+    previous.current = parsedValue;
 
     return () => {
       if (frame.current) {
         cancelAnimationFrame(frame.current);
       }
     };
-  }, [duration, value]);
+  }, [duration, parsedValue]);
 
-  return display;
+  return parsedValue ? display : fallbackDisplay;
 }

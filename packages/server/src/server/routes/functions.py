@@ -25,7 +25,7 @@ router = APIRouter(prefix="/functions", tags=["functions"])
 
 
 def _build_function_info(
-    name: str,
+    key: str,
     config: dict[str, Any],
     *,
     active: bool = False,
@@ -39,7 +39,8 @@ def _build_function_info(
 ) -> FunctionInfo:
     """Build a FunctionInfo from a config dict and stats."""
     return FunctionInfo(
-        name=name,
+        key=key,
+        name=str(config.get("name") or key),
         type=config.get("type", FunctionType.TASK),
         active=active,
         timeout=config.get("timeout"),
@@ -71,8 +72,6 @@ async def list_functions(
     now = datetime.now(UTC)
     day_ago = now - timedelta(hours=24)
 
-    # Fetch function definitions and active workers from Redis
-    # (gracefully degrade when Redis is unavailable).
     try:
         func_defs = await get_function_definitions()
         active_workers = await list_worker_instances()
@@ -80,152 +79,84 @@ async def list_functions(
         func_defs = {}
         active_workers = []
 
-    # Build function → worker instance counts (deduplicated by name)
-    # Workers register handler names (e.g., "on_order_send_confirmation") in their
-    # functions list, so worker labels are keyed by handler name directly.
+    # Build function-key -> worker labels (deduplicated by worker name).
     func_worker_counts: dict[str, dict[str, int]] = {}
-    for w in active_workers:
-        label = w.worker_name or w.hostname or w.id[:8]
-        for fn_name in w.functions:
-            counts = func_worker_counts.setdefault(fn_name, {})
+    for worker in active_workers:
+        label = worker.worker_name or worker.hostname or worker.id[:8]
+        for function_key in worker.functions:
+            counts = func_worker_counts.setdefault(function_key, {})
             counts[label] = counts.get(label, 0) + 1
 
-    # Collapse into deduplicated labels: "name (3)" for multiple instances
     func_worker_labels: dict[str, list[str]] = {}
-    for fn_name, counts in func_worker_counts.items():
+    for function_key, counts in func_worker_counts.items():
         labels = []
         for label, count in counts.items():
             labels.append(f"{label} ({count})" if count > 1 else label)
-        func_worker_labels[fn_name] = labels
+        func_worker_labels[function_key] = labels
 
-    # Build handler → event config mapping so we show handler names instead of pattern names
-    # e.g., show "on_order_send_confirmation" (EVENT, pattern: order.placed)
-    # instead of "order.placed" (EVENT, pattern: order.placed) which is redundant
-    handler_to_event: dict[str, tuple[str, dict]] = {}
-    event_patterns_with_handlers: set[str] = set()
-    for name, config in func_defs.items():
-        if config.get("type") == FunctionType.EVENT and config.get("handlers"):
-            event_patterns_with_handlers.add(name)
-            for handler_name in config["handlers"]:
-                handler_to_event[handler_name] = (name, config)
+    active_function_keys = set(func_worker_labels.keys())
 
-    # Determine if a function is active (any live worker lists it)
-    # func_worker_labels is derived from live worker heartbeats (TTL-based),
-    # so it's the reliable source of truth. func_defs keys may be stale.
-    active_func_names: set[str] = set(func_worker_labels.keys())
+    def is_func_active(function_key: str) -> bool:
+        return function_key in active_function_keys
 
-    def is_func_active(name: str) -> bool:
-        return name in active_func_names
-
+    func_stats: dict[str, dict[str, Any]] = {}
     try:
         db = get_database()
         async with db.session() as session:
             repo = JobRepository(session)
-
-            # Get aggregated stats per function (SQL GROUP BY instead of fetching all rows)
             func_stats = await repo.get_function_job_stats(start_date=day_ago)
-
-            # Build function list from aggregated stats
-            for name, stats in func_stats.items():
-                # Skip event pattern entries - they're expanded into handler entries below
-                if name in event_patterns_with_handlers:
-                    continue
-
-                # If this is a handler for an event, use the parent event config
-                if name in handler_to_event:
-                    _, func_config = handler_to_event[name]
-                else:
-                    func_config = func_defs.get(name, {"type": FunctionType.TASK})
-
-                func_type = func_config.get("type", FunctionType.TASK)
-                if type and func_type != type:
-                    continue
-
-                runs = stats["runs"]
-                success_rate = (stats["successes"] / runs * 100) if runs > 0 else 100.0
-
-                functions.append(
-                    _build_function_info(
-                        name,
-                        func_config,
-                        active=is_func_active(name),
-                        workers=func_worker_labels.get(name, []),
-                        runs_24h=runs,
-                        success_rate=round(success_rate, 1),
-                        avg_duration_ms=stats["avg_duration_ms"],
-                        last_run_at=stats["last_run_at"],
-                        last_run_status=stats["last_run_status"],
-                    )
-                )
-
-            # Also add registered functions with no runs
-            for name, config in func_defs.items():
-                func_type = config.get("type", FunctionType.TASK)
-                if type and func_type != type:
-                    continue
-
-                # For events with handlers, expand into one entry per handler
-                if name in event_patterns_with_handlers:
-                    for handler_name in config.get("handlers", []):
-                        if handler_name not in func_stats:
-                            functions.append(
-                                _build_function_info(
-                                    handler_name,
-                                    config,
-                                    active=is_func_active(handler_name),
-                                    workers=func_worker_labels.get(handler_name, []),
-                                )
-                            )
-                elif name not in func_stats:
-                    functions.append(
-                        _build_function_info(
-                            name,
-                            config,
-                            active=is_func_active(name),
-                            workers=func_worker_labels.get(name, []),
-                        )
-                    )
-
     except RuntimeError:
-        # Database not available - return registered functions only
-        for name, config in func_defs.items():
-            func_type = config.get("type", FunctionType.TASK)
-            if type and func_type != type:
-                continue
+        pass
 
-            if name in event_patterns_with_handlers:
-                for handler_name in config.get("handlers", []):
-                    functions.append(
-                        _build_function_info(
-                            handler_name,
-                            config,
-                            active=is_func_active(handler_name),
-                            workers=func_worker_labels.get(handler_name, []),
-                        )
-                    )
-            else:
-                functions.append(
-                    _build_function_info(
-                        name,
-                        config,
-                        active=is_func_active(name),
-                        workers=func_worker_labels.get(name, []),
-                    )
+    all_keys = set(func_defs.keys()) | set(func_stats.keys())
+    for function_key in all_keys:
+        config = func_defs.get(
+            function_key,
+            {"key": function_key, "name": function_key, "type": FunctionType.TASK},
+        )
+        func_type = config.get("type", FunctionType.TASK)
+        if type and func_type != type:
+            continue
+
+        stats = func_stats.get(function_key)
+        if stats is None:
+            functions.append(
+                _build_function_info(
+                    function_key,
+                    config,
+                    active=is_func_active(function_key),
+                    workers=func_worker_labels.get(function_key, []),
                 )
+            )
+            continue
 
-    # Sort by runs (most active first)
-    functions.sort(key=lambda f: f.runs_24h, reverse=True)
+        runs = stats["runs"]
+        success_rate = (stats["successes"] / runs * 100) if runs > 0 else 100.0
+        functions.append(
+            _build_function_info(
+                function_key,
+                config,
+                active=is_func_active(function_key),
+                workers=func_worker_labels.get(function_key, []),
+                runs_24h=runs,
+                success_rate=round(success_rate, 1),
+                avg_duration_ms=stats["avg_duration_ms"],
+                last_run_at=stats["last_run_at"],
+                last_run_status=stats["last_run_status"],
+            )
+        )
 
+    functions.sort(key=lambda f: (-f.runs_24h, f.name, f.key))
     return FunctionsListResponse(functions=functions, total=len(functions))
 
 
 @router.get("/{name}", response_model=FunctionDetailResponse)
 async def get_function(name: str) -> FunctionDetailResponse:
-    """Get detailed info for a specific function."""
+    """Get detailed info for a specific function key."""
     now = datetime.now(UTC)
     day_ago = now - timedelta(hours=24)
+    function_key = name
 
-    # Fetch function definitions and active workers from Redis
     try:
         func_defs = await get_function_definitions()
         active_workers = await list_worker_instances()
@@ -233,19 +164,16 @@ async def get_function(name: str) -> FunctionDetailResponse:
         func_defs = {}
         active_workers = []
 
-    # If this is an event handler name, resolve to the parent event config
-    func_config = func_defs.get(name, {"type": FunctionType.TASK})
-    for _pattern, config in func_defs.items():
-        if config.get("type") == FunctionType.EVENT and name in config.get("handlers", []):
-            func_config = config
-            break
+    func_config = func_defs.get(
+        function_key,
+        {"key": function_key, "name": function_key, "type": FunctionType.TASK},
+    )
     func_type = func_config.get("type", FunctionType.TASK)
 
-    # Build worker labels for this function
     worker_counts: dict[str, int] = {}
-    for w in active_workers:
-        if name in w.functions:
-            label = w.worker_name or w.hostname or w.id[:8]
+    for worker in active_workers:
+        if function_key in worker.functions:
+            label = worker.worker_name or worker.hostname or worker.id[:8]
             worker_counts[label] = worker_counts.get(label, 0) + 1
 
     worker_labels = [
@@ -254,7 +182,6 @@ async def get_function(name: str) -> FunctionDetailResponse:
     ]
     is_active = len(worker_labels) > 0
 
-    # Defaults
     runs_24h = 0
     success_rate = 100.0
     avg_duration_ms = 0.0
@@ -268,15 +195,11 @@ async def get_function(name: str) -> FunctionDetailResponse:
         async with db.session() as session:
             repo = JobRepository(session)
 
-            # Accurate counts via SQL aggregation (not capped by LIMIT)
-            stats = await repo.get_stats(function=name, start_date=day_ago)
+            stats = await repo.get_stats(function=function_key, start_date=day_ago)
             runs_24h = stats["total"]
             success_rate = round(stats["success_rate"], 1)
 
-            # All durations (pre-sorted) for avg + p95
-            durations = await repo.get_durations(
-                function=name, start_date=day_ago
-            )
+            durations = await repo.get_durations(function=function_key, start_date=day_ago)
             if durations:
                 avg_duration_ms = round(sum(durations) / len(durations), 2)
                 p95_idx = min(
@@ -284,8 +207,7 @@ async def get_function(name: str) -> FunctionDetailResponse:
                 )
                 p95_duration_ms = round(durations[p95_idx], 2)
 
-            # Recent runs for the table (also gives us last run info)
-            jobs = await repo.list_jobs(function=name, limit=20)
+            jobs = await repo.list_jobs(function=function_key, limit=20)
             if jobs:
                 first = jobs[0]
                 run_time = first.completed_at or first.started_at or first.created_at
@@ -296,18 +218,15 @@ async def get_function(name: str) -> FunctionDetailResponse:
             for job in jobs:
                 duration_ms = None
                 if job.started_at and job.completed_at:
-                    duration_ms = (
-                        job.completed_at - job.started_at
-                    ).total_seconds() * 1000
+                    duration_ms = (job.completed_at - job.started_at).total_seconds() * 1000
 
                 recent_runs.append(
                     Run(
                         id=job.id,
                         function=job.function,
+                        function_name=job.function_name,
                         status=job.status,
-                        started_at=job.started_at.isoformat()
-                        if job.started_at
-                        else None,
+                        started_at=job.started_at.isoformat() if job.started_at else None,
                         completed_at=job.completed_at.isoformat()
                         if job.completed_at
                         else None,
@@ -320,7 +239,8 @@ async def get_function(name: str) -> FunctionDetailResponse:
         pass
 
     return FunctionDetailResponse(
-        name=name,
+        key=function_key,
+        name=str(func_config.get("name") or function_key),
         type=func_type,
         active=is_active,
         workers=worker_labels,

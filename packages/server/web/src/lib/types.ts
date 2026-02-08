@@ -17,6 +17,7 @@ export type JobStatus = 'active' | 'complete' | 'failed' | 'retrying';
 export interface Job {
   id: string;
   function: string;
+  function_name: string;
   status: JobStatus;
   created_at: string | null;
   scheduled_at: string | null;
@@ -26,6 +27,8 @@ export interface Job {
   max_retries: number;
   timeout: number | null;
   worker_id: string | null;
+  parent_id: string | null;
+  root_id: string;
   progress: number;
   kwargs: Record<string, unknown>;
   metadata: Record<string, unknown>;
@@ -53,12 +56,33 @@ export interface JobTrendsResponse {
 }
 
 // =============================================================================
+// Artifact Schemas
+// =============================================================================
+
+export interface Artifact {
+  id: number;
+  job_id: string;
+  name: string;
+  type: string;
+  size_bytes: number | null;
+  data: unknown;
+  path: string | null;
+  created_at: string;
+}
+
+export interface ArtifactListResponse {
+  artifacts: Artifact[];
+  total: number;
+}
+
+// =============================================================================
 // Run Schema (simplified job for lists)
 // =============================================================================
 
 export interface Run {
   id: string;
   function: string;
+  function_name: string;
   status: string;
   started_at: string | null;
   completed_at: string | null;
@@ -79,6 +103,7 @@ export interface WorkerInstance {
   started_at: string;
   last_heartbeat: string;
   functions: string[];
+  function_names: Record<string, string>;
   concurrency: number;
   active_jobs: number;
   jobs_processed: number;
@@ -92,6 +117,7 @@ export interface WorkerInfo {
   instance_count: number;
   instances: WorkerInstance[];
   functions: string[];
+  function_names: Record<string, string>;
   concurrency: number;
 }
 
@@ -109,6 +135,7 @@ export interface WorkerStats {
 // =============================================================================
 
 export interface FunctionInfo {
+  key: string;
   name: string;
   type: FunctionType;
   active: boolean;
@@ -207,4 +234,3 @@ export interface DashboardStats {
   recent_runs: Run[];
   recent_failures: Run[];
 }
-

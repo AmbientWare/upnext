@@ -9,12 +9,14 @@ from typing import (
     Callable,
     Generic,
     ParamSpec,
+    TypedDict,
     TypeVar,
     overload,
 )
 
 from shared.models import Job
 
+from conduit.engine.function_identity import build_function_key
 from conduit.engine.queue.base import BaseQueue
 
 if TYPE_CHECKING:
@@ -30,13 +32,24 @@ P = ParamSpec("P")
 class _Handler:
     """Internal: a single subscriber to an event."""
 
-    name: str
+    key: str
+    display_name: str
     func: Callable[..., Any]
     is_async: bool
     retries: int = 0
     retry_delay: float = 1.0
     retry_backoff: float = 2.0
     timeout: float = 30 * 60  # 30 minutes
+
+
+class HandlerConfig(TypedDict):
+    """Serializable handler config used for worker registration metadata."""
+
+    key: str
+    name: str
+    timeout: float
+    max_retries: int
+    retry_delay: float
 
 
 class TypedEvent(Generic[P]):
@@ -121,6 +134,7 @@ class EventHandle:
         self,
         __func: None = None,
         *,
+        name: str | None = None,
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
@@ -131,6 +145,7 @@ class EventHandle:
         self,
         __func: Callable[..., Any] | None = None,
         *,
+        name: str | None = None,
         retries: int = 0,
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
@@ -156,8 +171,16 @@ class EventHandle:
         """
 
         def decorator(fn: Callable[..., Any]) -> TypedEvent[Any]:
+            handler_name = name or fn.__name__
             handler = _Handler(
-                name=fn.__name__,
+                key=build_function_key(
+                    "event",
+                    module=fn.__module__,
+                    qualname=fn.__qualname__,
+                    name=handler_name,
+                    pattern=self.pattern,
+                ),
+                display_name=handler_name,
                 func=fn,
                 is_async=asyncio.iscoroutinefunction(fn),
                 retries=retries,
@@ -169,7 +192,8 @@ class EventHandle:
 
             # Register as a task so the job processor can execute it
             self._worker._registry.register_task(
-                name=handler.name,
+                name=handler.key,
+                display_name=handler.display_name,
                 func=handler.func,
                 retries=handler.retries,
                 retry_delay=handler.retry_delay,
@@ -190,14 +214,15 @@ class EventHandle:
         for handler in self._handlers:
             # Pass event data directly as kwargs (like tasks)
             job = Job(
-                function=handler.name,
+                function=handler.key,
+                function_name=handler.display_name,
                 kwargs=data,
             )
             try:
                 await queue.enqueue(job)
             except Exception as e:
                 logger.error(
-                    f"Failed to enqueue handler '{handler.name}' "
+                    f"Failed to enqueue handler '{handler.display_name}' "
                     f"for event '{self.pattern}': {e}"
                 )
 
@@ -218,8 +243,26 @@ class EventHandle:
 
     @property
     def handler_names(self) -> list[str]:
-        """Names of all registered handlers."""
-        return [h.name for h in self._handlers]
+        """Display names of all registered handlers."""
+        return [h.display_name for h in self._handlers]
+
+    @property
+    def handler_keys(self) -> list[str]:
+        """Stable keys for all registered handlers."""
+        return [h.key for h in self._handlers]
+
+    def handler_configs(self) -> list[HandlerConfig]:
+        """Handler config snapshots for worker registration/metadata export."""
+        return [
+            {
+                "key": h.key,
+                "name": h.display_name,
+                "timeout": h.timeout,
+                "max_retries": h.retries,
+                "retry_delay": h.retry_delay,
+            }
+            for h in self._handlers
+        ]
 
     def __repr__(self) -> str:
         return f"EventHandle(pattern={self.pattern!r}, handlers={len(self._handlers)})"

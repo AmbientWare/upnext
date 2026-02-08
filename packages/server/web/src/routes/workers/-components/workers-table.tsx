@@ -29,7 +29,21 @@ export function WorkersTable({ workers }: { workers: WorkerInfo[] }) {
         </TableRow>
       </TableHeader>
       <TableBody ref={bodyRef}>
-        {workers.map((worker) => (
+        {workers.map((worker) => {
+          const displayFunctions = Array.from(
+            new Set(
+              worker.functions.map((fnKey) => {
+                const fromWorker = worker.function_names?.[fnKey];
+                if (fromWorker) return fromWorker;
+                for (const inst of worker.instances) {
+                  const display = inst.function_names?.[fnKey];
+                  if (display) return display;
+                }
+                return fnKey;
+              })
+            )
+          );
+          return (
           <TableRow key={worker.name} className="border-border hover:bg-accent">
             <TableCell className="py-2">
               <div className="flex items-center gap-2">
@@ -65,15 +79,18 @@ export function WorkersTable({ workers }: { workers: WorkerInfo[] }) {
               )}
             </TableCell>
             <TableCell className="text-[11px] text-muted-foreground py-2">
-              {worker.functions.length > 3
-                ? `${worker.functions.slice(0, 3).join(", ")} +${worker.functions.length - 3}`
-                : worker.functions.join(", ")}
+              {displayFunctions.length === 0
+                ? "—"
+                : displayFunctions.length > 3
+                ? `${displayFunctions.slice(0, 3).join(", ")} +${displayFunctions.length - 3}`
+                : displayFunctions.join(", ")}
             </TableCell>
             <TableCell className="mono text-[11px] text-muted-foreground py-2">
               {worker.concurrency}
             </TableCell>
           </TableRow>
-        ))}
+          );
+        })}
       </TableBody>
     </Table>
   );

@@ -2,15 +2,25 @@
 
 import asyncio
 from collections.abc import Awaitable
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
-from conduit.sdk.task import Future
+from conduit.sdk.task import Future, TaskResult
 
 
-class SubmittableTask(Protocol):
+class SubmittableTask[T](Protocol):
     """Protocol for tasks that can be submitted."""
 
-    async def submit(self, **kwargs: Any) -> Future[Any]: ...
+    async def submit(self, **kwargs: Any) -> Future[T]: ...
+
+
+def _require_task_value[T](future_result: TaskResult[T]) -> T:
+    """Extract a successful task value or raise an explicit error."""
+    if not getattr(future_result, "ok", False):
+        raise RuntimeError(getattr(future_result, "error", "Task failed"))
+    value = future_result.value
+    if value is None:
+        raise RuntimeError("Task completed without a value")
+    return cast(T, value)
 
 
 async def gather[T](
@@ -43,7 +53,7 @@ async def gather[T](
     async def resolve(item: Awaitable[T] | Future[T]) -> T:
         if isinstance(item, Future):
             task_result = await item.result()
-            return task_result.value
+            return _require_task_value(task_result)
         return await item
 
     tasks = [asyncio.create_task(resolve(a)) for a in awaitables]
@@ -61,7 +71,7 @@ async def gather[T](
 
 
 async def map_tasks[T](
-    task: SubmittableTask,
+    task: SubmittableTask[T],
     inputs: list[dict[str, Any]],
     *,
     concurrency: int = 10,
@@ -85,13 +95,13 @@ async def map_tasks[T](
         List of results in the same order as inputs
     """
     semaphore = asyncio.Semaphore(concurrency)
-    results: list[T | None] = [None] * len(inputs)
+    results: list[T] = [cast(T, None)] * len(inputs)
 
     async def run_with_semaphore(index: int, kwargs: dict[str, Any]) -> None:
         async with semaphore:
             future = await task.submit(**kwargs)
             task_result = await future.result()
-            results[index] = task_result.value
+            results[index] = _require_task_value(task_result)
 
     tasks = [
         asyncio.create_task(run_with_semaphore(i, kwargs))
@@ -99,7 +109,7 @@ async def map_tasks[T](
     ]
 
     await asyncio.gather(*tasks)
-    return results  # type: ignore[return-value]
+    return results
 
 
 async def first_completed[T](
@@ -133,7 +143,7 @@ async def first_completed[T](
     async def resolve(item: Awaitable[T] | Future[T]) -> T:
         if isinstance(item, Future):
             task_result = await item.result()
-            return task_result.value
+            return _require_task_value(task_result)
         return await item
 
     tasks = [asyncio.create_task(resolve(a)) for a in awaitables]
@@ -171,7 +181,7 @@ async def first_completed[T](
 
 
 async def submit_many[T](
-    task: SubmittableTask,
+    task: SubmittableTask[T],
     inputs: list[dict[str, Any]],
 ) -> list[Future[T]]:
     """

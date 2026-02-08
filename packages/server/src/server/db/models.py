@@ -28,6 +28,7 @@ class JobHistory(Base):
 
     # Job identity
     function: Mapped[str] = mapped_column(String(255), nullable=False)
+    function_name: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Status: active, complete, failed, retrying
     status: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -53,6 +54,8 @@ class JobHistory(Base):
     max_retries: Mapped[int] = mapped_column(Integer, default=0)
     timeout: Mapped[float | None] = mapped_column(Float, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parent_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    root_id: Mapped[str] = mapped_column(String(36), nullable=False)
 
     # Progress (0.0 to 1.0)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
@@ -71,9 +74,12 @@ class JobHistory(Base):
     # Indexes for common queries
     __table_args__ = (
         Index("ix_job_history_function", "function"),
+        Index("ix_job_history_function_name", "function_name"),
         Index("ix_job_history_status", "status"),
         Index("ix_job_history_created_at", "created_at"),
         Index("ix_job_history_worker_id", "worker_id"),
+        Index("ix_job_history_parent_id", "parent_id"),
+        Index("ix_job_history_root_id", "root_id"),
     )
 
     def __repr__(self) -> str:

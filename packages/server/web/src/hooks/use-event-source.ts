@@ -12,8 +12,10 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
   const onMessageRef = useRef(options.onMessage);
   const onErrorRef = useRef(options.onError);
 
-  onMessageRef.current = options.onMessage;
-  onErrorRef.current = options.onError;
+  useEffect(() => {
+    onMessageRef.current = options.onMessage;
+    onErrorRef.current = options.onError;
+  }, [options.onError, options.onMessage]);
 
   useEffect(() => {
     if (!enabled) {

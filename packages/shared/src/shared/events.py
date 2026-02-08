@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 EVENTS_STREAM = "conduit:status:events"
 API_REQUESTS_STREAM = "conduit:api:requests"
@@ -27,7 +27,11 @@ class JobStartedEvent(BaseModel):
 
     job_id: str
     function: str
-    kwargs: dict[str, Any] = {}
+    function_name: str
+    parent_id: str | None = None
+    root_id: str
+    kwargs: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     attempt: int = 1
     max_retries: int = 0
     worker_id: str | None = None
@@ -39,6 +43,9 @@ class JobCompletedEvent(BaseModel):
 
     job_id: str
     function: str
+    function_name: str
+    parent_id: str | None = None
+    root_id: str
     result: Any = None
     duration_ms: float | None = None
     attempt: int = 1
@@ -50,6 +57,9 @@ class JobFailedEvent(BaseModel):
 
     job_id: str
     function: str
+    function_name: str
+    parent_id: str | None = None
+    root_id: str
     error: str
     traceback: str | None = None
     attempt: int = 1
@@ -63,6 +73,9 @@ class JobRetryingEvent(BaseModel):
 
     job_id: str
     function: str
+    function_name: str
+    parent_id: str | None = None
+    root_id: str
     error: str
     delay_seconds: float
     current_attempt: int
@@ -74,6 +87,8 @@ class JobProgressEvent(BaseModel):
     """Event data for job.progress."""
 
     job_id: str
+    parent_id: str | None = None
+    root_id: str
     progress: float
     message: str | None = None
     updated_at: datetime
@@ -83,6 +98,8 @@ class JobCheckpointEvent(BaseModel):
     """Event data for job.checkpoint."""
 
     job_id: str
+    parent_id: str | None = None
+    root_id: str
     state: dict[str, Any]
     checkpointed_at: datetime
 
@@ -101,6 +118,9 @@ class SSEJobEvent(BaseModel):
     job_id: str = ""
     worker_id: str = ""
     function: str | None = None
+    function_name: str | None = None
+    parent_id: str | None = None
+    root_id: str
     # job.started / job.completed / job.failed
     attempt: int | None = None
     max_retries: int | None = None
@@ -134,7 +154,7 @@ class BatchEventItem(BaseModel):
     job_id: str
     worker_id: str
     timestamp: float
-    data: dict[str, Any] = {}
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class BatchEventRequest(BaseModel):
@@ -150,4 +170,4 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
     tier: str = "free"
-    features: list[str] = []
+    features: list[str] = Field(default_factory=list)

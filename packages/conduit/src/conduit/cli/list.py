@@ -77,9 +77,8 @@ def list_cmd(
             lines.append(Text())
             lines.append(Text("Crons", style="bold"))
             for cron_def in worker.crons:
-                name = cron_def.name or cron_def.func.__name__
                 line = Text()
-                line.append(f"  {name}", style="white")
+                line.append(f"  {cron_def.display_name}", style="white")
                 line.append(f"  {cron_def.schedule}", style="dim")
                 lines.append(line)
 

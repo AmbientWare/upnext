@@ -113,6 +113,79 @@ def sync_inventory(product_ids: list[str]) -> dict:
     return {"synced": len(product_ids), "status": "complete"}
 
 
+@worker.task(timeout=30.0)
+async def timeline_demo_step(segment: int, step: int, delay_s: float) -> dict:
+    """Leaf task for timeline demo (visible bar growth)."""
+    ctx = conduit.get_current_context()
+    ctx.set_progress(5, f"Segment {segment} step {step} queued")
+
+    await asyncio.sleep(delay_s * 0.5)
+    ctx.set_progress(60, f"Segment {segment} step {step} halfway")
+
+    await asyncio.sleep(delay_s * 0.5)
+    ctx.set_progress(100, f"Segment {segment} step {step} complete")
+
+    return {
+        "segment": segment,
+        "step": step,
+        "delay_s": round(delay_s, 2),
+    }
+
+
+@worker.task(timeout=90.0)
+async def timeline_demo_segment(segment: int, steps: int = 3) -> dict:
+    """Parent task that spawns nested leaf tasks."""
+    ctx = conduit.get_current_context()
+    completed_steps: list[dict] = []
+
+    for step in range(1, steps + 1):
+        delay_s = 0.6 + (step * 0.3)
+        result = await timeline_demo_step.wait(
+            segment=segment,
+            step=step,
+            delay_s=delay_s,
+        )
+        if result.value:
+            completed_steps.append(result.value)
+
+        ctx.set_progress(
+            int(step / steps * 100),
+            f"Segment {segment}: finished step {step}/{steps}",
+        )
+        await asyncio.sleep(0.2)
+
+    return {
+        "segment": segment,
+        "steps": completed_steps,
+    }
+
+
+@worker.task(timeout=240.0)
+async def timeline_demo_flow(segments: int = 3) -> dict:
+    """Orchestrator task for a multi-level, watchable timeline."""
+    ctx = conduit.get_current_context()
+    segment_summaries: list[dict] = []
+
+    for segment in range(1, segments + 1):
+        await asyncio.sleep(0.4)
+        segment_result = await timeline_demo_segment.wait(segment=segment, steps=3)
+        if segment_result.value:
+            segment_summaries.append(segment_result.value)
+
+        ctx.set_progress(
+            int(segment / segments * 100),
+            f"Timeline demo: segment {segment}/{segments} complete",
+        )
+
+    summary = {
+        "ran_at": datetime.now().isoformat(),
+        "segments": segment_summaries,
+        "segment_count": segments,
+    }
+    await conduit.create_artifact(name="timeline_demo_summary", data=summary)
+    return summary
+
+
 # =============================================================================
 # Cron Jobs
 # =============================================================================
@@ -144,6 +217,34 @@ async def cleanup_sessions():
     cleaned = random.randint(0, 10)
     logger.info(f"Cleaned up {cleaned} expired sessions")
     return {"cleaned": cleaned}
+
+
+@worker.cron("*/20 * * * * *")  # Every 20 seconds
+async def timeline_demo_cron():
+    """
+    Demo run for /jobs timeline view:
+    cron root -> flow -> segment -> step (nested tree with visible delays).
+    """
+    run_label = datetime.now().strftime("%H:%M:%S")
+    logger.info(f"Starting timeline demo cron run at {run_label}")
+
+    result = await timeline_demo_flow.wait(segments=3)
+    cron_artifact = {
+        "run_label": run_label,
+        "status": result.status,
+        "flow_job_id": result.job_id,
+        "saved_at": datetime.now().isoformat(),
+    }
+    await conduit.create_artifact(
+        name="timeline_demo_cron_result",
+        data=cron_artifact,
+    )
+    logger.info(
+        "Timeline demo finished: status=%s root_child_job=%s",
+        result.status,
+        result.job_id,
+    )
+    return cron_artifact
 
 
 # =============================================================================
@@ -204,7 +305,7 @@ async def create_order(order: dict):
         order_id=order_id, user_id=order.get("user_id", "user_1"), items=items
     )
 
-    return {"order_id": order_id, "job_id": job, "status": "submitted"}
+    return {"order_id": order_id, "job_id": job.job_id, "status": "submitted"}
 
 
 @api.post("/notifications")
@@ -218,7 +319,7 @@ async def send_user_notification(notification: dict):
         user_id=user_id, message=message, channel=channel
     )
 
-    return {"job_id": job, "status": "submitted"}
+    return {"job_id": job.job_id, "status": "submitted"}
 
 
 @api.post("/reports")
@@ -230,7 +331,7 @@ async def request_report(request: dict):
         report_type=report_type, date_range=request.get("date_range")
     )
 
-    return {"job_id": job, "report_type": report_type, "status": "submitted"}
+    return {"job_id": job.job_id, "report_type": report_type, "status": "submitted"}
 
 
 @api.post("/users/register")
@@ -252,7 +353,7 @@ async def trigger_inventory_sync(request: dict):
 
     job = await sync_inventory.submit(product_ids=product_ids)
 
-    return {"job_id": job, "products": len(product_ids), "status": "submitted"}
+    return {"job_id": job.job_id, "products": len(product_ids), "status": "submitted"}
 
 
 # =============================================================================

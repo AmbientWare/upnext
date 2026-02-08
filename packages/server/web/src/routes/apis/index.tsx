@@ -30,7 +30,7 @@ function ApisPage() {
     refetchInterval: 45000,
   });
 
-  const allApis = apisData?.apis ?? [];
+  const allApis = useMemo(() => apisData?.apis ?? [], [apisData?.apis]);
 
   const filteredApis = useMemo(() => {
     let apis = allApis;

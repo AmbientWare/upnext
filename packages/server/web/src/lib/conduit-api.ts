@@ -4,10 +4,12 @@
  */
 
 import type {
+  ArtifactListResponse,
   ApisListResponse,
   ApiTrendsResponse,
   DashboardStats,
   FunctionDetailResponse,
+  Job,
   FunctionsListResponse,
   JobListResponse,
   JobTrendsResponse,
@@ -104,6 +106,21 @@ export async function getJobTrends(params: GetJobTrendsParams = {}): Promise<Job
   return handleResponse<JobTrendsResponse>(response);
 }
 
+export async function getJob(jobId: string): Promise<Job> {
+  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`);
+  return handleResponse<Job>(response);
+}
+
+export async function getJobTimeline(jobId: string): Promise<JobListResponse> {
+  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/timeline`);
+  return handleResponse<JobListResponse>(response);
+}
+
+export async function getJobArtifacts(jobId: string): Promise<ArtifactListResponse> {
+  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/artifacts`);
+  return handleResponse<ArtifactListResponse>(response);
+}
+
 // =============================================================================
 // Workers
 // =============================================================================
@@ -172,6 +189,9 @@ export const queryKeys = {
   dashboardStats: ['dashboard', 'stats'] as const,
 
   jobs: (params?: GetJobsParams) => ['jobs', params] as const,
+  job: (jobId: string) => ['jobs', 'job', jobId] as const,
+  jobTimeline: (jobId: string) => ['jobs', 'timeline', jobId] as const,
+  jobArtifacts: (jobId: string) => ['jobs', 'artifacts', jobId] as const,
   jobTrends: (params?: GetJobTrendsParams) => ['jobs', 'trends', params] as const,
 
   workers: ['workers'] as const,

@@ -71,6 +71,7 @@ async def get_dashboard_stats() -> DashboardStats:
                     Run(
                         id=job.id,
                         function=job.function,
+                        function_name=job.function_name,
                         status=job.status,
                         started_at=job.started_at.isoformat()
                         if job.started_at
@@ -99,6 +100,7 @@ async def get_dashboard_stats() -> DashboardStats:
                     Run(
                         id=job.id,
                         function=job.function,
+                        function_name=job.function_name,
                         status=job.status,
                         started_at=job.started_at.isoformat()
                         if job.started_at

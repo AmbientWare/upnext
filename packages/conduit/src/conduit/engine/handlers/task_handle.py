@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Generic, ParamSpec
+from typing import TYPE_CHECKING, Any, Callable, Generic, ParamSpec, overload
 
 from shared.models import Job
 
@@ -30,12 +30,14 @@ class TaskHandle(Generic[P]):
     def __init__(
         self,
         name: str,
+        function_key: str,
         func: Callable[..., Any],
         definition: TaskDefinition,
         _worker: Worker,
         _queue: BaseQueue | None = None,
     ) -> None:
         self.name = name
+        self.function_key = function_key
         self.func = func
         self.definition = definition
         self._worker = _worker
@@ -47,19 +49,22 @@ class TaskHandle(Generic[P]):
     def _create_job(self, kwargs: dict[str, Any]) -> Job:
         """Create a Job from this task's definition.
 
-        Automatically sets parent_id if called from inside a running task.
+        Automatically sets lineage if called from inside a running task.
         """
         job = Job(
-            function=self.name,
+            function=self.function_key,
+            function_name=self.name,
             kwargs=kwargs,
             timeout=self.definition.timeout,
             max_retries=self.definition.retries,
         )
         try:
             parent_ctx = get_current_context()
-            job.metadata["parent_id"] = parent_ctx.job_id
+            job.parent_id = parent_ctx.job_id
+            job.root_id = parent_ctx.root_id or parent_ctx.job_id
         except RuntimeError:
-            pass  # Not inside a task — no parent
+            # Top-level tasks are their own root.
+            job.root_id = job.id
         return job
 
     def _ensure_queue(self) -> BaseQueue:
@@ -80,18 +85,33 @@ class TaskHandle(Generic[P]):
         job_id = await queue.enqueue(job)
         return Future(job_id=job_id, queue=queue)
 
+    @overload
+    async def wait(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]: ...
+
+    @overload
     async def wait(
         self,
-        *args: P.args,
+        *args: Any,
         wait_timeout: float | None = None,
-        **kwargs: P.kwargs,
+        **kwargs: Any,
+    ) -> TaskResult[Any]: ...
+
+    async def wait(
+        self,
+        *args: Any,
+        wait_timeout: float | None = None,
+        **kwargs: Any,
     ) -> TaskResult[Any]:
         """Submit and wait for a job to complete, returning the result.
 
         Parameters are typed based on the original function signature.
         By default, wait timeout matches the task definition timeout.
         """
-        future = await self.submit(*args, **kwargs)
+        queue = self._ensure_queue()
+        merged_kwargs = self._merge_args_kwargs(args, kwargs)
+        job = self._create_job(merged_kwargs)
+        job_id = await queue.enqueue(job)
+        future = Future(job_id=job_id, queue=queue)
         timeout = self.definition.timeout if wait_timeout is None else wait_timeout
         return await future.result(timeout=timeout)
 
@@ -103,11 +123,22 @@ class TaskHandle(Generic[P]):
         """
         return asyncio.run(self.submit(*args, **kwargs))
 
+    @overload
+    def wait_sync(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]: ...
+
+    @overload
     def wait_sync(
         self,
-        *args: P.args,
+        *args: Any,
         wait_timeout: float | None = None,
-        **kwargs: P.kwargs,
+        **kwargs: Any,
+    ) -> TaskResult[Any]: ...
+
+    def wait_sync(
+        self,
+        *args: Any,
+        wait_timeout: float | None = None,
+        **kwargs: Any,
     ) -> TaskResult[Any]:
         """Submit and wait for completion from a sync context.
 
@@ -138,7 +169,11 @@ class TaskHandle(Generic[P]):
         ``await wait()`` instead.
         """
         merged_kwargs = self._merge_args_kwargs(args, kwargs)
-        job = Job(function=self.name, kwargs=merged_kwargs)
+        job = Job(
+            function=self.function_key,
+            function_name=self.name,
+            kwargs=merged_kwargs,
+        )
         ctx = Context.from_job(job)
         set_current_context(ctx)
 

@@ -25,6 +25,7 @@ def _parse_worker_instance(data: str) -> WorkerInstance:
         started_at=d["started_at"],
         last_heartbeat=d["last_heartbeat"],
         functions=d.get("functions", []),
+        function_names=d.get("function_names", {}),
         concurrency=d.get("concurrency", 1),
         active_jobs=d.get("active_jobs", 0),
         jobs_processed=d.get("jobs_processed", 0),
@@ -89,6 +90,9 @@ async def get_function_definitions() -> dict[str, dict[str, Any]]:
         data = await r.get(key)
         if data:
             func_data = json.loads(data)
-            functions[func_data["name"]] = func_data
+            func_key = func_data.get("key") or func_data.get("name")
+            if not func_key:
+                continue
+            functions[func_key] = func_data
 
     return functions

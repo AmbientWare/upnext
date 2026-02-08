@@ -38,6 +38,7 @@ class Context:
 
     # Hierarchy (for nested tasks)
     parent_id: str | None = None
+    root_id: str = ""
 
     # Execution info
     attempt: int = 1  # Current attempt (1-indexed)
@@ -47,6 +48,7 @@ class Context:
 
     # Function info
     function: str = ""
+    function_name: str = ""
 
     # internal
     _metadata: dict[str, Any] = field(default_factory=dict)
@@ -64,22 +66,33 @@ class Context:
         """
         # Check for parent from current context (automatic propagation)
         parent_ctx = _current_context.get()  # Don't raise if no parent
-        parent_id = job.metadata.get("parent_id")  # Explicit takes precedence
+        parent_id = job.parent_id
 
         if parent_ctx and not parent_id:
             # Inherit from current context
             parent_id = parent_ctx.job_id
 
+        if job.root_id:
+            root_id = job.root_id
+        elif parent_ctx:
+            root_id = parent_ctx.root_id or parent_ctx.job_id
+        else:
+            root_id = job.id
+
+        metadata = dict(job.metadata)
+
         return cls(
             job_id=job.id,
             job_key=job.key,
             parent_id=parent_id,
+            root_id=root_id,
             attempt=job.attempts,
             max_attempts=job.max_retries + 1,
             started_at=job.started_at,
             timeout=job.timeout,
             function=job.function,
-            _metadata=dict(job.metadata),
+            function_name=job.function_name,
+            _metadata=metadata,
         )
 
     @property

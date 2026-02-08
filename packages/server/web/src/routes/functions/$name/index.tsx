@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { cn, formatNumber, formatDuration, formatTimeAgo, formatTimeUntil } from "@/lib/utils";
 import { getFunction, getJobs, queryKeys } from "@/lib/conduit-api";
@@ -36,6 +36,7 @@ const typeLabels: Record<FunctionType, string> = {
 };
 
 function FunctionDetailPage() {
+  const navigate = useNavigate();
   const { name } = Route.useParams();
   const decodedName = decodeURIComponent(name);
 
@@ -181,6 +182,7 @@ function FunctionDetailPage() {
         hideFunction
         showFilters
         isLoading={isJobsPending}
+        onJobClick={(job) => navigate({ to: "/jobs/$jobId", params: { jobId: job.id } })}
       />
     </div>
   );

@@ -29,7 +29,7 @@ function WorkersPage() {
     refetchInterval: 30000,
   });
 
-  const allWorkers = workersData?.workers ?? [];
+  const allWorkers = useMemo(() => workersData?.workers ?? [], [workersData?.workers]);
 
   const filteredWorkers = useMemo(() => {
     let workers = allWorkers;

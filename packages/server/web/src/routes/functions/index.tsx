@@ -42,7 +42,7 @@ function FunctionsPage() {
     refetchInterval: 30000,
   });
 
-  const allFunctions = functionsData?.functions ?? [];
+  const allFunctions = useMemo(() => functionsData?.functions ?? [], [functionsData?.functions]);
 
   // Extract unique worker names for filter dropdown
   const workerOptions = useMemo(() => {
