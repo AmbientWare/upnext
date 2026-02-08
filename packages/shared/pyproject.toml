@@ -1,9 +1,9 @@
 [project]
-name = "shared"
-version = "0.1.0"
+name = "conduit-shared"
+version = "0.0.1"
 description = "Shared models for Conduit packages"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.10.0",
 ]

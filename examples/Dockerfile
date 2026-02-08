@@ -1,5 +1,5 @@
 # Example service Dockerfile
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ COPY packages/conduit/src packages/conduit/src
 COPY examples examples/
 
 # Install conduit package (includes aiohttp for client)
-RUN uv sync --frozen --no-dev --package conduit
+RUN uv sync --frozen --no-dev --package conduit-py
 
 # Default command - can be overridden
 CMD ["uv", "run", "conduit", "run", "examples/service.py"]

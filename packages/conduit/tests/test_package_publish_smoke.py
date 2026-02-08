@@ -9,7 +9,11 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-_PACKAGES = ("shared", "conduit", "server")
+_PACKAGES: tuple[tuple[str, str], ...] = (
+    ("shared", "conduit-shared"),
+    ("server", "conduit-server"),
+    ("conduit", "conduit-py"),
+)
 
 
 def _repo_root() -> Path:
@@ -36,17 +40,25 @@ def _run(cmd: list[str], *, cwd: Path | None = None) -> None:
 def _build_all(dist_dir: Path) -> None:
     root = _repo_root()
     dist_dir.mkdir(parents=True, exist_ok=True)
-    for package_name in _PACKAGES:
+    for package_dir, _dist_name in _PACKAGES:
         _run(
             [
                 "uv",
                 "build",
-                str(root / "packages" / package_name),
+                str(root / "packages" / package_dir),
                 "--out-dir",
                 str(dist_dir),
             ],
             cwd=root,
         )
+
+
+def _dist_files(dist_dir: Path, dist_name: str, suffix: str) -> list[Path]:
+    stems = {dist_name, dist_name.replace("-", "_")}
+    paths: list[Path] = []
+    for stem in stems:
+        paths.extend(dist_dir.glob(f"{stem}-*{suffix}"))
+    return paths
 
 
 def _create_venv(venv_dir: Path) -> Path:
@@ -77,11 +89,11 @@ def test_build_produces_wheel_and_sdist_for_all_packages(tmp_path: Path) -> None
     dist_dir = tmp_path / "dist"
     _build_all(dist_dir)
 
-    for package_name in _PACKAGES:
-        wheels = list(dist_dir.glob(f"{package_name}-*.whl"))
-        sdists = list(dist_dir.glob(f"{package_name}-*.tar.gz"))
-        assert wheels, f"Missing wheel for {package_name}"
-        assert sdists, f"Missing sdist for {package_name}"
+    for _package_dir, dist_name in _PACKAGES:
+        wheels = _dist_files(dist_dir, dist_name, ".whl")
+        sdists = _dist_files(dist_dir, dist_name, ".tar.gz")
+        assert wheels, f"Missing wheel for {dist_name}"
+        assert sdists, f"Missing sdist for {dist_name}"
 
 
 def test_install_from_built_wheels_in_clean_venv(tmp_path: Path) -> None:

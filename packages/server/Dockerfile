@@ -18,7 +18,7 @@ COPY packages/server/web ./
 RUN bun run build && mv ../static /static
 
 # Stage 2: Python server
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -42,7 +42,7 @@ COPY packages/server ./packages/server
 COPY --from=frontend-builder /static ./packages/server/static
 
 # Install dependencies using workspace
-RUN uv sync --frozen --no-dev --package server
+RUN uv sync --frozen --no-dev --package conduit-server
 
 # Set working directory to server package
 WORKDIR /app/packages/server

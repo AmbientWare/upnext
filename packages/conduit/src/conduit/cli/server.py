@@ -47,7 +47,7 @@ def _build_alembic_config(server_root: Path):
         error_panel(
             (
                 "Alembic is not available in this environment. "
-                "Install server dependencies (e.g. `uv sync --package server`) and retry."
+                "Install server dependencies (e.g. `uv sync --package conduit-server`) and retry."
             ),
             title="Alembic not installed",
         )

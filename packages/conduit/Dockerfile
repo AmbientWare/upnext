@@ -1,5 +1,5 @@
 # Conduit SDK + CLI
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ COPY packages/shared ./packages/shared
 COPY packages/conduit ./packages/conduit
 
 # Install dependencies
-RUN uv sync --frozen --no-dev --package conduit
+RUN uv sync --frozen --no-dev --package conduit-py
 
 # Set working directory
 WORKDIR /app/packages/conduit
