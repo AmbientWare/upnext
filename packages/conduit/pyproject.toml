@@ -7,7 +7,6 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11.0",
     "croniter>=6.0.0",
-    "fakeredis[lua]>=2.26.0",
     "fastapi>=0.115.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.12.0",

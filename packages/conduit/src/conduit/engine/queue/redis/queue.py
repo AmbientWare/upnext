@@ -165,7 +165,7 @@ class RedisQueue(BaseQueue):
             self._sweeper = None
 
         if self._client:
-            await self._client.close()
+            await self._client.aclose()
             self._client = None
 
     # =========================================================================

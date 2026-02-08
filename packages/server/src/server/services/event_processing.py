@@ -334,6 +334,13 @@ async def _handle_job_progress(event: JobProgressEvent) -> None:
             repo = JobRepository(session)
             existing = await repo.get_by_id(event.job_id)
             if existing:
+                if existing.status in {"complete", "failed", "cancelled"}:
+                    logger.debug(
+                        "Ignoring job.progress for terminal job %s (status=%s)",
+                        event.job_id,
+                        existing.status,
+                    )
+                    return
                 existing.progress = event.progress
                 existing.parent_id = event.parent_id
                 existing.root_id = event.root_id

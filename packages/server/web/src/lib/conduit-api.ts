@@ -15,9 +15,9 @@ import type {
   JobTrendsResponse,
   WorkersListResponse,
 } from "./types";
+import { env } from "./env";
 
-// API base URL - defaults to same origin
-const API_BASE = '/api/v1';
+const API_BASE = env.VITE_API_BASE_URL;
 
 // =============================================================================
 // Error Handling
@@ -29,7 +29,7 @@ export class ApiError extends Error {
 
   constructor(status: number, statusText: string, message?: string) {
     super(message || `API Error: ${status} ${statusText}`);
-    this.name = 'ApiError';
+    this.name = "ApiError";
     this.status = status;
     this.statusText = statusText;
   }
@@ -37,7 +37,7 @@ export class ApiError extends Error {
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
+    const text = await response.text().catch(() => "");
     throw new ApiError(response.status, response.statusText, text);
   }
   return response.json();
@@ -69,18 +69,18 @@ export interface GetJobsParams {
 export async function getJobs(params: GetJobsParams = {}): Promise<JobListResponse> {
   const searchParams = new URLSearchParams();
 
-  if (params.function) searchParams.set('function', params.function);
+  if (params.function) searchParams.set("function", params.function);
   if (params.status?.length) {
-    params.status.forEach(s => searchParams.append('status', s));
+    params.status.forEach((s) => searchParams.append("status", s));
   }
-  if (params.worker_id) searchParams.set('worker_id', params.worker_id);
-  if (params.after) searchParams.set('after', params.after);
-  if (params.before) searchParams.set('before', params.before);
-  if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
-  if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
+  if (params.worker_id) searchParams.set("worker_id", params.worker_id);
+  if (params.after) searchParams.set("after", params.after);
+  if (params.before) searchParams.set("before", params.before);
+  if (params.limit !== undefined) searchParams.set("limit", String(params.limit));
+  if (params.offset !== undefined) searchParams.set("offset", String(params.offset));
 
   const query = searchParams.toString();
-  const url = `${API_BASE}/jobs${query ? `?${query}` : ''}`;
+  const url = `${API_BASE}/jobs${query ? `?${query}` : ""}`;
 
   const response = await fetch(url);
   return handleResponse<JobListResponse>(response);
@@ -95,12 +95,12 @@ export interface GetJobTrendsParams {
 export async function getJobTrends(params: GetJobTrendsParams = {}): Promise<JobTrendsResponse> {
   const searchParams = new URLSearchParams();
 
-  if (params.hours !== undefined) searchParams.set('hours', String(params.hours));
-  if (params.function) searchParams.set('function', params.function);
-  if (params.type) searchParams.set('type', params.type);
+  if (params.hours !== undefined) searchParams.set("hours", String(params.hours));
+  if (params.function) searchParams.set("function", params.function);
+  if (params.type) searchParams.set("type", params.type);
 
   const query = searchParams.toString();
-  const url = `${API_BASE}/jobs/trends${query ? `?${query}` : ''}`;
+  const url = `${API_BASE}/jobs/trends${query ? `?${query}` : ""}`;
 
   const response = await fetch(url);
   return handleResponse<JobTrendsResponse>(response);
@@ -141,10 +141,10 @@ export interface GetFunctionsParams {
 export async function getFunctions(params: GetFunctionsParams = {}): Promise<FunctionsListResponse> {
   const searchParams = new URLSearchParams();
 
-  if (params.type) searchParams.set('type', params.type);
+  if (params.type) searchParams.set("type", params.type);
 
   const query = searchParams.toString();
-  const url = `${API_BASE}/functions${query ? `?${query}` : ''}`;
+  const url = `${API_BASE}/functions${query ? `?${query}` : ""}`;
 
   const response = await fetch(url);
   return handleResponse<FunctionsListResponse>(response);
@@ -171,10 +171,10 @@ export interface GetApiTrendsParams {
 export async function getApiTrends(params: GetApiTrendsParams = {}): Promise<ApiTrendsResponse> {
   const searchParams = new URLSearchParams();
 
-  if (params.hours !== undefined) searchParams.set('hours', String(params.hours));
+  if (params.hours !== undefined) searchParams.set("hours", String(params.hours));
 
   const query = searchParams.toString();
-  const url = `${API_BASE}/apis/trends${query ? `?${query}` : ''}`;
+  const url = `${API_BASE}/apis/trends${query ? `?${query}` : ""}`;
 
   const response = await fetch(url);
   return handleResponse<ApiTrendsResponse>(response);
@@ -185,20 +185,20 @@ export async function getApiTrends(params: GetApiTrendsParams = {}): Promise<Api
 // =============================================================================
 
 export const queryKeys = {
-  dashboard: ['dashboard'] as const,
-  dashboardStats: ['dashboard', 'stats'] as const,
+  dashboard: ["dashboard"] as const,
+  dashboardStats: ["dashboard", "stats"] as const,
 
-  jobs: (params?: GetJobsParams) => ['jobs', params] as const,
-  job: (jobId: string) => ['jobs', 'job', jobId] as const,
-  jobTimeline: (jobId: string) => ['jobs', 'timeline', jobId] as const,
-  jobArtifacts: (jobId: string) => ['jobs', 'artifacts', jobId] as const,
-  jobTrends: (params?: GetJobTrendsParams) => ['jobs', 'trends', params] as const,
+  jobs: (params?: GetJobsParams) => ["jobs", params] as const,
+  job: (jobId: string) => ["jobs", "job", jobId] as const,
+  jobTimeline: (jobId: string) => ["jobs", "timeline", jobId] as const,
+  jobArtifacts: (jobId: string) => ["jobs", "artifacts", jobId] as const,
+  jobTrends: (params?: GetJobTrendsParams) => ["jobs", "trends", params] as const,
 
-  workers: ['workers'] as const,
+  workers: ["workers"] as const,
 
-  functions: (params?: GetFunctionsParams) => ['functions', params] as const,
-  function: (name: string) => ['functions', name] as const,
+  functions: (params?: GetFunctionsParams) => ["functions", params] as const,
+  function: (name: string) => ["functions", name] as const,
 
-  apis: ['apis'] as const,
-  apiTrends: (params?: GetApiTrendsParams) => ['apis', 'trends', params] as const,
+  apis: ["apis"] as const,
+  apiTrends: (params?: GetApiTrendsParams) => ["apis", "trends", params] as const,
 };

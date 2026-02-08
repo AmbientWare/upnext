@@ -6,7 +6,19 @@ Both EventRouter and Registry use this shared implementation.
 
 from __future__ import annotations
 
-import fnmatch
+import re
+
+
+def _segment_regex(pattern: str) -> str:
+    """Compile one dot-delimited segment pattern into a regex fragment."""
+    out: list[str] = []
+    for char in pattern:
+        if char == "*":
+            # Single-segment wildcard: any chars except dot.
+            out.append("[^.]+")
+        else:
+            out.append(re.escape(char))
+    return "".join(out)
 
 
 def matches_event_pattern(event: str, pattern: str) -> bool:
@@ -37,20 +49,29 @@ def matches_event_pattern(event: str, pattern: str) -> bool:
         >>> matches_event_pattern("order.item.added", "order.*.added")
         True
     """
-    # Convert pattern to fnmatch-compatible format
-    # "**" means match anything including dots
-    # "*" means match anything except dots (single segment)
+    if pattern == "**":
+        return True
 
-    if "**" in pattern:
-        # Replace ** with a placeholder, then * with [^.]*, then restore **
-        fnmatch_pattern = pattern.replace("**", "\x00")
-        fnmatch_pattern = fnmatch_pattern.replace("*", "[^.]*")
-        fnmatch_pattern = fnmatch_pattern.replace("\x00", "*")
-    else:
-        # Single * should not match dots
-        fnmatch_pattern = pattern.replace("*", "[^.]*")
+    event_parts = event.split(".")
+    pattern_parts = pattern.split(".")
 
-    return fnmatch.fnmatch(event, fnmatch_pattern)
+    i = 0
+    j = 0
+    while i < len(pattern_parts) and j < len(event_parts):
+        segment = pattern_parts[i]
+        if segment == "**":
+            # Multi-segment wildcard: consume any remaining segments.
+            return True
+        if not re.fullmatch(_segment_regex(segment), event_parts[j]):
+            return False
+        i += 1
+        j += 1
+
+    if i == len(pattern_parts) and j == len(event_parts):
+        return True
+    if i == len(pattern_parts) - 1 and pattern_parts[i] == "**":
+        return True
+    return False
 
 
 def get_matching_patterns(event: str, patterns: list[str]) -> list[str]:

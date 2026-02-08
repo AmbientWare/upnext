@@ -11,7 +11,6 @@ import asyncio
 import logging
 import os
 import random
-from datetime import datetime
 
 import aiohttp
 

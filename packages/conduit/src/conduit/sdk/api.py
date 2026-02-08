@@ -388,7 +388,7 @@ class Api:
                     pass
 
             try:
-                await self._redis.close()
+                await self._redis.aclose()
             except Exception:
                 pass
             self._redis = None

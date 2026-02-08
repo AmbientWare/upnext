@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryKeys, type GetJobsParams } from "@/lib/conduit-api";
+import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { Job, JobListResponse } from "@/lib/types";
 
@@ -8,7 +9,7 @@ interface EventStreamProviderProps {
   children: ReactNode;
 }
 
-const EVENT_STREAM_URL = "/api/v1/events/stream";
+const EVENT_STREAM_URL = env.VITE_EVENTS_STREAM_URL;
 
 /** Minimum interval between dashboard stats refetches (ms). */
 const STATS_THROTTLE_MS = 5_000;

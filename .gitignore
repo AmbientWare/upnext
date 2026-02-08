@@ -99,6 +99,10 @@ db.sqlite3
 # =============================================================================
 coverage/
 coverage_html/
+test-results/
+playwright-report/
+blob-report/
+.vitest/
 
 # =============================================================================
 # tanstack start

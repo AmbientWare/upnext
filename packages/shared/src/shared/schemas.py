@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from shared.artifacts import ArtifactType
 
@@ -48,8 +48,7 @@ class JobHistoryResponse(BaseModel):
     error: str | None = None
     duration_ms: float | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class JobListResponse(BaseModel):
@@ -104,8 +103,7 @@ class ArtifactResponse(BaseModel):
     path: str | None = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ArtifactListResponse(BaseModel):

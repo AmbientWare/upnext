@@ -43,6 +43,7 @@ async def get_dashboard_stats() -> DashboardStats:
 
     # Get active job count from Redis (real-time from worker heartbeats)
     active_count = await get_active_job_count()
+    run_stats.active_count = active_count
 
     try:
         db = get_database()
