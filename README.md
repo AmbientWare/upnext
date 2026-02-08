@@ -66,9 +66,23 @@ curl -X POST http://localhost:8001/orders \
   -d '{"user_id":"user_1","items":["Widget A","Widget B"]}'
 ```
 
-## Hosted Server (Monorepo)
+## Install Modes
 
-The server commands currently assume this monorepo layout.
+Minimal SDK + CLI install:
+
+```bash
+uv add conduit-py
+```
+
+SDK + CLI + hosted server commands:
+
+```bash
+uv add "conduit-py[server]"
+```
+
+## Hosted Server
+
+Server commands work from source checkout and installed package environments.
 
 Start server (SQLite + Redis):
 

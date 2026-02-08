@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     port: int = 8080
     debug: bool = False
 
-    version: str = "0.0.1"
+    version: str = "0.0.2"
 
     @property
     def is_production(self) -> bool:

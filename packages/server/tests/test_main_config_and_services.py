@@ -20,7 +20,7 @@ class _SettingsStub:
     redis_url: str | None
     host: str = "127.0.0.1"
     port: int = 9000
-    version: str = "0.0.1"
+    version: str = "0.0.2"
 
 
 class _FakeDatabase:

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import importlib
 import logging
 import os
+import sys
+import types
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import typer
@@ -27,12 +31,19 @@ from conduit.cli._console import (
 from conduit.cli._display import filter_components, print_services_panel, worker_lines
 from conduit.cli._loader import discover_objects, import_file
 from conduit.cli.list import list_cmd
-from conduit.cli.server import _build_alembic_config, _find_server_root_dir, _set_server_env
+from conduit.cli.server import (
+    _build_alembic_config,
+    _find_server_root_dir,
+    _import_server_main,
+    _resolve_alembic_config,
+    _set_server_env,
+)
 from conduit.sdk.api import Api
 from conduit.sdk.worker import Worker
 
 call_module = importlib.import_module("conduit.cli.call")
 run_module = importlib.import_module("conduit.cli.run")
+server_module = importlib.import_module("conduit.cli.server")
 
 
 def _run_coroutine(coro: Any) -> Any:
@@ -319,10 +330,22 @@ def test_list_command_handles_empty_and_populated_results(monkeypatch) -> None:
 
 
 def test_server_helpers(monkeypatch, tmp_path: Path) -> None:
-    _set_server_env("sqlite:///tmp.db", "redis://localhost:6379")
-    assert os.environ["CONDUIT_DATABASE_URL"] == "sqlite:///tmp.db"
-    assert os.environ["DATABASE_URL"] == "sqlite:///tmp.db"
-    assert os.environ["CONDUIT_REDIS_URL"] == "redis://localhost:6379"
+    original_env = {
+        "CONDUIT_DATABASE_URL": os.environ.get("CONDUIT_DATABASE_URL"),
+        "DATABASE_URL": os.environ.get("DATABASE_URL"),
+        "CONDUIT_REDIS_URL": os.environ.get("CONDUIT_REDIS_URL"),
+    }
+    try:
+        _set_server_env("sqlite:///tmp.db", "redis://localhost:6379")
+        assert os.environ["CONDUIT_DATABASE_URL"] == "sqlite:///tmp.db"
+        assert os.environ["DATABASE_URL"] == "sqlite:///tmp.db"
+        assert os.environ["CONDUIT_REDIS_URL"] == "redis://localhost:6379"
+    finally:
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     server_root = _find_server_root_dir()
     assert server_root is not None
@@ -335,8 +358,253 @@ def test_server_helpers(monkeypatch, tmp_path: Path) -> None:
     assert script_location.endswith("alembic")
     assert prepend_sys_path.endswith("src")
 
+    packaged_ini = tmp_path / "alembic.ini"
+    packaged_script_location = tmp_path / "_alembic"
+    packaged_script_location.mkdir()
+    packaged_ini.write_text("[alembic]\n", encoding="utf-8")
+    packaged_cfg = _build_alembic_config(
+        alembic_ini=packaged_ini,
+        script_location=packaged_script_location,
+    )
+    packaged_script = packaged_cfg.get_main_option("script_location")
+    assert packaged_script is not None
+    assert packaged_script.endswith("_alembic")
+
+    monkeypatch.setattr("conduit.cli.server._find_server_root_dir", lambda: None)
+    monkeypatch.setattr(
+        "conduit.cli.server._find_packaged_alembic_paths",
+        lambda: (packaged_ini, packaged_script_location),
+    )
+    with _resolve_alembic_config() as resolved_cfg:
+        resolved_script = cast(Any, resolved_cfg).get_main_option("script_location")
+        assert resolved_script is not None
+        assert resolved_script.endswith("_alembic")
+
     missing_root = tmp_path / "missing-server"
     missing_root.mkdir()
     monkeypatch.setattr("conduit.cli.server.error_panel", lambda *_args, **_kwargs: None)
     with pytest.raises(typer.Exit):
         _build_alembic_config(missing_root)
+
+
+def test_import_server_main_fails_fast_on_missing_dependency(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "server.main":
+            raise ModuleNotFoundError("No module named 'sqlalchemy'", name="sqlalchemy")
+        return real_import(name, *args, **kwargs)
+
+    errors: list[str] = []
+    monkeypatch.setattr("builtins.__import__", fake_import)
+    monkeypatch.setattr(
+        "conduit.cli.server.error_panel",
+        lambda message, **_kwargs: errors.append(str(message)),
+    )
+
+    with pytest.raises(typer.Exit):
+        _import_server_main()
+
+    assert errors
+    assert "missing dependency" in errors[0]
+
+
+def test_db_commands_preserve_typer_exit(monkeypatch) -> None:
+    @contextmanager
+    def raise_exit() -> Any:
+        raise typer.Exit(7)
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(server_module, "_resolve_alembic_config", raise_exit)
+    error_calls: list[str] = []
+    monkeypatch.setattr(
+        "conduit.cli.server.error_panel",
+        lambda message, **_kwargs: error_calls.append(str(message)),
+    )
+
+    with pytest.raises(typer.Exit) as upgrade_exc:
+        server_module.db_upgrade(revision="head", database_url=None, verbose=False)
+    assert upgrade_exc.value.exit_code == 7
+
+    with pytest.raises(typer.Exit) as current_exc:
+        server_module.db_current(database_url=None, verbose=False)
+    assert current_exc.value.exit_code == 7
+
+    with pytest.raises(typer.Exit) as history_exc:
+        server_module.db_history(rev_range=None, database_url=None, verbose=False)
+    assert history_exc.value.exit_code == 7
+
+    assert error_calls == []
+
+
+def test_server_start_passes_reload_dir_for_monorepo_fallback(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {}
+    env_calls: list[tuple[str | None, str | None]] = []
+    server_src = tmp_path / "server-src"
+    server_src.mkdir()
+
+    monkeypatch.setattr(server_module, "setup_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        server_module,
+        "_set_server_env",
+        lambda database_url, redis_url: env_calls.append((database_url, redis_url)),
+    )
+    monkeypatch.setattr(server_module, "_import_server_main", lambda: server_src)
+
+    def fake_uvicorn_run(app: str, **kwargs: Any) -> None:
+        captured["app"] = app
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setitem(
+        sys.modules, "uvicorn", types.SimpleNamespace(run=fake_uvicorn_run)
+    )
+
+    server_module.start(
+        host="127.0.0.1",
+        port=9090,
+        reload=True,
+        database_url="sqlite:///test.db",
+        redis_url="redis://localhost:6379",
+        verbose=True,
+    )
+
+    assert env_calls == [("sqlite:///test.db", "redis://localhost:6379")]
+    assert captured["app"] == "server.main:app"
+    run_kwargs = cast(dict[str, Any], captured["kwargs"])
+    assert run_kwargs["host"] == "127.0.0.1"
+    assert run_kwargs["port"] == 9090
+    assert run_kwargs["reload"] is True
+    assert run_kwargs["reload_dirs"] == [str(server_src)]
+
+
+def test_server_start_wraps_uvicorn_runtime_errors(monkeypatch) -> None:
+    errors: list[str] = []
+
+    monkeypatch.setattr(server_module, "setup_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(server_module, "_set_server_env", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(server_module, "_import_server_main", lambda: None)
+    monkeypatch.setattr(
+        server_module,
+        "error_panel",
+        lambda message, **_kwargs: errors.append(str(message)),
+    )
+
+    def fake_uvicorn_run(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("uvicorn failure")
+
+    monkeypatch.setitem(
+        sys.modules, "uvicorn", types.SimpleNamespace(run=fake_uvicorn_run)
+    )
+
+    with pytest.raises(typer.Exit) as exc:
+        server_module.start(
+            host="0.0.0.0",
+            port=8080,
+            reload=False,
+            database_url=None,
+            redis_url=None,
+            verbose=False,
+        )
+    assert exc.value.exit_code == 1
+    assert errors == ["uvicorn failure"]
+
+
+def test_db_commands_invoke_expected_alembic_apis(monkeypatch) -> None:
+    env_calls: list[tuple[str | None, str | None]] = []
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+    cfg = object()
+
+    @contextmanager
+    def fake_resolve_cfg() -> Any:
+        yield cfg
+
+    monkeypatch.setattr(server_module, "setup_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        server_module,
+        "_set_server_env",
+        lambda database_url, redis_url: env_calls.append((database_url, redis_url)),
+    )
+    monkeypatch.setattr(server_module, "_resolve_alembic_config", fake_resolve_cfg)
+
+    class CommandStub:
+        def upgrade(self, config: Any, revision: str) -> None:
+            calls.append(("upgrade", (config, revision), {}))
+
+        def current(self, config: Any, *, verbose: bool) -> None:
+            calls.append(("current", (config,), {"verbose": verbose}))
+
+        def history(
+            self,
+            config: Any,
+            *,
+            rev_range: str | None,
+            verbose: bool,
+            indicate_current: bool,
+        ) -> None:
+            calls.append(
+                (
+                    "history",
+                    (config,),
+                    {
+                        "rev_range": rev_range,
+                        "verbose": verbose,
+                        "indicate_current": indicate_current,
+                    },
+                )
+            )
+
+    alembic_module = types.ModuleType("alembic")
+    alembic_module.command = CommandStub()  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "alembic", alembic_module)
+
+    server_module.db_upgrade(
+        revision="head",
+        database_url="sqlite:///migrations.db",
+        verbose=False,
+    )
+    server_module.db_current(
+        database_url="sqlite:///migrations.db",
+        verbose=True,
+    )
+    server_module.db_history(
+        rev_range="base:head",
+        database_url="sqlite:///migrations.db",
+        verbose=True,
+    )
+
+    assert env_calls == [
+        ("sqlite:///migrations.db", None),
+        ("sqlite:///migrations.db", None),
+        ("sqlite:///migrations.db", None),
+    ]
+    assert calls == [
+        ("upgrade", (cfg, "head"), {}),
+        ("current", (cfg,), {"verbose": True}),
+        (
+            "history",
+            (cfg,),
+            {"rev_range": "base:head", "verbose": True, "indicate_current": True},
+        ),
+    ]
+
+
+def test_resolve_alembic_config_fails_when_no_sources(monkeypatch) -> None:
+    errors: list[str] = []
+
+    monkeypatch.setattr(server_module, "_find_server_root_dir", lambda: None)
+    monkeypatch.setattr(server_module, "_find_packaged_alembic_paths", lambda: None)
+    monkeypatch.setattr(
+        server_module,
+        "error_panel",
+        lambda message, **_kwargs: errors.append(str(message)),
+    )
+
+    with pytest.raises(typer.Exit) as exc:
+        with _resolve_alembic_config():
+            pass
+
+    assert exc.value.exit_code == 1
+    assert errors
+    assert "Could not locate server migration files." in errors[0]

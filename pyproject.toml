@@ -1,6 +1,6 @@
 [project]
 name = "conduit-workspace"
-version = "0.0.1"
+version = "0.0.2"
 description = "Conduit - Modal-inspired task queue and API framework"
 readme = "README.md"
 requires-python = ">=3.12"

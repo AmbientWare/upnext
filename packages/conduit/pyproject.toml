@@ -1,6 +1,6 @@
 [project]
 name = "conduit-py"
-version = "0.0.1"
+version = "0.0.2"
 description = "Background jobs and APIs for Python. Like Modal, but self-hostable."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,10 +12,14 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "redis>=5.2.0",
     "rich>=13.9.0",
-    "conduit-server",
     "conduit-shared",
     "typer>=0.15.0",
     "uvicorn>=0.34.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "conduit-server",
 ]
 
 [project.scripts]
