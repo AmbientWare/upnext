@@ -12,7 +12,13 @@ from fastapi.staticfiles import StaticFiles
 from server.config import get_settings
 from server.db.session import get_database, init_database
 from server.routes import health_router, v1_router
-from server.services import CleanupService, StreamSubscriber, close_redis, connect_redis
+from server.services import (
+    CleanupService,
+    StreamSubscriber,
+    StreamSubscriberConfig,
+    close_redis,
+    connect_redis,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -57,7 +63,14 @@ async def lifespan(app: FastAPI):
         redis_client = await connect_redis(settings.redis_url)
         logger.info("Redis connected")
 
-        subscriber = StreamSubscriber(redis_client=redis_client)
+        subscriber = StreamSubscriber(
+            redis_client=redis_client,
+            config=StreamSubscriberConfig(
+                batch_size=settings.event_subscriber_batch_size,
+                poll_interval=settings.event_subscriber_poll_interval_ms / 1000,
+                stale_claim_ms=settings.event_subscriber_stale_claim_ms,
+            ),
+        )
         await subscriber.start()
     else:
         logger.info("Redis not configured (CONDUIT_REDIS_URL not set)")

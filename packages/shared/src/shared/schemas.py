@@ -275,6 +275,27 @@ class EndpointsListResponse(BaseModel):
     total: int
 
 
+class ApiRequestEvent(BaseModel):
+    """Single API request event for live request feed views."""
+
+    id: str
+    at: str
+    api_name: str
+    method: HttpMethod
+    path: str
+    status: int
+    latency_ms: float
+    instance_id: str | None = None
+    sampled: bool = False
+
+
+class ApiRequestEventsResponse(BaseModel):
+    """Recent API request events response."""
+
+    events: list[ApiRequestEvent]
+    total: int
+
+
 class ApiOverview(BaseModel):
     """Overview metrics for a single API."""
 
@@ -299,6 +320,30 @@ class ApiPageResponse(BaseModel):
     api: ApiOverview
     endpoints: list[ApiEndpoint]
     total_endpoints: int
+
+
+class ApisSnapshotEvent(BaseModel):
+    """Realtime snapshot event for the APIs list."""
+
+    type: Literal["apis.snapshot"] = "apis.snapshot"
+    at: str
+    apis: ApisListResponse
+
+
+class ApiSnapshotEvent(BaseModel):
+    """Realtime snapshot event for a single API detail view."""
+
+    type: Literal["api.snapshot"] = "api.snapshot"
+    at: str
+    api: ApiPageResponse
+
+
+class ApiRequestSnapshotEvent(BaseModel):
+    """Realtime event for individual API request feed updates."""
+
+    type: Literal["api.request"] = "api.request"
+    at: str
+    request: ApiRequestEvent
 
 
 class ApiDetailResponse(ApiEndpoint):

@@ -242,6 +242,28 @@ export interface ApisListResponse {
   total: number;
 }
 
+export interface EndpointsListResponse {
+  endpoints: ApiEndpoint[];
+  total: number;
+}
+
+export interface ApiRequestEvent {
+  id: string;
+  at: string;
+  api_name: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  status: number;
+  latency_ms: number;
+  instance_id: string | null;
+  sampled: boolean;
+}
+
+export interface ApiRequestEventsResponse {
+  events: ApiRequestEvent[];
+  total: number;
+}
+
 export interface ApiTrendHour {
   hour: string;
   success_2xx: number;
@@ -251,6 +273,24 @@ export interface ApiTrendHour {
 
 export interface ApiTrendsResponse {
   hourly: ApiTrendHour[];
+}
+
+export interface ApisSnapshotEvent {
+  type: "apis.snapshot";
+  at: string;
+  apis: ApisListResponse;
+}
+
+export interface ApiSnapshotEvent {
+  type: "api.snapshot";
+  at: string;
+  api: ApiPageResponse;
+}
+
+export interface ApiRequestSnapshotEvent {
+  type: "api.request";
+  at: string;
+  request: ApiRequestEvent;
 }
 
 // =============================================================================

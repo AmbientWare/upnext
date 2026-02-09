@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,10 +21,52 @@ from shared.events import (
 
 from server.db.repository import ArtifactRepository, JobRepository
 from server.db.session import get_database
+from server.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 EventProcessor = Callable[[dict[str, Any], str | None], Awaitable[bool]]
+
+
+@dataclass
+class _ProgressWriteState:
+    progress: float
+    written_at_monotonic: float
+
+
+_progress_write_state: dict[str, _ProgressWriteState] = {}
+
+
+def _record_progress_write(job_id: str, progress: float) -> None:
+    _progress_write_state[job_id] = _ProgressWriteState(
+        progress=progress,
+        written_at_monotonic=time.monotonic(),
+    )
+
+
+def _should_persist_progress(job_id: str, progress: float) -> bool:
+    settings = get_settings()
+    min_interval = max(settings.event_progress_min_interval_ms, 0) / 1000
+    min_delta = max(settings.event_progress_min_delta, 0.0)
+    force_interval = max(settings.event_progress_force_interval_ms, 0) / 1000
+
+    state = _progress_write_state.get(job_id)
+    if state is None:
+        return True
+
+    now = time.monotonic()
+    elapsed = now - state.written_at_monotonic
+    delta = abs(progress - state.progress)
+
+    if progress >= 1.0:
+        return True
+    if force_interval > 0 and elapsed >= force_interval:
+        return True
+    if delta >= min_delta:
+        return True
+    if min_delta <= 0 and elapsed >= min_interval:
+        return True
+    return False
 
 
 def _as_utc_aware(ts: datetime | None) -> datetime | None:
@@ -153,6 +197,7 @@ async def _handle_job_started(
 
             await session.flush()
             await _promote_pending_artifacts(session, event.job_id)
+        _record_progress_write(event.job_id, 0.0)
         return True
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
@@ -202,6 +247,7 @@ async def _handle_job_completed(event: JobCompletedEvent) -> None:
 
             await session.flush()
             await _promote_pending_artifacts(session, event.job_id)
+        _progress_write_state.pop(event.job_id, None)
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
 
@@ -216,6 +262,7 @@ async def _handle_job_failed(event: JobFailedEvent) -> None:
         event.will_retry,
     )
 
+    applied_terminal_state = False
     try:
         db = get_database()
         async with db.session() as session:
@@ -266,6 +313,7 @@ async def _handle_job_failed(event: JobFailedEvent) -> None:
                 existing.max_retries = max(existing.max_retries or 0, event.max_retries)
                 existing.parent_id = event.parent_id
                 existing.root_id = event.root_id
+                applied_terminal_state = True
             else:
                 await repo.record_job(
                     {
@@ -281,11 +329,15 @@ async def _handle_job_failed(event: JobFailedEvent) -> None:
                         "root_id": event.root_id,
                     }
                 )
+                applied_terminal_state = True
 
             await session.flush()
             await _promote_pending_artifacts(session, event.job_id)
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
+    finally:
+        if applied_terminal_state:
+            _progress_write_state.pop(event.job_id, None)
 
 
 async def _handle_job_retrying(event: JobRetryingEvent) -> None:
@@ -328,6 +380,14 @@ async def _handle_job_progress(event: JobProgressEvent) -> None:
         event.message,
     )
 
+    if not _should_persist_progress(event.job_id, event.progress):
+        logger.debug(
+            "Coalescing job.progress write for %s (progress=%.3f)",
+            event.job_id,
+            event.progress,
+        )
+        return
+
     try:
         db = get_database()
         async with db.session() as session:
@@ -340,10 +400,17 @@ async def _handle_job_progress(event: JobProgressEvent) -> None:
                         event.job_id,
                         existing.status,
                     )
+                    _progress_write_state.pop(event.job_id, None)
                     return
                 existing.progress = event.progress
                 existing.parent_id = event.parent_id
                 existing.root_id = event.root_id
+                _record_progress_write(event.job_id, event.progress)
+            else:
+                logger.debug(
+                    "Ignoring job.progress for unknown job %s",
+                    event.job_id,
+                )
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
 

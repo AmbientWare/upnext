@@ -1,15 +1,32 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { queryKeys, type GetJobsParams } from "@/lib/conduit-api";
+import {
+  queryKeys,
+  type GetApiRequestEventsParams,
+  type GetJobsParams,
+} from "@/lib/conduit-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
-import type { Job, JobListResponse } from "@/lib/types";
+import type {
+  ApiInfo,
+  ApiPageResponse,
+  ApiRequestEvent,
+  ApiRequestEventsResponse,
+  ApiRequestSnapshotEvent,
+  ApisListResponse,
+  ApisSnapshotEvent,
+  ApiSnapshotEvent,
+  Job,
+  JobListResponse,
+} from "@/lib/types";
 
 interface EventStreamProviderProps {
   children: ReactNode;
 }
 
 const EVENT_STREAM_URL = env.VITE_EVENTS_STREAM_URL;
+const APIS_STREAM_URL = env.VITE_APIS_STREAM_URL;
+const API_REQUEST_EVENTS_STREAM_URL = env.VITE_API_REQUEST_EVENTS_STREAM_URL;
 
 /** Minimum interval between dashboard stats refetches (ms). */
 const STATS_THROTTLE_MS = 5_000;
@@ -52,6 +69,11 @@ interface JobEvent {
   progress?: number;
   message?: string;
 }
+
+type ApiStreamEvent =
+  | ApisSnapshotEvent
+  | ApiSnapshotEvent
+  | ApiRequestSnapshotEvent;
 
 /** Build a partial Job update from the streamed event. */
 function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
@@ -253,6 +275,72 @@ function updateTimelineCaches(
   }
 }
 
+function updateApiListWithOverview(
+  old: ApisListResponse | undefined,
+  overview: ApiPageResponse["api"]
+): ApisListResponse | undefined {
+  if (!old) return old;
+
+  const nextInfo: ApiInfo = {
+    name: overview.name,
+    active: overview.active,
+    instance_count: overview.instance_count,
+    instances: overview.instances,
+    endpoint_count: overview.endpoint_count,
+    requests_24h: overview.requests_24h,
+    avg_latency_ms: overview.avg_latency_ms,
+    error_rate: overview.error_rate,
+    requests_per_min: overview.requests_per_min,
+  };
+
+  const index = old.apis.findIndex((item) => item.name === overview.name);
+  const apis = [...old.apis];
+  if (index >= 0) {
+    apis[index] = nextInfo;
+  } else {
+    apis.push(nextInfo);
+  }
+
+  apis.sort((a, b) => b.requests_24h - a.requests_24h);
+  return {
+    ...old,
+    apis,
+    total: apis.length,
+  };
+}
+
+function forEachApiRequestEventsQuery(
+  queryClient: QueryClient,
+  callback: (
+    queryKey: readonly unknown[],
+    params: GetApiRequestEventsParams | undefined
+  ) => void
+) {
+  const queries = queryClient.getQueryCache().findAll({
+    queryKey: ["apis", "events"],
+  });
+
+  for (const query of queries) {
+    const params = query.queryKey[2] as GetApiRequestEventsParams | undefined;
+    callback(query.queryKey, params);
+  }
+}
+
+function upsertApiRequestEventList(
+  old: ApiRequestEventsResponse | undefined,
+  nextEvent: ApiRequestEvent,
+  maxEvents: number
+): ApiRequestEventsResponse | undefined {
+  if (!old) return old;
+  if (old.events.some((item) => item.id === nextEvent.id)) return old;
+
+  const events = [nextEvent, ...old.events].slice(0, Math.max(maxEvents, 1));
+  return {
+    events,
+    total: events.length,
+  };
+}
+
 export function EventStreamProvider({ children }: EventStreamProviderProps) {
   const queryClient = useQueryClient();
   const lastStatsInvalidation = useRef(0);
@@ -366,6 +454,50 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
     [drainQueue]
   );
 
+  const handleApiMessage = useCallback(
+    (event: MessageEvent) => {
+      if (!event.data) return;
+
+      let payload: ApiStreamEvent;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+
+      if (payload.type === "apis.snapshot") {
+        queryClient.setQueryData<ApisListResponse>(queryKeys.apis, payload.apis);
+        return;
+      }
+
+      if (payload.type === "api.snapshot") {
+        const apiName = payload.api.api.name;
+        queryClient.setQueryData<ApiPageResponse>(
+          queryKeys.api(apiName),
+          payload.api
+        );
+        queryClient.setQueryData<ApisListResponse>(queryKeys.apis, (old) =>
+          updateApiListWithOverview(old, payload.api.api)
+        );
+        return;
+      }
+
+      if (payload.type === "api.request") {
+        forEachApiRequestEventsQuery(queryClient, (queryKey, params) => {
+          if (params?.api_name && params.api_name !== payload.request.api_name) {
+            return;
+          }
+          const maxEvents = params?.limit ?? 200;
+          queryClient.setQueryData<ApiRequestEventsResponse>(
+            queryKey,
+            (old) => upsertApiRequestEventList(old, payload.request, maxEvents)
+          );
+        });
+      }
+    },
+    [queryClient]
+  );
+
   useEffect(() => {
     return () => {
       if (eventTimer.current) {
@@ -378,6 +510,12 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
 
   useEventSource(EVENT_STREAM_URL, {
     onMessage: handleMessage,
+  });
+  useEventSource(APIS_STREAM_URL, {
+    onMessage: handleApiMessage,
+  });
+  useEventSource(API_REQUEST_EVENTS_STREAM_URL, {
+    onMessage: handleApiMessage,
   });
 
   return <>{children}</>;

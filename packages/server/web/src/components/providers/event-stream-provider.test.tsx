@@ -4,14 +4,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import { queryKeys } from "@/lib/conduit-api";
-import type { Job, JobListResponse } from "@/lib/types";
+import type {
+  ApiPageResponse,
+  ApiRequestEventsResponse,
+  ApisListResponse,
+  Job,
+  JobListResponse,
+} from "@/lib/types";
 import { EventStreamProvider } from "./event-stream-provider";
 
-let capturedOnMessage: ((event: MessageEvent) => void) | undefined;
+const messageHandlers = new Map<string, (event: MessageEvent) => void>();
 
 vi.mock("@/hooks/use-event-source", () => ({
   useEventSource: (_url: string, options: { onMessage?: (event: MessageEvent) => void }) => {
-    capturedOnMessage = options.onMessage;
+    if (options.onMessage) {
+      messageHandlers.set(_url, options.onMessage);
+    }
     return { current: null };
   },
 }));
@@ -49,6 +57,18 @@ function renderWithQueryClient(client: QueryClient, children: ReactNode) {
   return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
 }
 
+function getJobMessageHandler() {
+  return messageHandlers.get("/api/v1/events/stream");
+}
+
+function getApiMessageHandler() {
+  return messageHandlers.get("/api/v1/apis/stream");
+}
+
+function getApiRequestEventsMessageHandler() {
+  return messageHandlers.get("/api/v1/apis/events/stream");
+}
+
 async function flushQueue() {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(120);
@@ -59,7 +79,7 @@ async function flushQueue() {
 describe("EventStreamProvider", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    capturedOnMessage = undefined;
+    messageHandlers.clear();
   });
 
   afterEach(() => {
@@ -81,10 +101,11 @@ describe("EventStreamProvider", () => {
       </EventStreamProvider>
     ));
 
-    expect(capturedOnMessage).toBeDefined();
+    const jobHandler = getJobMessageHandler();
+    expect(jobHandler).toBeDefined();
 
     act(() => {
-      capturedOnMessage?.(
+      jobHandler?.(
         new MessageEvent("message", {
           data: JSON.stringify({
             type: "job.started",
@@ -125,8 +146,10 @@ describe("EventStreamProvider", () => {
       </EventStreamProvider>
     ));
 
+    const jobHandler = getJobMessageHandler();
+
     act(() => {
-      capturedOnMessage?.(
+      jobHandler?.(
         new MessageEvent("message", {
           data: JSON.stringify({
             type: "job.started",
@@ -148,7 +171,7 @@ describe("EventStreamProvider", () => {
     expect(timeline?.jobs.map((j) => j.id)).toEqual(["root-1"]);
 
     act(() => {
-      capturedOnMessage?.(
+      jobHandler?.(
         new MessageEvent("message", {
           data: JSON.stringify({
             type: "job.started",
@@ -187,8 +210,10 @@ describe("EventStreamProvider", () => {
       </EventStreamProvider>
     ));
 
+    const jobHandler = getJobMessageHandler();
+
     act(() => {
-      capturedOnMessage?.(
+      jobHandler?.(
         new MessageEvent("message", {
           data: JSON.stringify({
             type: "job.progress",
@@ -198,7 +223,7 @@ describe("EventStreamProvider", () => {
           }),
         })
       );
-      capturedOnMessage?.(
+      jobHandler?.(
         new MessageEvent("message", {
           data: JSON.stringify({
             type: "job.progress",
@@ -228,8 +253,10 @@ describe("EventStreamProvider", () => {
       </EventStreamProvider>
     ));
 
+    const jobHandler = getJobMessageHandler();
+
     act(() => {
-      capturedOnMessage?.(
+      jobHandler?.(
         new MessageEvent("message", {
           data: JSON.stringify({
             type: "job.started",
@@ -245,7 +272,7 @@ describe("EventStreamProvider", () => {
       );
 
       for (let i = 0; i < 2200; i += 1) {
-        capturedOnMessage?.(
+        jobHandler?.(
           new MessageEvent("message", {
             data: JSON.stringify({
               type: "job.progress",
@@ -262,5 +289,149 @@ describe("EventStreamProvider", () => {
 
     const list = client.getQueryData<JobListResponse>(key);
     expect(list?.jobs.map((j) => j.id)).toEqual(["job-keep"]);
+  });
+
+  it("applies api.snapshot/apis.snapshot and api.request updates to API caches", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { gcTime: Infinity } },
+    });
+
+    client.setQueryData<ApisListResponse>(queryKeys.apis, {
+      apis: [],
+      total: 0,
+    });
+    client.setQueryData<ApiPageResponse>(queryKeys.api("orders"), {
+      api: {
+        name: "orders",
+        docs_url: null,
+        active: false,
+        instance_count: 0,
+        instances: [],
+        endpoint_count: 0,
+        requests_24h: 0,
+        requests_per_min: 0,
+        avg_latency_ms: 0,
+        error_rate: 0,
+        success_rate: 100,
+        client_error_rate: 0,
+        server_error_rate: 0,
+      },
+      endpoints: [],
+      total_endpoints: 0,
+    });
+    client.setQueryData<ApiRequestEventsResponse>(
+      queryKeys.apiRequestEvents({ limit: 3 }),
+      {
+        events: [],
+        total: 0,
+      }
+    );
+
+    renderWithQueryClient(client, (
+      <EventStreamProvider>
+        <div />
+      </EventStreamProvider>
+    ));
+
+    const apiHandler = getApiMessageHandler();
+    const apiRequestEventsHandler = getApiRequestEventsMessageHandler();
+    expect(apiHandler).toBeDefined();
+    expect(apiRequestEventsHandler).toBeDefined();
+
+    act(() => {
+      apiHandler?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "api.snapshot",
+            at: "2026-02-09T12:00:00Z",
+            api: {
+              api: {
+                name: "orders",
+                docs_url: "http://localhost:8001/docs",
+                active: true,
+                instance_count: 1,
+                instances: [],
+                endpoint_count: 2,
+                requests_24h: 42,
+                requests_per_min: 2.1,
+                avg_latency_ms: 12,
+                error_rate: 1.2,
+                success_rate: 98.8,
+                client_error_rate: 1.0,
+                server_error_rate: 0.2,
+              },
+              endpoints: [],
+              total_endpoints: 2,
+            },
+          }),
+        })
+      );
+    });
+
+    const detail = client.getQueryData<ApiPageResponse>(queryKeys.api("orders"));
+    expect(detail?.api.requests_24h).toBe(42);
+
+    const listFromApiSnapshot = client.getQueryData<ApisListResponse>(queryKeys.apis);
+    expect(listFromApiSnapshot?.apis[0].name).toBe("orders");
+    expect(listFromApiSnapshot?.apis[0].requests_24h).toBe(42);
+
+    act(() => {
+      apiHandler?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "apis.snapshot",
+            at: "2026-02-09T12:00:01Z",
+            apis: {
+              apis: [
+                {
+                  name: "billing",
+                  active: true,
+                  instance_count: 1,
+                  instances: [],
+                  endpoint_count: 1,
+                  requests_24h: 10,
+                  avg_latency_ms: 9,
+                  error_rate: 0,
+                  requests_per_min: 0.5,
+                },
+              ],
+              total: 1,
+            },
+          }),
+        })
+      );
+    });
+
+    const list = client.getQueryData<ApisListResponse>(queryKeys.apis);
+    expect(list?.apis.map((item) => item.name)).toEqual(["billing"]);
+    expect(list?.total).toBe(1);
+
+    act(() => {
+      apiRequestEventsHandler?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "api.request",
+            at: "2026-02-09T12:00:03Z",
+            request: {
+              id: "evt_1",
+              at: "2026-02-09T12:00:03Z",
+              api_name: "orders",
+              method: "POST",
+              path: "/orders",
+              status: 201,
+              latency_ms: 14.2,
+              instance_id: "api_a",
+              sampled: false,
+            },
+          }),
+        })
+      );
+    });
+
+    const requestEvents = client.getQueryData<ApiRequestEventsResponse>(
+      queryKeys.apiRequestEvents({ limit: 3 })
+    );
+    expect(requestEvents?.events[0]?.id).toBe("evt_1");
+    expect(requestEvents?.events[0]?.api_name).toBe("orders");
   });
 });

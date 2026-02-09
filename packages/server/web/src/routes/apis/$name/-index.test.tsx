@@ -13,14 +13,20 @@ vi.mock("@tanstack/react-router", async () => {
 });
 
 const getApiMock = vi.fn();
+const getApiRequestEventsMock = vi.fn();
 
 vi.mock("@/lib/conduit-api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/conduit-api")>("@/lib/conduit-api");
   return {
     ...actual,
     getApi: (...args: unknown[]) => getApiMock(...args),
+    getApiRequestEvents: (...args: unknown[]) => getApiRequestEventsMock(...args),
   };
 });
+
+vi.mock("@/hooks/use-event-source", () => ({
+  useEventSource: () => ({ current: null }),
+}));
 
 import { Route } from "./index";
 
@@ -43,6 +49,10 @@ function renderPage() {
 
 describe("ApiDetailPage", () => {
   it("renders overview, docs link, and route metrics tree", async () => {
+    getApiRequestEventsMock.mockResolvedValue({
+      events: [],
+      total: 0,
+    });
     getApiMock.mockResolvedValue({
       api: {
         name: "orders",
@@ -109,6 +119,6 @@ describe("ApiDetailPage", () => {
     expect(screen.getByText("Open FastAPI Docs")).toHaveAttribute("href", "http://localhost:8001/docs");
     expect(screen.getAllByText("/orders").length).toBeGreaterThan(0);
     expect(screen.getAllByText("/orders/create").length).toBeGreaterThan(0);
-    expect(screen.getByText("2 routes")).toBeInTheDocument();
+    expect(screen.getAllByText("2 routes").length).toBeGreaterThan(0);
   });
 });

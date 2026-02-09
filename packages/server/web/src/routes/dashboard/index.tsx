@@ -4,14 +4,15 @@ import {
   getDashboardStats,
   getWorkers,
   getApis,
+  getApiRequestEvents,
   getJobs,
   queryKeys,
 } from "@/lib/conduit-api";
-import { JobsTablePanel } from "@/components/shared";
 import { SystemOverviewPanel } from "./-components/system-overview-panel";
 import { SystemOverviewSkeleton } from "./-components/skeletons";
 import { TrendsPanel } from "./-components/trends-panel";
 import { ApiTrendsPanel } from "./-components/api-trends-panel";
+import { LiveActivityPanel } from "./-components/live-activity-panel";
 
 export const Route = createFileRoute("/dashboard/")({
   component: DataMatrixDashboard,
@@ -44,9 +45,16 @@ function DataMatrixDashboard() {
     refetchInterval: 30000,
   });
 
+  const { data: apiRequestEventsData, isPending: isApiEventsPending } = useQuery({
+    queryKey: queryKeys.apiRequestEvents({ limit: 200 }),
+    queryFn: () => getApiRequestEvents({ limit: 200 }),
+    refetchInterval: 15000,
+  });
+
   const workers = workersData?.workers ?? [];
   const apis = apisData?.apis ?? [];
   const jobs = jobsData?.jobs ?? [];
+  const apiRequestEvents = apiRequestEventsData?.events ?? [];
 
   const isOverviewPending = isDashboardPending || isWorkersPending || isApisPending;
 
@@ -70,12 +78,13 @@ function DataMatrixDashboard() {
         <ApiTrendsPanel className="flex-1" />
       </div>
 
-      {/* Recent Jobs */}
-      <JobsTablePanel
+      <LiveActivityPanel
         jobs={jobs}
-        showFilters
-        isLoading={isJobsPending}
+        apiRequestEvents={apiRequestEvents}
+        isJobsLoading={isJobsPending}
+        isApiLoading={isApiEventsPending}
         onJobClick={(job) => navigate({ to: "/jobs/$jobId", params: { jobId: job.id } })}
+        onApiClick={(apiName) => navigate({ to: "/apis/$name", params: { name: apiName } })}
       />
     </div>
   );

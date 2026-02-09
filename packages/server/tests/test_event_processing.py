@@ -6,6 +6,7 @@ import pytest
 
 from server.db.models import Artifact, JobHistory, PendingArtifact
 from server.db.repository import ArtifactRepository
+import server.services.event_processing as event_processing_module
 from server.services.event_processing import process_event
 
 
@@ -188,3 +189,113 @@ async def test_pending_artifacts_promote_when_job_is_recorded(sqlite_db) -> None
 
     assert len(artifact_rows) == 1
     assert len(pending_rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_progress_events_are_coalesced_before_db_write(sqlite_db, monkeypatch) -> None:
+    class _Settings:
+        event_progress_min_interval_ms = 1000
+        event_progress_min_delta = 0.5
+        event_progress_force_interval_ms = 5000
+
+    monotonic_values = iter([0.0, 0.1, 0.2, 0.3])
+    def _fake_monotonic() -> float:
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 999.0
+
+    monkeypatch.setattr(event_processing_module, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        event_processing_module.time,
+        "monotonic",
+        _fake_monotonic,
+    )
+    event_processing_module._progress_write_state.clear()  # noqa: SLF001
+
+    started_at = datetime.now(UTC)
+    await process_event(
+        "job.started",
+        {
+            "job_id": "job-progress-coalesce-1",
+            "function": "task_key",
+            "function_name": "task_name",
+            "root_id": "job-progress-coalesce-1",
+            "attempt": 1,
+            "max_retries": 0,
+            "started_at": started_at,
+            "kwargs": {},
+            "metadata": {},
+        },
+        "worker-a",
+    )
+
+    await process_event(
+        "job.progress",
+        {
+            "job_id": "job-progress-coalesce-1",
+            "root_id": "job-progress-coalesce-1",
+            "progress": 0.1,
+            "updated_at": started_at + timedelta(seconds=1),
+        },
+    )
+    await process_event(
+        "job.progress",
+        {
+            "job_id": "job-progress-coalesce-1",
+            "root_id": "job-progress-coalesce-1",
+            "progress": 0.2,
+            "updated_at": started_at + timedelta(seconds=2),
+        },
+    )
+    await process_event(
+        "job.progress",
+        {
+            "job_id": "job-progress-coalesce-1",
+            "root_id": "job-progress-coalesce-1",
+            "progress": 0.8,
+            "updated_at": started_at + timedelta(seconds=3),
+        },
+    )
+
+    async with sqlite_db.session() as session:
+        row = await session.get(JobHistory, "job-progress-coalesce-1")
+        assert row is not None
+        assert row.progress == pytest.approx(0.8)
+
+
+def test_progress_force_interval_persists_even_for_small_delta(monkeypatch) -> None:
+    class _Settings:
+        event_progress_min_interval_ms = 1000
+        event_progress_min_delta = 1.0
+        event_progress_force_interval_ms = 500
+
+    monotonic_values = iter([0.0, 0.1, 0.7, 0.8])
+    def _fake_monotonic() -> float:
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 999.0
+
+    monkeypatch.setattr(event_processing_module, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        event_processing_module.time,
+        "monotonic",
+        _fake_monotonic,
+    )
+    event_processing_module._progress_write_state.clear()  # noqa: SLF001
+
+    event_processing_module._record_progress_write("job-progress-force-1", 0.0)  # noqa: SLF001
+
+    assert (
+        event_processing_module._should_persist_progress(  # noqa: SLF001
+            "job-progress-force-1", 0.1
+        )
+        is False
+    )
+    assert (
+        event_processing_module._should_persist_progress(  # noqa: SLF001
+            "job-progress-force-1", 0.15
+        )
+        is True
+    )

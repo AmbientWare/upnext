@@ -381,3 +381,50 @@ async def test_process_batch_returns_processed_when_ack_fails(fake_redis, monkey
 
     pending_summary = await fake_redis.xpending(config.stream, config.group)
     assert pending_summary["pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_process_batch_coalesces_duplicate_progress_events(fake_redis, monkeypatch) -> None:
+    config = StreamSubscriberConfig(
+        stream="conduit:status:events",
+        group="test-progress-coalesce",
+        consumer_id="consumer-progress",
+        batch_size=10,
+        poll_interval=0.01,
+    )
+    subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
+    assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
+
+    seen_progress: list[float] = []
+
+    async def fake_process_event(event_type: str, data: dict, worker_id: str | None) -> bool:  # noqa: ARG001
+        if event_type == "job.progress":
+            seen_progress.append(float(data.get("progress", 0)))
+        return True
+
+    monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)
+
+    ts = datetime.now(UTC).isoformat()
+    for progress in (0.1, 0.2, 0.3):
+        await fake_redis.xadd(
+            config.stream,
+            {
+                "type": "job.progress",
+                "job_id": "job-coalesce-1",
+                "worker_id": "worker-1",
+                "data": json.dumps(
+                    {
+                        "root_id": "job-coalesce-1",
+                        "progress": progress,
+                        "updated_at": ts,
+                    }
+                ),
+            },
+        )
+
+    processed = await subscriber._process_batch(drain=True)  # noqa: SLF001
+    assert processed == 1
+    assert seen_progress == [0.3]
+
+    pending_summary = await fake_redis.xpending(config.stream, config.group)
+    assert pending_summary["pending"] == 0

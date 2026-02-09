@@ -7,6 +7,7 @@ import type {
   ArtifactListResponse,
   ApisListResponse,
   ApiPageResponse,
+  ApiRequestEventsResponse,
   ApiTrendsResponse,
   DashboardStats,
   FunctionDetailResponse,
@@ -186,6 +187,23 @@ export async function getApi(name: string): Promise<ApiPageResponse> {
   return handleResponse<ApiPageResponse>(response);
 }
 
+export interface GetApiRequestEventsParams {
+  api_name?: string;
+  limit?: number;
+}
+
+export async function getApiRequestEvents(
+  params: GetApiRequestEventsParams = {}
+): Promise<ApiRequestEventsResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.api_name) searchParams.set("api_name", params.api_name);
+  if (params.limit !== undefined) searchParams.set("limit", String(params.limit));
+
+  const query = searchParams.toString();
+  const response = await fetch(`${API_BASE}/apis/events${query ? `?${query}` : ""}`);
+  return handleResponse<ApiRequestEventsResponse>(response);
+}
+
 // =============================================================================
 // Query Keys (for TanStack Query)
 // =============================================================================
@@ -206,6 +224,7 @@ export const queryKeys = {
   function: (name: string) => ["functions", name] as const,
 
   apis: ["apis"] as const,
+  apiRequestEvents: (params?: GetApiRequestEventsParams) => ["apis", "events", params] as const,
   api: (name: string) => ["apis", "api", name] as const,
   apiTrends: (params?: GetApiTrendsParams) => ["apis", "trends", params] as const,
 };

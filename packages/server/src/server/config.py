@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     port: int = 8080
     debug: bool = False
     api_docs_url_template: str = "http://{host}:{port}/docs"
+    api_realtime_enabled: bool = True
+    api_realtime_interval_ms: int = 1000
+    api_snapshot_cache_ttl_ms: int = 1000
+    api_request_events_default_limit: int = 200
+
+    event_subscriber_batch_size: int = 100
+    event_subscriber_poll_interval_ms: int = 2000
+    event_subscriber_stale_claim_ms: int = 30000
+    event_progress_min_interval_ms: int = 250
+    event_progress_min_delta: float = 0.02
+    event_progress_force_interval_ms: int = 2000
 
     version: str = __version__
 

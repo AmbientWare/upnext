@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from typing import AsyncIterator, cast
 
 import pytest
 from fastapi import HTTPException, Response
@@ -9,6 +10,8 @@ from sqlalchemy import select
 
 from shared.schemas import (
     ApiInstance,
+    ApiPageResponse,
+    ApisListResponse,
     ArtifactQueuedResponse,
     ArtifactResponse,
     ArtifactType,
@@ -470,6 +473,15 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
             ),
         ]
 
+    class _Settings:
+        api_docs_url_template = "http://{host}:{port}/docs"
+
+    monkeypatch.setattr(apis_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        apis_route,
+        "_build_docs_url",
+        lambda _api_name, _instances: "http://localhost:8080/docs",
+    )
     monkeypatch.setattr(apis_route, "get_metrics_reader", _reader)
     monkeypatch.setattr(apis_route, "list_api_instances", _instances)
 
@@ -537,3 +549,191 @@ async def test_apis_routes_fallback_to_empty_when_sources_fail(monkeypatch) -> N
     assert api_page.api.name == "missing"
     assert api_page.api.docs_url is None
     assert api_page.total_endpoints == 0
+
+
+@pytest.mark.asyncio
+async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
+    class _Settings:
+        api_realtime_enabled = True
+        api_realtime_interval_ms = 1
+        api_snapshot_cache_ttl_ms = 500
+        api_request_events_default_limit = 200
+
+    async def _list_apis() -> ApisListResponse:
+        return ApisListResponse(
+            apis=[
+                apis_route.ApiInfo(
+                    name="orders",
+                    active=True,
+                    instance_count=1,
+                    endpoint_count=2,
+                    requests_24h=123,
+                    avg_latency_ms=12.5,
+                    error_rate=0.8,
+                    requests_per_min=2.2,
+                )
+            ],
+            total=1,
+        )
+
+    async def _get_api(name: str) -> ApiPageResponse:
+        return ApiPageResponse(
+            api=apis_route.ApiOverview(name=name, requests_24h=123, endpoint_count=2),
+            endpoints=[],
+            total_endpoints=0,
+        )
+
+    class _RequestStub:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    monkeypatch.setattr(apis_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_route, "list_apis", _list_apis)
+    monkeypatch.setattr(apis_route, "get_api", _get_api)
+
+    list_response = await apis_route.stream_apis(_RequestStub())
+    list_stream = cast(AsyncIterator[str], list_response.body_iterator.__aiter__())
+    open_frame = await anext(list_stream)
+    snapshot_frame = await anext(list_stream)
+
+    detail_response = await apis_route.stream_api("orders", _RequestStub())
+    detail_stream = cast(AsyncIterator[str], detail_response.body_iterator.__aiter__())
+    detail_open_frame = await anext(detail_stream)
+    detail_snapshot_frame = await anext(detail_stream)
+
+    assert open_frame == "event: open\ndata: connected\n\n"
+    assert detail_open_frame == "event: open\ndata: connected\n\n"
+
+    list_payload = json.loads(snapshot_frame.removeprefix("data: ").strip())
+    detail_payload = json.loads(detail_snapshot_frame.removeprefix("data: ").strip())
+
+    assert list_payload["type"] == "apis.snapshot"
+    assert list_payload["apis"]["total"] == 1
+    assert detail_payload["type"] == "api.snapshot"
+    assert detail_payload["api"]["api"]["name"] == "orders"
+
+    list_closer = getattr(list_response.body_iterator, "aclose", None)
+    if callable(list_closer):
+        await list_closer()
+    detail_closer = getattr(detail_response.body_iterator, "aclose", None)
+    if callable(detail_closer):
+        await detail_closer()
+
+
+@pytest.mark.asyncio
+async def test_apis_stream_routes_can_be_disabled(monkeypatch) -> None:
+    class _Settings:
+        api_realtime_enabled = False
+        api_realtime_interval_ms = 1000
+        api_snapshot_cache_ttl_ms = 500
+        api_request_events_default_limit = 200
+
+    class _RequestStub:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    monkeypatch.setattr(apis_route, "get_settings", lambda: _Settings())
+
+    with pytest.raises(HTTPException, match="disabled") as list_exc:
+        await apis_route.stream_apis(_RequestStub())
+    assert list_exc.value.status_code == 404
+
+    with pytest.raises(HTTPException, match="disabled") as detail_exc:
+        await apis_route.stream_api("orders", _RequestStub())
+    assert detail_exc.value.status_code == 404
+
+    with pytest.raises(HTTPException, match="disabled") as events_exc:
+        await apis_route.stream_api_request_events(_RequestStub())
+    assert events_exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
+    class _Settings:
+        api_realtime_enabled = True
+        api_realtime_interval_ms = 1000
+        api_snapshot_cache_ttl_ms = 500
+        api_request_events_default_limit = 200
+
+    class _RedisStub:
+        async def xrevrange(self, _stream: str, count: int):  # type: ignore[no-untyped-def]
+            _ = count
+            return [
+                (
+                    "1000-0",
+                    {
+                        "data": json.dumps(
+                            {
+                                "id": "evt-1",
+                                "at": "2026-02-09T12:00:00Z",
+                                "api_name": "orders",
+                                "method": "GET",
+                                "path": "/orders/{order_id}",
+                                "status": 200,
+                                "latency_ms": 12.4,
+                                "instance_id": "api_a",
+                                "sampled": False,
+                            }
+                        )
+                    },
+                )
+            ]
+
+        async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return [
+                (
+                    "conduit:api:requests",
+                    [
+                        (
+                            "1001-0",
+                            {
+                                "data": json.dumps(
+                                    {
+                                        "id": "evt-2",
+                                        "at": "2026-02-09T12:00:01Z",
+                                        "api_name": "orders",
+                                        "method": "POST",
+                                        "path": "/orders",
+                                        "status": 201,
+                                        "latency_ms": 18.0,
+                                        "instance_id": "api_a",
+                                        "sampled": True,
+                                    }
+                                )
+                            },
+                        )
+                    ],
+                )
+            ]
+
+    class _RequestStub:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def is_disconnected(self) -> bool:
+            self._calls += 1
+            return self._calls > 2
+
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    monkeypatch.setattr(apis_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_route, "get_redis", _get_redis)
+
+    listed = await apis_route.list_api_request_events(api_name="orders", limit=10)
+    assert listed.total == 1
+    assert listed.events[0].id == "evt-1"
+    assert listed.events[0].path == "/orders/{order_id}"
+
+    response = await apis_route.stream_api_request_events(
+        _RequestStub(), api_name="orders"
+    )
+    body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
+    open_frame = await anext(body)
+    event_frame = await anext(body)
+
+    assert open_frame == "event: open\ndata: connected\n\n"
+    payload = json.loads(event_frame.removeprefix("data: ").strip())
+    assert payload["type"] == "api.request"
+    assert payload["request"]["id"] == "evt-2"
+    assert payload["request"]["api_name"] == "orders"

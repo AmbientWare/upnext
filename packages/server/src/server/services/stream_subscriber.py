@@ -76,6 +76,7 @@ class StreamSubscriber:
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._group_created = False
+        self._last_batch_event_count = 0
 
         # Generate unique consumer ID
         if not self._config.consumer_id:
@@ -140,7 +141,7 @@ class StreamSubscriber:
                 consecutive_failures = 0
 
                 # If we processed a full batch, immediately check for more
-                if processed >= self._config.batch_size:
+                if self._last_batch_event_count >= self._config.batch_size:
                     continue
 
             except asyncio.CancelledError:
@@ -251,35 +252,25 @@ class StreamSubscriber:
                 logger.debug(f"Error claiming stale events: {e}")
 
         if not events:
+            self._last_batch_event_count = 0
             return 0
 
         # Keep processing order stable even when mixing fresh and reclaimed events.
         # Reclaimed events can be older than newly-read events.
         events.sort(key=lambda item: self._event_id_sort_key(item[0]))
+        self._last_batch_event_count = len(event_ids)
+
+        parsed_events = self._parse_events(events)
+        coalesced_events, coalesced_ack_ids = self._coalesce_progress_events(
+            parsed_events
+        )
 
         # Process events
         processed = 0
         errors = 0
 
-        for event_id, data in events:
+        for event_id, event_type, event_data, worker_id in coalesced_events:
             try:
-                event_type = data.get("type", "unknown")
-                job_id = data.get("job_id", "")
-                worker_id = data.get("worker_id", "")
-
-                # Parse nested payload and then enforce canonical stream metadata.
-                event_data: dict[str, Any] = {}
-                if "data" in data:
-                    try:
-                        parsed = json.loads(data["data"])
-                        if isinstance(parsed, dict):
-                            event_data.update(parsed)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                event_data["job_id"] = job_id
-                event_data.pop("worker_id", None)
-                event_data.pop("type", None)
-
                 await self._handle_event(event_type, event_data, worker_id)
                 processed += 1
                 ack_ids.append(event_id)
@@ -288,12 +279,15 @@ class StreamSubscriber:
                 errors += 1
                 logger.warning(f"Error processing event {event_id}: {e}")
 
+        ack_ids.extend(coalesced_ack_ids)
+
         # ACK only successfully processed events.
         # Failed events stay pending and can be retried/reclaimed later.
         if ack_ids:
             try:
+                unique_ack_ids = list(dict.fromkeys(ack_ids))
                 await self._redis.xack(
-                    self._config.stream, self._config.group, *ack_ids
+                    self._config.stream, self._config.group, *unique_ack_ids
                 )
             except Exception as e:
                 logger.warning(f"Error ACKing events: {e}")
@@ -308,6 +302,69 @@ class StreamSubscriber:
             )
 
         return processed
+
+    def _parse_events(
+        self, events: list[tuple[str, dict[str, Any]]]
+    ) -> list[tuple[str, str, dict[str, Any], str]]:
+        parsed_events: list[tuple[str, str, dict[str, Any], str]] = []
+
+        for event_id, data in events:
+            event_type = data.get("type", "unknown")
+            job_id = data.get("job_id", "")
+            worker_id = data.get("worker_id", "")
+
+            event_data: dict[str, Any] = {}
+            if "data" in data:
+                try:
+                    parsed = json.loads(data["data"])
+                    if isinstance(parsed, dict):
+                        event_data.update(parsed)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            event_data["job_id"] = job_id
+            event_data.pop("worker_id", None)
+            event_data.pop("type", None)
+
+            parsed_events.append((event_id, event_type, event_data, worker_id))
+
+        return parsed_events
+
+    def _coalesce_progress_events(
+        self,
+        events: list[tuple[str, str, dict[str, Any], str]],
+    ) -> tuple[list[tuple[str, str, dict[str, Any], str]], list[str]]:
+        """Coalesce duplicate progress updates within one batch.
+
+        Keeps only the latest contiguous ``job.progress`` event for each job.
+        Any non-progress event for a job acts as a barrier and resets coalescing
+        for that job to preserve lifecycle ordering around state transitions.
+        """
+
+        coalesced: list[tuple[str, str, dict[str, Any], str]] = []
+        coalesced_ack_ids: list[str] = []
+        latest_progress_index_by_job: dict[str, int] = {}
+
+        for event in events:
+            event_id, event_type, event_data, _worker_id = event
+            job_id = str(event_data.get("job_id", ""))
+
+            if event_type != "job.progress" or not job_id:
+                if job_id:
+                    latest_progress_index_by_job.pop(job_id, None)
+                coalesced.append(event)
+                continue
+
+            existing_index = latest_progress_index_by_job.get(job_id)
+            if existing_index is None:
+                latest_progress_index_by_job[job_id] = len(coalesced)
+                coalesced.append(event)
+                continue
+
+            previous_event_id = coalesced[existing_index][0]
+            coalesced_ack_ids.append(previous_event_id)
+            coalesced[existing_index] = event
+
+        return coalesced, coalesced_ack_ids
 
     @staticmethod
     def _event_id_sort_key(event_id: str) -> tuple[int, int]:

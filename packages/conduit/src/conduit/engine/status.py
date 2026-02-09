@@ -103,17 +103,28 @@ class StatusPublisher:
             **data: Additional event data
         """
         try:
-            await self._redis.xadd(
-                self._config.stream,
-                {
-                    "type": event_type,
-                    "job_id": job_id,
-                    "worker_id": self._worker_id,
-                    "ts": str(time.time()),
-                    "data": json.dumps(data, default=str),
-                },
-                maxlen=self._config.max_stream_len,
-            )
+            payload = {
+                "type": event_type,
+                "job_id": job_id,
+                "worker_id": self._worker_id,
+                "ts": str(time.time()),
+                "data": json.dumps(data, default=str),
+            }
+            try:
+                await self._redis.xadd(
+                    self._config.stream,
+                    payload,
+                    maxlen=self._config.max_stream_len,
+                    approximate=True,
+                )
+            except TypeError:
+                # Compatibility fallback for redis/fakeredis variants
+                # that don't support the approximate trim argument.
+                await self._redis.xadd(
+                    self._config.stream,
+                    payload,
+                    maxlen=self._config.max_stream_len,
+                )
         except Exception as e:
             # Don't fail job execution if status recording fails
             logger.debug(f"Failed to record status event: {e}")

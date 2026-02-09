@@ -192,3 +192,24 @@ async def test_status_publisher_writes_lineage_for_all_lifecycle_events(fake_red
         data = decoded_by_type[event_type][b"data"].decode()
         assert '"root_id": "job-root"' in data
         assert '"parent_id": "job-parent"' in data
+
+
+@pytest.mark.asyncio
+async def test_status_publisher_uses_approximate_trim_when_supported() -> None:
+    class _RedisStub:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def xadd(self, stream: str, payload: dict[str, str], **kwargs: Any) -> str:
+            self.calls.append({"stream": stream, "payload": payload, "kwargs": kwargs})
+            return "1-0"
+
+    redis_stub = _RedisStub()
+    publisher = StatusPublisher(redis_stub, worker_id="worker-trim")
+
+    await publisher.record("job.progress", "job-trim-1", progress=0.5)
+
+    assert len(redis_stub.calls) == 1
+    call = redis_stub.calls[0]
+    assert call["kwargs"].get("approximate") is True
+    assert call["kwargs"].get("maxlen") == publisher._config.max_stream_len  # noqa: SLF001

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Job } from "@/lib/types";
-import { JobsTablePanel } from "./jobs-table";
+import { JobsTable } from "./jobs-table";
 
 function mkJob(id: string): Job {
   return {
@@ -30,12 +30,12 @@ function mkJob(id: string): Job {
   };
 }
 
-describe("JobsTablePanel", () => {
+describe("JobsTable", () => {
   it("calls onJobClick with selected job when row is clicked", async () => {
     const onJobClick = vi.fn();
     const user = userEvent.setup();
 
-    render(<JobsTablePanel jobs={[mkJob("job-123")]} onJobClick={onJobClick} />);
+    render(<JobsTable jobs={[mkJob("job-123")]} onJobClick={onJobClick} />);
 
     await user.click(screen.getByText("job-123"));
 

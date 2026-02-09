@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
 
+    # API tracking controls
+    api_tracking_normalize_paths: bool = True
+    api_tracking_registry_refresh_seconds: int = 60
+    api_request_events_enabled: bool = True
+    api_request_events_sample_rate: float = 1.0
+    api_request_events_slow_ms: float = 500.0
+    api_request_events_stream_max_len: int = 50_000
+
     # API key for authenticated access
     api_key: str | None = None
 

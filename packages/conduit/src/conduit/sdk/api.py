@@ -22,7 +22,7 @@ from fastapi import APIRouter, FastAPI
 from shared.api import API_INSTANCE_PREFIX, API_INSTANCE_TTL
 
 from conduit.config import get_settings
-from conduit.sdk.middleware import ApiTrackingMiddleware
+from conduit.sdk.middleware import ApiTrackingConfig, ApiTrackingMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -312,13 +312,25 @@ class Api:
             self._redis = None
             return
 
-        self.app.add_middleware(
-            ApiTrackingMiddleware, api_name=self.name, redis_client=self._redis
-        )
-
         # Generate unique instance ID and register in Redis
         self._api_id = f"api_{uuid.uuid4().hex[:8]}"
         self._started_at = datetime.now(UTC)
+
+        settings = get_settings()
+        self.app.add_middleware(
+            ApiTrackingMiddleware,
+            api_name=self.name,
+            redis_client=self._redis,
+            api_instance_id=self._api_id,
+            config=ApiTrackingConfig(
+                normalize_paths=settings.api_tracking_normalize_paths,
+                registry_refresh_seconds=settings.api_tracking_registry_refresh_seconds,
+                request_events_enabled=settings.api_request_events_enabled,
+                request_events_sample_rate=settings.api_request_events_sample_rate,
+                request_events_slow_ms=settings.api_request_events_slow_ms,
+                request_events_stream_max_len=settings.api_request_events_stream_max_len,
+            ),
+        )
 
         await self._write_instance_heartbeat()
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())

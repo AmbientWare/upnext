@@ -22,6 +22,9 @@ class _SettingsStub:
     host: str = "127.0.0.1"
     port: int = 9000
     version: str = shared_version
+    event_subscriber_batch_size: int = 100
+    event_subscriber_poll_interval_ms: int = 2000
+    event_subscriber_stale_claim_ms: int = 30000
 
 
 class _FakeDatabase:
@@ -66,8 +69,9 @@ class _FakeCleanupService:
 class _FakeStreamSubscriber:
     instances: list[_FakeStreamSubscriber] = []
 
-    def __init__(self, redis_client: Any) -> None:
+    def __init__(self, redis_client: Any, config: Any = None) -> None:
         self.redis_client = redis_client
+        self.config = config
         self.started = False
         self.stopped = False
         self.__class__.instances.append(self)
