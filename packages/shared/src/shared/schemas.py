@@ -232,11 +232,18 @@ class ApiEndpoint(BaseModel):
     method: HttpMethod
     path: str
     requests_24h: int = 0
+    requests_per_min: float = 0.0
     avg_latency_ms: float = 0.0
     p50_latency_ms: float = 0.0
     p95_latency_ms: float = 0.0
     p99_latency_ms: float = 0.0
     error_rate: float = 0.0
+    success_rate: float = 100.0
+    client_error_rate: float = 0.0
+    server_error_rate: float = 0.0
+    status_2xx: int = 0
+    status_4xx: int = 0
+    status_5xx: int = 0
     last_request_at: str | None = None
 
 
@@ -266,6 +273,32 @@ class EndpointsListResponse(BaseModel):
 
     endpoints: list[ApiEndpoint]
     total: int
+
+
+class ApiOverview(BaseModel):
+    """Overview metrics for a single API."""
+
+    name: str
+    docs_url: str | None = None
+    active: bool = False
+    instance_count: int = 0
+    instances: list[ApiInstance] = []
+    endpoint_count: int = 0
+    requests_24h: int = 0
+    requests_per_min: float = 0.0
+    avg_latency_ms: float = 0.0
+    error_rate: float = 0.0
+    success_rate: float = 100.0
+    client_error_rate: float = 0.0
+    server_error_rate: float = 0.0
+
+
+class ApiPageResponse(BaseModel):
+    """Payload for API detail dashboard page."""
+
+    api: ApiOverview
+    endpoints: list[ApiEndpoint]
+    total_endpoints: int
 
 
 class ApiDetailResponse(ApiEndpoint):

@@ -6,6 +6,7 @@
 import type {
   ArtifactListResponse,
   ApisListResponse,
+  ApiPageResponse,
   ApiTrendsResponse,
   DashboardStats,
   FunctionDetailResponse,
@@ -180,6 +181,11 @@ export async function getApiTrends(params: GetApiTrendsParams = {}): Promise<Api
   return handleResponse<ApiTrendsResponse>(response);
 }
 
+export async function getApi(name: string): Promise<ApiPageResponse> {
+  const response = await fetch(`${API_BASE}/apis/${encodeURIComponent(name)}`);
+  return handleResponse<ApiPageResponse>(response);
+}
+
 // =============================================================================
 // Query Keys (for TanStack Query)
 // =============================================================================
@@ -200,5 +206,6 @@ export const queryKeys = {
   function: (name: string) => ["functions", name] as const,
 
   apis: ["apis"] as const,
+  api: (name: string) => ["apis", "api", name] as const,
   apiTrends: (params?: GetApiTrendsParams) => ["apis", "trends", params] as const,
 };

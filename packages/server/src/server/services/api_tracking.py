@@ -102,18 +102,29 @@ class ApiMetricsReader:
                 if totals["requests"] == 0:
                     continue
 
+                requests = totals["requests"]
+                status_2xx = totals["status_2xx"]
+                status_4xx = totals["status_4xx"]
+                status_5xx = totals["status_5xx"]
+                errors = totals["errors"]
+
                 results.append(
                     {
                         "api_name": name,
                         "method": method,
                         "path": path,
-                        "requests_24h": totals["requests"],
+                        "requests_24h": requests,
+                        "requests_per_min": await self._get_req_per_min(name, [ep_key]),
                         "avg_latency_ms": round(
-                            totals["total_latency_ms"] / totals["requests"], 2
+                            totals["total_latency_ms"] / requests, 2
                         ),
-                        "error_rate": round(
-                            totals["errors"] / totals["requests"] * 100, 1
-                        ),
+                        "error_rate": round(errors / requests * 100, 1),
+                        "success_rate": round(status_2xx / requests * 100, 1),
+                        "client_error_rate": round(status_4xx / requests * 100, 1),
+                        "server_error_rate": round(status_5xx / requests * 100, 1),
+                        "status_2xx": status_2xx,
+                        "status_4xx": status_4xx,
+                        "status_5xx": status_5xx,
                     }
                 )
 

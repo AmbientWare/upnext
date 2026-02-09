@@ -14,8 +14,8 @@ export function ApisTableSkeleton() {
       <TableHeader className="sticky top-0 z-10 bg-card">
         <TableRow className="text-[10px] text-muted-foreground uppercase tracking-wider border-input hover:bg-transparent">
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Name</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Instances</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Endpoints</TableHead>
+          <TableHead className="hidden xl:table-cell text-[10px] text-muted-foreground font-medium h-8">Instances</TableHead>
+          <TableHead className="hidden sm:table-cell text-[10px] text-muted-foreground font-medium h-8">Endpoints</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Requests (24h)</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Avg Latency</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Error Rate</TableHead>
@@ -27,10 +27,10 @@ export function ApisTableSkeleton() {
             <TableCell className="py-2">
               <Skeleton className="h-3 w-28" />
             </TableCell>
-            <TableCell className="py-2">
+            <TableCell className="hidden xl:table-cell py-2">
               <Skeleton className="h-3 w-40" />
             </TableCell>
-            <TableCell className="py-2">
+            <TableCell className="hidden sm:table-cell py-2">
               <Skeleton className="h-3 w-12" />
             </TableCell>
             <TableCell className="py-2">

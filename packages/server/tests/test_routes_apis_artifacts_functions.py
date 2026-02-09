@@ -406,20 +406,31 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
                 }
             ]
 
-        async def get_endpoints(self) -> list[dict]:
-            return [
+        async def get_endpoints(self, api_name: str | None = None) -> list[dict]:
+            rows = [
                 {
+                    "api_name": "orders",
                     "method": "GET",
                     "path": "/orders",
                     "requests_24h": 12,
+                    "requests_per_min": 0.5,
                     "avg_latency_ms": 21.5,
                     "p50_latency_ms": 20.0,
                     "p95_latency_ms": 30.0,
                     "p99_latency_ms": 35.0,
                     "error_rate": 8.3,
+                    "success_rate": 91.7,
+                    "client_error_rate": 8.3,
+                    "server_error_rate": 0.0,
+                    "status_2xx": 11,
+                    "status_4xx": 1,
+                    "status_5xx": 0,
                     "last_request_at": datetime.now(UTC).isoformat(),
                 }
             ]
+            if api_name is None:
+                return rows
+            return [row for row in rows if row["api_name"] == api_name]
 
         async def get_hourly_trends(self, hours: int) -> list[dict]:  # noqa: ARG002
             return [
@@ -483,6 +494,14 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     assert found.method == "GET"
     assert found.path == "/orders"
 
+    api_page = await apis_route.get_api("orders")
+    assert api_page.api.name == "orders"
+    assert api_page.api.docs_url == "http://localhost:8080/docs"
+    assert api_page.api.requests_24h == 12
+    assert api_page.api.success_rate == 91.7
+    assert api_page.total_endpoints == 1
+    assert api_page.endpoints[0].path == "/orders"
+
     missing = await apis_route.get_endpoint("post", "missing")
     assert missing.method == "POST"
     assert missing.path == "/missing"
@@ -513,3 +532,8 @@ async def test_apis_routes_fallback_to_empty_when_sources_fail(monkeypatch) -> N
     detail = await apis_route.get_endpoint("get", "missing")
     assert detail.method == "GET"
     assert detail.path == "/missing"
+
+    api_page = await apis_route.get_api("missing")
+    assert api_page.api.name == "missing"
+    assert api_page.api.docs_url is None
+    assert api_page.total_endpoints == 0

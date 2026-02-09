@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     debug: bool = False
+    api_docs_url_template: str = "http://{host}:{port}/docs"
 
     version: str = __version__
 

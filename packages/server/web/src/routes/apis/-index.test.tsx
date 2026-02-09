@@ -2,7 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
+
+vi.mock("@tanstack/react-router", async () => {
+  const actual = await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
+  return {
+    ...actual,
+    Link: ({ children, ...props }: { children: ReactNode }) => <a {...props}>{children}</a>,
+    useNavigate: () => vi.fn(),
+  };
+});
 
 const getApisMock = vi.fn();
 

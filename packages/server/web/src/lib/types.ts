@@ -195,6 +195,48 @@ export interface ApiInfo {
   requests_per_min: number;
 }
 
+export interface ApiEndpoint {
+  api_name?: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  requests_24h: number;
+  requests_per_min: number;
+  avg_latency_ms: number;
+  p50_latency_ms: number;
+  p95_latency_ms: number;
+  p99_latency_ms: number;
+  error_rate: number;
+  success_rate: number;
+  client_error_rate: number;
+  server_error_rate: number;
+  status_2xx: number;
+  status_4xx: number;
+  status_5xx: number;
+  last_request_at: string | null;
+}
+
+export interface ApiOverview {
+  name: string;
+  docs_url: string | null;
+  active: boolean;
+  instance_count: number;
+  instances: ApiInstance[];
+  endpoint_count: number;
+  requests_24h: number;
+  requests_per_min: number;
+  avg_latency_ms: number;
+  error_rate: number;
+  success_rate: number;
+  client_error_rate: number;
+  server_error_rate: number;
+}
+
+export interface ApiPageResponse {
+  api: ApiOverview;
+  endpoints: ApiEndpoint[];
+  total_endpoints: number;
+}
+
 export interface ApisListResponse {
   apis: ApiInfo[];
   total: number;
