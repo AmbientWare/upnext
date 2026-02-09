@@ -66,18 +66,18 @@ curl -X POST http://localhost:8001/orders \
   -d '{"user_id":"user_1","items":["Widget A","Widget B"]}'
 ```
 
-## Install Modes
+## Install
 
-Minimal SDK + CLI install:
+SDK + CLI + hosted server commands:
 
 ```bash
 uv add conduit-py
 ```
 
-SDK + CLI + hosted server commands:
+Server-only environments can install just:
 
 ```bash
-uv add "conduit-py[server]"
+uv add conduit-server
 ```
 
 ## Hosted Server

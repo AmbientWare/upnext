@@ -1,6 +1,6 @@
 [project]
 name = "conduit-py"
-version = "0.0.2"
+dynamic = ["version"]
 description = "Background jobs and APIs for Python. Like Modal, but self-hostable."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,15 +12,14 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "redis>=5.2.0",
     "rich>=13.9.0",
+    "conduit-server",
     "conduit-shared",
     "typer>=0.15.0",
     "uvicorn>=0.34.0",
 ]
 
 [project.optional-dependencies]
-server = [
-    "conduit-server",
-]
+server = []
 
 [project.scripts]
 conduit = "conduit.cli:app"
@@ -31,6 +30,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/conduit"]
+
+[tool.hatch.version]
+path = "../shared/src/shared/_version.py"
 
 [tool.uv.sources]
 "conduit-server" = { workspace = true }

@@ -33,6 +33,7 @@ from conduit.cli._loader import discover_objects, import_file
 from conduit.cli.list import list_cmd
 from conduit.cli.server import (
     _build_alembic_config,
+    _ensure_database_schema_ready,
     _find_server_root_dir,
     _import_server_main,
     _resolve_alembic_config,
@@ -451,6 +452,11 @@ def test_server_start_passes_reload_dir_for_monorepo_fallback(
         "_set_server_env",
         lambda database_url, redis_url: env_calls.append((database_url, redis_url)),
     )
+    monkeypatch.setattr(
+        server_module,
+        "_ensure_database_schema_ready",
+        lambda database_url, verbose: None,
+    )
     monkeypatch.setattr(server_module, "_import_server_main", lambda: server_src)
 
     def fake_uvicorn_run(app: str, **kwargs: Any) -> None:
@@ -484,6 +490,11 @@ def test_server_start_wraps_uvicorn_runtime_errors(monkeypatch) -> None:
 
     monkeypatch.setattr(server_module, "setup_logging", lambda **_kwargs: None)
     monkeypatch.setattr(server_module, "_set_server_env", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        server_module,
+        "_ensure_database_schema_ready",
+        lambda database_url, verbose: None,
+    )
     monkeypatch.setattr(server_module, "_import_server_main", lambda: None)
     monkeypatch.setattr(
         server_module,
@@ -588,6 +599,62 @@ def test_db_commands_invoke_expected_alembic_apis(monkeypatch) -> None:
             {"rev_range": "base:head", "verbose": True, "indicate_current": True},
         ),
     ]
+
+
+def test_ensure_database_schema_ready_runs_migrations_when_confirmed(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, str | None, bool]] = []
+
+    monkeypatch.setattr(
+        server_module,
+        "_resolve_effective_database_url",
+        lambda _database_url: "postgresql+asyncpg://user:pass@localhost/conduit",
+    )
+
+    async def fake_missing_tables(_database_url: str) -> list[str]:
+        return ["artifacts", "job_history"]
+
+    monkeypatch.setattr(server_module, "_get_missing_required_tables", fake_missing_tables)
+    monkeypatch.setattr(server_module.typer, "confirm", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        server_module,
+        "db_upgrade",
+        lambda revision, database_url, verbose: calls.append(
+            (revision, database_url, verbose)
+        ),
+    )
+    monkeypatch.setattr(server_module, "warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(server_module, "success", lambda *_args, **_kwargs: None)
+
+    _ensure_database_schema_ready(database_url=None, verbose=True)
+
+    assert calls == [
+        ("head", "postgresql+asyncpg://user:pass@localhost/conduit", True)
+    ]
+
+
+def test_ensure_database_schema_ready_exits_when_migration_declined(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        server_module,
+        "_resolve_effective_database_url",
+        lambda _database_url: "postgresql+asyncpg://user:pass@localhost/conduit",
+    )
+
+    async def fake_missing_tables(_database_url: str) -> list[str]:
+        return ["job_history"]
+
+    monkeypatch.setattr(server_module, "_get_missing_required_tables", fake_missing_tables)
+    monkeypatch.setattr(server_module.typer, "confirm", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(server_module, "warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(server_module, "dim", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(typer.Exit) as exc:
+        _ensure_database_schema_ready(database_url=None, verbose=False)
+
+    assert exc.value.exit_code == 0
 
 
 def test_resolve_alembic_config_fails_when_no_sources(monkeypatch) -> None:

@@ -1,3 +1,5 @@
 """Conduit API Server."""
 
-__version__ = "0.0.2"
+from shared import __version__
+
+__all__ = ["__version__"]

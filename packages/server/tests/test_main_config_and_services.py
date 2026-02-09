@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
+from shared import __version__ as shared_version
 
 import server.config as config_module
 import server.main as main_module
@@ -20,7 +21,7 @@ class _SettingsStub:
     redis_url: str | None
     host: str = "127.0.0.1"
     port: int = 9000
-    version: str = "0.0.2"
+    version: str = shared_version
 
 
 class _FakeDatabase:

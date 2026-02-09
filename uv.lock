@@ -252,10 +252,10 @@ wheels = [
 
 [[package]]
 name = "conduit-py"
-version = "0.0.2"
 source = { editable = "packages/conduit" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "conduit-server" },
     { name = "conduit-shared" },
     { name = "croniter" },
     { name = "fastapi" },
@@ -267,15 +267,10 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
-[package.optional-dependencies]
-server = [
-    { name = "conduit-server" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11.0" },
-    { name = "conduit-server", marker = "extra == 'server'", editable = "packages/server" },
+    { name = "conduit-server", editable = "packages/server" },
     { name = "conduit-shared", editable = "packages/shared" },
     { name = "croniter", specifier = ">=6.0.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
@@ -290,7 +285,6 @@ provides-extras = ["server"]
 
 [[package]]
 name = "conduit-server"
-version = "0.0.2"
 source = { editable = "packages/server" }
 dependencies = [
     { name = "aiosqlite" },
@@ -325,7 +319,6 @@ requires-dist = [
 
 [[package]]
 name = "conduit-shared"
-version = "0.0.2"
 source = { editable = "packages/shared" }
 dependencies = [
     { name = "pydantic" },

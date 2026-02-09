@@ -2,6 +2,7 @@
 
 import asyncio
 
+from shared import __version__
 from shared.artifacts import ArtifactType
 
 from conduit.engine import run_services
@@ -21,13 +22,12 @@ __all__ = [
     "Context",
     "Worker",
     "SyncExecutor",
+    "__version__",
     "create_artifact",
     "create_artifact_sync",
     "get_current_context",
     "run",
 ]
-
-__version__ = "0.0.2"
 
 
 def run(

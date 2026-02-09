@@ -72,7 +72,7 @@ When preparing a release:
 
 - verify package names and metadata are publish-safe
 - ensure dependency wiring works outside workspace-only sources
-- ensure `conduit-py` default install stays lean and server extras remain in `conduit-py[server]`
+- ensure `conduit-py` default install and `conduit-server` package wiring work outside workspace-only sources
 - run integration verification before publishing artifacts
 - include release notes describing behavior, compatibility, and migration impact
 

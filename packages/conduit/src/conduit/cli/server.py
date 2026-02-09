@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from importlib import resources
 from importlib.resources.abc import Traversable
@@ -13,30 +13,32 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
-from conduit.cli._console import error_panel, setup_logging
+from conduit.cli._console import dim, error_panel, setup_logging, success, warning
 
 if TYPE_CHECKING:
     from alembic.config import Config as AlembicConfig
 else:
     AlembicConfig = Any
 
+_REQUIRED_TABLES = {"job_history", "artifacts", "pending_artifacts"}
+
 
 def _find_server_root_dir() -> Path | None:
-    """Best-effort resolution of packages/server in monorepo checkouts."""
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        candidate = parent / "packages" / "server"
-        if (candidate / "src" / "server" / "main.py").exists():
-            return candidate
-    return None
-
-
-def _find_server_src_dir() -> Path | None:
-    """Best-effort resolution of packages/server/src in monorepo checkouts."""
-    server_root = _find_server_root_dir()
-    if server_root is None:
+    """Resolve source-root server paths from the imported server package."""
+    try:
+        import server
+    except Exception:
         return None
-    return server_root / "src"
+
+    server_pkg_dir = Path(server.__file__).resolve().parent
+    candidate = server_pkg_dir.parent.parent
+    if (
+        (candidate / "src" / "server" / "main.py").exists()
+        and (candidate / "alembic.ini").exists()
+        and (candidate / "alembic").is_dir()
+    ):
+        return candidate
+    return None
 
 
 def _find_packaged_alembic_paths() -> tuple[Traversable, Traversable] | None:
@@ -77,7 +79,7 @@ def _build_alembic_config(
         error_panel(
             (
                 "Alembic is not available in this environment. "
-                "Install `conduit-py[server]` (or `conduit-server`) and retry."
+                "Install `conduit-py` (or `conduit-server`) and retry."
             ),
             title="Alembic not installed",
         )
@@ -112,49 +114,37 @@ def _build_alembic_config(
     return cfg
 
 
-def _import_server_main() -> Path | None:
+def _import_server_main() -> Path:
     """
-    Import `server.main`, preferring installed package import.
+    Import `server.main` and return its package directory for reload.
 
     Returns:
-        Monorepo server src path when fallback path injection was used, otherwise None.
+        Directory containing the imported `server` package.
     """
     try:
-        import server.main  # noqa: F401
-        return None
+        import server.main
+        return Path(server.main.__file__).resolve().parent
     except ModuleNotFoundError as e:
-        # Fallback to monorepo source only when the server package itself is missing.
-        if e.name not in {"server", "server.main"}:
+        if e.name in {"server", "server.main"}:
             error_panel(
                 (
-                    "Could not import `server.main:app` due to a missing dependency. "
-                    "Install `conduit-py[server]` (or `conduit-server`) and retry."
+                    "Could not import `server.main:app`. Install `conduit-py` "
+                    "(or `conduit-server`) and retry."
                 ),
                 title="Server import failed",
             )
             raise typer.Exit(1) from e
-    except Exception as e:
-        error_panel(str(e), title="Server import failed")
-        raise typer.Exit(1) from e
-
-    server_src_dir = _find_server_src_dir()
-    if server_src_dir and str(server_src_dir) not in sys.path:
-        sys.path.insert(0, str(server_src_dir))
-
-    try:
-        import server.main  # noqa: F401
-    except Exception as e:
         error_panel(
             (
-                "Could not import `server.main:app`. Install `conduit-py[server]` "
-                "(or `conduit-server`). In a source checkout, run "
-                "`uv sync --all-packages --all-groups`."
+                "Could not import `server.main:app` due to a missing dependency. "
+                "Install `conduit-py` (or `conduit-server`) and retry."
             ),
             title="Server import failed",
         )
         raise typer.Exit(1) from e
-
-    return server_src_dir
+    except Exception as e:
+        error_panel(str(e), title="Server import failed")
+        raise typer.Exit(1) from e
 
 
 @contextmanager
@@ -169,7 +159,7 @@ def _resolve_alembic_config() -> Iterator[AlembicConfig]:
     if packaged_paths is None:
         error_panel(
             (
-                "Could not locate server migration files. Install `conduit-py[server]` "
+                "Could not locate server migration files. Install `conduit-py` "
                 "(or `conduit-server`). In a source checkout, run "
                 "`uv sync --all-packages --all-groups`."
             ),
@@ -185,6 +175,106 @@ def _resolve_alembic_config() -> Iterator[AlembicConfig]:
             alembic_ini=alembic_ini_path,
             script_location=alembic_dir_path,
         )
+
+
+def _run_alembic_command(
+    *,
+    database_url: str | None,
+    verbose: bool,
+    failure_title: str,
+    run: Callable[[Any, AlembicConfig], None],
+) -> None:
+    """Execute an Alembic command with shared env/config/error handling."""
+    setup_logging(verbose=verbose)
+    _set_server_env(database_url, redis_url=None)
+
+    try:
+        from alembic import command
+
+        with _resolve_alembic_config() as cfg:
+            run(command, cfg)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        error_panel(str(e), title=failure_title)
+        raise typer.Exit(1) from e
+
+
+def _resolve_effective_database_url(database_url: str | None) -> str:
+    """Resolve effective database URL from CLI override or server settings."""
+    if database_url:
+        return database_url
+
+    try:
+        from server.config import get_settings
+    except Exception as e:
+        error_panel(
+            (
+                "Could not resolve server configuration. "
+                "Install `conduit-py` (or `conduit-server`) and retry."
+            ),
+            title="Server config missing",
+        )
+        raise typer.Exit(1) from e
+
+    return get_settings().effective_database_url
+
+
+async def _get_missing_required_tables(database_url: str) -> list[str]:
+    """Check required schema tables for a database URL."""
+    from server.db.session import Database
+
+    db = Database(database_url)
+    await db.connect()
+    try:
+        return await db.get_missing_tables(_REQUIRED_TABLES)
+    finally:
+        await db.disconnect()
+
+
+def _ensure_database_schema_ready(database_url: str | None, *, verbose: bool) -> None:
+    """
+    Prompt to run migrations before startup when schema is missing tables.
+
+    SQLite is skipped because tables are auto-created in server startup.
+    """
+    effective_database_url = _resolve_effective_database_url(database_url)
+    if effective_database_url.startswith("sqlite"):
+        return
+
+    try:
+        missing_tables = asyncio.run(_get_missing_required_tables(effective_database_url))
+    except Exception as e:
+        warning("Could not verify database migration status; continuing startup.")
+        if verbose:
+            dim(str(e))
+        return
+
+    if not missing_tables:
+        return
+
+    missing = ", ".join(missing_tables)
+    warning(f"Database schema is missing required tables: {missing}")
+
+    try:
+        should_migrate = typer.confirm(
+            "Run migrations now and then start the server?",
+            default=True,
+        )
+    except typer.Abort as e:
+        dim("Exiting without starting server.")
+        raise typer.Exit(1) from e
+
+    if not should_migrate:
+        dim("Exiting without starting server.")
+        raise typer.Exit(0)
+
+    db_upgrade(
+        revision="head",
+        database_url=effective_database_url,
+        verbose=verbose,
+    )
+    success("Database migrations completed.")
 
 
 def start(
@@ -217,7 +307,8 @@ def start(
 
     _set_server_env(database_url, redis_url)
 
-    server_src_dir = _import_server_main()
+    server_pkg_dir = _import_server_main()
+    _ensure_database_schema_ready(database_url, verbose=verbose)
 
     import uvicorn
 
@@ -227,7 +318,7 @@ def start(
             host=host,
             port=port,
             reload=reload,
-            reload_dirs=[str(server_src_dir)] if reload and server_src_dir else None,
+            reload_dirs=[str(server_pkg_dir)] if reload else None,
         )
     except Exception as e:
         error_panel(str(e), title="Server start failed")
@@ -250,19 +341,12 @@ def db_upgrade(
     ),
 ) -> None:
     """Run Alembic upgrade for the hosted Conduit server schema."""
-    setup_logging(verbose=verbose)
-    _set_server_env(database_url, redis_url=None)
-
-    try:
-        from alembic import command
-
-        with _resolve_alembic_config() as cfg:
-            command.upgrade(cfg, revision)
-    except typer.Exit:
-        raise
-    except Exception as e:
-        error_panel(str(e), title="Migration failed")
-        raise typer.Exit(1) from e
+    _run_alembic_command(
+        database_url=database_url,
+        verbose=verbose,
+        failure_title="Migration failed",
+        run=lambda command, cfg: command.upgrade(cfg, revision),
+    )
 
 
 def db_current(
@@ -280,19 +364,12 @@ def db_current(
     ),
 ) -> None:
     """Show current Alembic revision for the hosted server database."""
-    setup_logging(verbose=verbose)
-    _set_server_env(database_url, redis_url=None)
-
-    try:
-        from alembic import command
-
-        with _resolve_alembic_config() as cfg:
-            command.current(cfg, verbose=verbose)
-    except typer.Exit:
-        raise
-    except Exception as e:
-        error_panel(str(e), title="Failed to read current revision")
-        raise typer.Exit(1) from e
+    _run_alembic_command(
+        database_url=database_url,
+        verbose=verbose,
+        failure_title="Failed to read current revision",
+        run=lambda command, cfg: command.current(cfg, verbose=verbose),
+    )
 
 
 def db_history(
@@ -315,18 +392,11 @@ def db_history(
     ),
 ) -> None:
     """Show Alembic revision history for the hosted server schema."""
-    setup_logging(verbose=verbose)
-    _set_server_env(database_url, redis_url=None)
-
-    try:
-        from alembic import command
-
-        with _resolve_alembic_config() as cfg:
-            command.history(
-                cfg, rev_range=rev_range, verbose=verbose, indicate_current=True
-            )
-    except typer.Exit:
-        raise
-    except Exception as e:
-        error_panel(str(e), title="Failed to read migration history")
-        raise typer.Exit(1) from e
+    _run_alembic_command(
+        database_url=database_url,
+        verbose=verbose,
+        failure_title="Failed to read migration history",
+        run=lambda command, cfg: command.history(
+            cfg, rev_range=rev_range, verbose=verbose, indicate_current=True
+        ),
+    )

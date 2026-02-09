@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from shared import __version__
 
 
 class Settings(BaseSettings):
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     port: int = 8080
     debug: bool = False
 
-    version: str = "0.0.2"
+    version: str = __version__
 
     @property
     def is_production(self) -> bool:

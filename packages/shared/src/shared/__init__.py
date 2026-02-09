@@ -1,5 +1,6 @@
 """Shared models for Conduit packages."""
 
+from shared._version import __version__
 from shared.api import API_PREFIX, HOURLY_BUCKET_TTL, MINUTE_BUCKET_TTL, REGISTRY_TTL
 from shared.artifacts import ArtifactType
 from shared.events import (
@@ -52,6 +53,7 @@ from shared.schemas import (
 )
 
 __all__ = [
+    "__version__",
     # API tracking constants
     "API_PREFIX",
     "MINUTE_BUCKET_TTL",

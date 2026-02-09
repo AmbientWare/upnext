@@ -10,6 +10,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
 COPY packages/shared ./packages/shared
 COPY packages/conduit ./packages/conduit
+COPY packages/server/pyproject.toml packages/server/README.md ./packages/server/
+COPY packages/server/src ./packages/server/src
+COPY packages/server/alembic.ini ./packages/server/alembic.ini
+COPY packages/server/alembic ./packages/server/alembic
+COPY packages/server/static ./packages/server/static
 
 # Install dependencies
 RUN uv sync --frozen --no-dev --package conduit-py

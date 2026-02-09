@@ -110,11 +110,16 @@ app.include_router(health_router)
 app.include_router(v1_router)
 
 # Static files directory (built frontend)
-STATIC_DIR = Path(__file__).parent.parent.parent / "static"
+# Prefer packaged assets (`server/static`) and fall back to monorepo path.
+PACKAGE_STATIC_DIR = Path(__file__).resolve().parent / "static"
+SOURCE_STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
+STATIC_DIR = PACKAGE_STATIC_DIR if PACKAGE_STATIC_DIR.exists() else SOURCE_STATIC_DIR
 
 # Mount static files if the directory exists (production build)
-if STATIC_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
+    assets_dir = STATIC_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
