@@ -18,6 +18,8 @@ import type {
   ApiSnapshotEvent,
   Job,
   JobListResponse,
+  WorkersListResponse,
+  WorkersSnapshotEvent,
 } from "@/lib/types";
 
 interface EventStreamProviderProps {
@@ -27,6 +29,7 @@ interface EventStreamProviderProps {
 const EVENT_STREAM_URL = env.VITE_EVENTS_STREAM_URL;
 const APIS_STREAM_URL = env.VITE_APIS_STREAM_URL;
 const API_REQUEST_EVENTS_STREAM_URL = env.VITE_API_REQUEST_EVENTS_STREAM_URL;
+const WORKERS_STREAM_URL = env.VITE_WORKERS_STREAM_URL;
 
 /** Minimum interval between dashboard stats refetches (ms). */
 const STATS_THROTTLE_MS = 5_000;
@@ -40,6 +43,8 @@ const EVENT_BURST_STEP_MS = 8;
 const BURST_QUEUE_THRESHOLD = 50;
 /** Hard cap for queued stream events to avoid unbounded memory growth. */
 const MAX_QUEUE_LENGTH = 2_000;
+/** Minimum interval between reconnect-driven cache resync invalidations. */
+const RESYNC_RECONNECT_THROTTLE_MS = 15_000;
 
 /** Event types that change aggregate counts and warrant a stats refetch. */
 const STATE_CHANGE_EVENTS = new Set([
@@ -74,6 +79,8 @@ type ApiStreamEvent =
   | ApisSnapshotEvent
   | ApiSnapshotEvent
   | ApiRequestSnapshotEvent;
+
+type WorkerStreamEvent = WorkersSnapshotEvent;
 
 /** Build a partial Job update from the streamed event. */
 function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
@@ -345,8 +352,29 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
   const queryClient = useQueryClient();
   const lastStatsInvalidation = useRef(0);
   const lastFunctionInvalidation = useRef<Record<string, number>>({});
+  const lastReconnectResync = useRef(0);
   const eventQueue = useRef<JobEvent[]>([]);
   const eventTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerReconnectResync = useCallback(() => {
+    const now = Date.now();
+    if (now - lastReconnectResync.current < RESYNC_RECONNECT_THROTTLE_MS) {
+      return;
+    }
+    lastReconnectResync.current = now;
+
+    // Resync critical views after stream reconnect in case messages were missed.
+    queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+    queryClient.invalidateQueries({ queryKey: queryKeys.workers });
+    queryClient.invalidateQueries({ queryKey: ["functions"] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.apis });
+    queryClient.invalidateQueries({ queryKey: ["apis", "trends"] });
+    queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["jobs", "timeline"] });
+    queryClient.invalidateQueries({ queryKey: ["jobs", "artifacts"] });
+    queryClient.invalidateQueries({ queryKey: ["jobs", "trends"] });
+    queryClient.invalidateQueries({ queryKey: ["apis", "events"] });
+  }, [queryClient]);
 
   const applyStreamEvent = useCallback(
     (payload: JobEvent) => {
@@ -498,6 +526,26 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
     [queryClient]
   );
 
+  const handleWorkersMessage = useCallback(
+    (event: MessageEvent) => {
+      if (!event.data) return;
+
+      let payload: WorkerStreamEvent;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+
+      if (payload.type !== "workers.snapshot") return;
+      queryClient.setQueryData<WorkersListResponse>(
+        queryKeys.workers,
+        payload.workers
+      );
+    },
+    [queryClient]
+  );
+
   useEffect(() => {
     return () => {
       if (eventTimer.current) {
@@ -510,12 +558,19 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
 
   useEventSource(EVENT_STREAM_URL, {
     onMessage: handleMessage,
+    onReconnect: triggerReconnectResync,
   });
   useEventSource(APIS_STREAM_URL, {
     onMessage: handleApiMessage,
+    onReconnect: triggerReconnectResync,
   });
   useEventSource(API_REQUEST_EVENTS_STREAM_URL, {
     onMessage: handleApiMessage,
+    onReconnect: triggerReconnectResync,
+  });
+  useEventSource(WORKERS_STREAM_URL, {
+    onMessage: handleWorkersMessage,
+    onReconnect: triggerReconnectResync,
   });
 
   return <>{children}</>;

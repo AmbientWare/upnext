@@ -8,6 +8,7 @@ export const env = createEnv({
     VITE_EVENTS_STREAM_URL: z.string().default("/api/v1/events/stream"),
     VITE_APIS_STREAM_URL: z.string().default("/api/v1/apis/stream"),
     VITE_API_REQUEST_EVENTS_STREAM_URL: z.string().default("/api/v1/apis/events/stream"),
+    VITE_WORKERS_STREAM_URL: z.string().default("/api/v1/workers/stream"),
   },
   runtimeEnv: import.meta.env,
   emptyStringAsUndefined: true,

@@ -18,6 +18,9 @@ export const Route = createFileRoute("/dashboard/")({
   component: DataMatrixDashboard,
 });
 
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
+const WORKERS_SAFETY_RESYNC_MS = 60 * 1000;
+
 function DataMatrixDashboard() {
   const navigate = useNavigate();
 
@@ -30,25 +33,25 @@ function DataMatrixDashboard() {
   const { data: workersData, isPending: isWorkersPending } = useQuery({
     queryKey: queryKeys.workers,
     queryFn: getWorkers,
-    refetchInterval: 30000,
+    refetchInterval: WORKERS_SAFETY_RESYNC_MS,
   });
 
   const { data: apisData, isPending: isApisPending } = useQuery({
     queryKey: queryKeys.apis,
     queryFn: getApis,
-    refetchInterval: 45000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const { data: jobsData, isPending: isJobsPending } = useQuery({
     queryKey: queryKeys.jobs({ limit: 50 }),
     queryFn: () => getJobs({ limit: 50 }),
-    refetchInterval: 30000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const { data: apiRequestEventsData, isPending: isApiEventsPending } = useQuery({
     queryKey: queryKeys.apiRequestEvents({ limit: 200 }),
     queryFn: () => getApiRequestEvents({ limit: 200 }),
-    refetchInterval: 15000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const workers = workersData?.workers ?? [];

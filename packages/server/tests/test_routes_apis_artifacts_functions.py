@@ -6,6 +6,8 @@ from typing import AsyncIterator, cast
 
 import pytest
 from fastapi import HTTPException, Response
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from shared.schemas import (
@@ -23,8 +25,14 @@ from shared.schemas import (
 from server.db.models import PendingArtifact
 from server.db.repository import JobRepository
 import server.routes.apis as apis_route
+import server.routes.apis.apis_root as apis_root_route
+import server.routes.apis.apis_stream as apis_stream_route
+import server.routes.apis.apis_utils as apis_utils_route
 import server.routes.artifacts as artifacts_route
+import server.routes.artifacts.job_artifacts as job_artifacts_route
+import server.routes.artifacts.artifacts_root as artifacts_root_route
 import server.routes.functions as functions_route
+from server.routes import v1_router
 
 
 def _worker(
@@ -51,11 +59,15 @@ def _worker(
 
 
 def test_calculate_artifact_size_handles_supported_payload_types() -> None:
-    assert artifacts_route._calculate_artifact_size(None) is None  # noqa: SLF001
-    assert artifacts_route._calculate_artifact_size("hello") == 5  # noqa: SLF001
-    assert artifacts_route._calculate_artifact_size({"x": 1}) == len(json.dumps({"x": 1}).encode("utf-8"))  # noqa: SLF001
-    assert artifacts_route._calculate_artifact_size([1, 2]) == len(json.dumps([1, 2]).encode("utf-8"))  # noqa: SLF001
-    assert artifacts_route._calculate_artifact_size(123) is None  # noqa: SLF001
+    assert artifacts_route.calculate_artifact_size(None) is None
+    assert artifacts_route.calculate_artifact_size("hello") == 5
+    assert artifacts_route.calculate_artifact_size({"x": 1}) == len(
+        json.dumps({"x": 1}).encode("utf-8")
+    )
+    assert artifacts_route.calculate_artifact_size([1, 2]) == len(
+        json.dumps([1, 2]).encode("utf-8")
+    )
+    assert artifacts_route.calculate_artifact_size(123) is None
 
 
 @pytest.mark.asyncio
@@ -76,7 +88,8 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
             }
         )
 
-    monkeypatch.setattr(artifacts_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(job_artifacts_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
 
     create_response = Response()
     created = await artifacts_route.create_artifact(
@@ -116,7 +129,7 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
 async def test_create_artifact_queues_pending_when_job_row_missing(
     sqlite_db, monkeypatch
 ) -> None:
-    monkeypatch.setattr(artifacts_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(job_artifacts_route, "get_database", lambda: sqlite_db)
 
     response = Response()
     queued = await artifacts_route.create_artifact(
@@ -150,7 +163,8 @@ async def test_artifact_routes_handle_database_unavailable(monkeypatch) -> None:
     def _no_db():
         raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr(artifacts_route, "get_database", _no_db)
+    monkeypatch.setattr(job_artifacts_route, "get_database", _no_db)
+    monkeypatch.setattr(artifacts_root_route, "get_database", _no_db)
 
     with pytest.raises(HTTPException, match="Database not available") as create_exc:
         await artifacts_route.create_artifact(
@@ -476,14 +490,9 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     class _Settings:
         api_docs_url_template = "http://{host}:{port}/docs"
 
-    monkeypatch.setattr(apis_route, "get_settings", lambda: _Settings())
-    monkeypatch.setattr(
-        apis_route,
-        "_build_docs_url",
-        lambda _api_name, _instances: "http://localhost:8080/docs",
-    )
-    monkeypatch.setattr(apis_route, "get_metrics_reader", _reader)
-    monkeypatch.setattr(apis_route, "list_api_instances", _instances)
+    monkeypatch.setattr(apis_utils_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_root_route, "get_metrics_reader", _reader)
+    monkeypatch.setattr(apis_root_route, "list_api_instances", _instances)
 
     listed = await apis_route.list_apis()
     assert listed.total == 2
@@ -527,8 +536,8 @@ async def test_apis_routes_fallback_to_empty_when_sources_fail(monkeypatch) -> N
     async def _fail_instances():
         raise RuntimeError("instances unavailable")
 
-    monkeypatch.setattr(apis_route, "get_metrics_reader", _fail_reader)
-    monkeypatch.setattr(apis_route, "list_api_instances", _fail_instances)
+    monkeypatch.setattr(apis_root_route, "get_metrics_reader", _fail_reader)
+    monkeypatch.setattr(apis_root_route, "list_api_instances", _fail_instances)
 
     listed = await apis_route.list_apis()
     assert listed.total == 0
@@ -555,9 +564,11 @@ async def test_apis_routes_fallback_to_empty_when_sources_fail(monkeypatch) -> N
 async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
     class _Settings:
         api_realtime_enabled = True
-        api_realtime_interval_ms = 1
-        api_snapshot_cache_ttl_ms = 500
         api_request_events_default_limit = 200
+
+    class _RedisStub:
+        async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return []
 
     async def _list_apis() -> ApisListResponse:
         return ApisListResponse(
@@ -587,9 +598,13 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
         async def is_disconnected(self) -> bool:
             return False
 
-    monkeypatch.setattr(apis_route, "get_settings", lambda: _Settings())
-    monkeypatch.setattr(apis_route, "list_apis", _list_apis)
-    monkeypatch.setattr(apis_route, "get_api", _get_api)
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_stream_route, "list_apis", _list_apis)
+    monkeypatch.setattr(apis_stream_route, "get_api", _get_api)
+    monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
     list_response = await apis_route.stream_apis(_RequestStub())
     list_stream = cast(AsyncIterator[str], list_response.body_iterator.__aiter__())
@@ -624,15 +639,13 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
 async def test_apis_stream_routes_can_be_disabled(monkeypatch) -> None:
     class _Settings:
         api_realtime_enabled = False
-        api_realtime_interval_ms = 1000
-        api_snapshot_cache_ttl_ms = 500
         api_request_events_default_limit = 200
 
     class _RequestStub:
         async def is_disconnected(self) -> bool:
             return False
 
-    monkeypatch.setattr(apis_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
 
     with pytest.raises(HTTPException, match="disabled") as list_exc:
         await apis_route.stream_apis(_RequestStub())
@@ -651,8 +664,6 @@ async def test_apis_stream_routes_can_be_disabled(monkeypatch) -> None:
 async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
     class _Settings:
         api_realtime_enabled = True
-        api_realtime_interval_ms = 1000
-        api_snapshot_cache_ttl_ms = 500
         api_request_events_default_limit = 200
 
     class _RedisStub:
@@ -717,8 +728,8 @@ async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
     async def _get_redis() -> _RedisStub:
         return _RedisStub()
 
-    monkeypatch.setattr(apis_route, "get_settings", lambda: _Settings())
-    monkeypatch.setattr(apis_route, "get_redis", _get_redis)
+    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
     listed = await apis_route.list_api_request_events(api_name="orders", limit=10)
     assert listed.total == 1
@@ -737,3 +748,159 @@ async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
     assert payload["type"] == "api.request"
     assert payload["request"]["id"] == "evt-2"
     assert payload["request"]["api_name"] == "orders"
+
+
+@pytest.mark.asyncio
+async def test_api_request_events_skip_malformed_rows_without_crashing(
+    monkeypatch,
+) -> None:
+    class _Settings:
+        api_realtime_enabled = True
+        api_request_events_default_limit = 200
+
+    class _RedisStub:
+        async def xrevrange(self, _stream: str, count: int):  # type: ignore[no-untyped-def]
+            _ = count
+            return [
+                (
+                    "2000-0",
+                    {
+                        "at": "2026-02-09T12:00:00Z",
+                        "api_name": "orders",
+                        "method": "GET",
+                        "path": "/orders",
+                        "status": "not-a-number",
+                        "latency_ms": "12.4",
+                    },
+                ),
+                (
+                    "1999-0",
+                    {
+                        "data": json.dumps(
+                            {
+                                "id": "evt-valid",
+                                "at": "2026-02-09T12:00:01Z",
+                                "api_name": "orders",
+                                "method": "POST",
+                                "path": "/orders",
+                                "status": 201,
+                                "latency_ms": 18.0,
+                                "instance_id": "api_a",
+                                "sampled": True,
+                            }
+                        )
+                    },
+                ),
+            ]
+
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
+
+    listed = await apis_route.list_api_request_events(api_name="orders", limit=10)
+    assert listed.total == 1
+    assert listed.events[0].id == "evt-valid"
+
+
+@pytest.mark.asyncio
+async def test_apis_events_stream_path_not_captured_by_endpoint_detail(
+    monkeypatch,
+) -> None:
+    class _Settings:
+        api_realtime_enabled = False
+
+    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
+
+    app = FastAPI()
+    app.include_router(v1_router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.get("/api/v1/apis/events/stream")
+
+    assert response.status_code == 404
+    assert "disabled" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) -> None:
+    class _Settings:
+        api_realtime_enabled = True
+        api_request_events_default_limit = 200
+
+    class _RedisStub:
+        async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return [
+                (
+                    "conduit:api:requests",
+                    [
+                        (
+                            "1001-0",
+                            {
+                                "data": json.dumps(
+                                    {
+                                        "id": "evt-2",
+                                        "at": "2026-02-09T12:00:01Z",
+                                        "api_name": "orders",
+                                        "method": "POST",
+                                        "path": "/orders",
+                                        "status": 201,
+                                        "latency_ms": 18.0,
+                                        "instance_id": "api_a",
+                                        "sampled": True,
+                                    }
+                                )
+                            },
+                        )
+                    ],
+                )
+            ]
+
+    class _RequestStub:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def is_disconnected(self) -> bool:
+            self._calls += 1
+            return self._calls > 2
+
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    call_count = {"value": 0}
+
+    async def _get_api_trends(hours: int = 24) -> apis_route.ApiTrendsResponse:
+        _ = hours
+        call_count["value"] += 1
+        return apis_route.ApiTrendsResponse(
+            hourly=[
+                apis_route.ApiTrendHour(
+                    hour="2026-02-09T12:00:00Z",
+                    success_2xx=call_count["value"],
+                    client_4xx=0,
+                    server_5xx=0,
+                )
+            ]
+        )
+
+    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
+    monkeypatch.setattr(apis_stream_route, "get_api_trends", _get_api_trends)
+
+    response = await apis_route.stream_api_trends(_RequestStub())
+    body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
+    open_frame = await anext(body)
+    first_snapshot_frame = await anext(body)
+    second_snapshot_frame = await anext(body)
+
+    assert open_frame == "event: open\ndata: connected\n\n"
+    first = json.loads(first_snapshot_frame.removeprefix("data: ").strip())
+    second = json.loads(second_snapshot_frame.removeprefix("data: ").strip())
+    assert first["type"] == "apis.trends.snapshot"
+    assert first["trends"]["hourly"][0]["success_2xx"] == 1
+    assert second["type"] == "apis.trends.snapshot"
+    assert second["trends"]["hourly"][0]["success_2xx"] == 2

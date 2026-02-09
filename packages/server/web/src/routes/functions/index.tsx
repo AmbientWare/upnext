@@ -18,6 +18,8 @@ export const Route = createFileRoute("/functions/")({
   component: FunctionsPage,
 });
 
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
+
 const typeOptions: { value: string; label: string }[] = [
   { value: "all", label: "All Types" },
   { value: "task", label: "Tasks" },
@@ -39,7 +41,7 @@ function FunctionsPage() {
   const { data: functionsData, isPending } = useQuery({
     queryKey: queryKeys.functions({ type: typeForQuery }),
     queryFn: () => getFunctions({ type: typeForQuery }),
-    refetchInterval: 30000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const allFunctions = useMemo(() => functionsData?.functions ?? [], [functionsData?.functions]);

@@ -17,6 +17,8 @@ export const Route = createFileRoute("/apis/$name/")({
   component: ApiDetailPage,
 });
 
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
+
 function buildRouteTree(endpoints: ApiEndpoint[]): RouteNode[] {
   type MutableNode = {
     segment: string;
@@ -87,7 +89,7 @@ function ApiDetailPage() {
   const { data, isPending, error } = useQuery({
     queryKey: queryKeys.api(name),
     queryFn: () => getApi(name),
-    refetchInterval: 45000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const streamUrl = `${env.VITE_API_BASE_URL}/apis/${encodeURIComponent(name)}/stream`;

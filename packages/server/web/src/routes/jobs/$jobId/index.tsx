@@ -18,6 +18,8 @@ export const Route = createFileRoute("/jobs/$jobId/")({
   component: JobDetailPage,
 });
 
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
+
 function JobDetailPage() {
   const { jobId } = Route.useParams();
   const queryClient = useQueryClient();
@@ -31,7 +33,7 @@ function JobDetailPage() {
   const { data, isPending } = useQuery({
     queryKey: queryKeys.jobTimeline(jobId),
     queryFn: () => getJobTimeline(jobId),
-    refetchInterval: 2500,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const timelineJobs = useMemo(() => data?.jobs ?? [], [data]);
@@ -40,8 +42,6 @@ function JobDetailPage() {
   const selectedJob = treeJobs.find((job) => job.id === selectedJobId)
     ?? rootJob;
   const effectiveSelectedJobId = selectedJob?.id ?? jobId;
-  const hasActiveJobs = treeJobs.some((job) => job.status === "active" || job.status === "retrying");
-  const artifactRefreshMs = hasActiveJobs ? 3000 : 15000;
 
   if (isPending && !rootJob) {
     return <JobDetailSkeleton />;
@@ -112,7 +112,6 @@ function JobDetailPage() {
               <TabsContent value="artifacts" className="h-full m-0">
                 <JobArtifactsTab
                   selectedJobId={effectiveSelectedJobId}
-                  refreshMs={artifactRefreshMs}
                 />
               </TabsContent>
             </Tabs>

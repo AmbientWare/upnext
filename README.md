@@ -99,6 +99,16 @@ CONDUIT_DATABASE_URL=postgresql+asyncpg://conduit:conduit@localhost:5432/conduit
 uv run --package conduit-py conduit server db upgrade head
 ```
 
+## Realtime Update Model
+
+The dashboard and API views use a stream-first model:
+
+- SSE streams are the primary source for live job/API/artifact/trend updates.
+- Polling is retained only as a low-frequency safety resync or where no stream exists yet.
+- On SSE reconnect, key caches are invalidated to recover cleanly from missed events.
+
+This keeps UI updates near-realtime while reducing avoidable polling load.
+
 ## Testing and Verification
 
 Package-level:

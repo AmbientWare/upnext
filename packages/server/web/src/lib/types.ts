@@ -55,6 +55,12 @@ export interface JobTrendsResponse {
   hourly: JobTrendHour[];
 }
 
+export interface JobTrendsSnapshotEvent {
+  type: "jobs.trends.snapshot";
+  at: string;
+  trends: JobTrendsResponse;
+}
+
 // =============================================================================
 // Artifact Schemas
 // =============================================================================
@@ -73,6 +79,15 @@ export interface Artifact {
 export interface ArtifactListResponse {
   artifacts: Artifact[];
   total: number;
+}
+
+export interface ArtifactStreamEvent {
+  type: "artifact.created" | "artifact.queued" | "artifact.promoted" | "artifact.deleted";
+  at: string;
+  job_id: string;
+  artifact_id: number | null;
+  pending_id: number | null;
+  artifact: Artifact | null;
 }
 
 // =============================================================================
@@ -124,6 +139,12 @@ export interface WorkerInfo {
 export interface WorkersListResponse {
   workers: WorkerInfo[];
   total: number;
+}
+
+export interface WorkersSnapshotEvent {
+  type: "workers.snapshot";
+  at: string;
+  workers: WorkersListResponse;
 }
 
 export interface WorkerStats {
@@ -273,6 +294,12 @@ export interface ApiTrendHour {
 
 export interface ApiTrendsResponse {
   hourly: ApiTrendHour[];
+}
+
+export interface ApiTrendsSnapshotEvent {
+  type: "apis.trends.snapshot";
+  at: string;
+  trends: ApiTrendsResponse;
 }
 
 export interface ApisSnapshotEvent {

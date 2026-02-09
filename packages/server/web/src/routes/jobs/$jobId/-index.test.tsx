@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ComponentType } from "react";
 
 const getJobTimelineMock = vi.fn();
-let capturedArtifactsProps: { selectedJobId: string; refreshMs: number } | null = null;
+let capturedArtifactsProps: { selectedJobId: string } | null = null;
 
 vi.mock("@/lib/conduit-api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/conduit-api")>("@/lib/conduit-api");
@@ -28,7 +28,7 @@ vi.mock("./-components/job-logs-tab", () => ({
   JobLogsTab: () => <div data-testid="logs" />,
 }));
 vi.mock("./-components/job-artifacts-tab", () => ({
-  JobArtifactsTab: (props: { selectedJobId: string; refreshMs: number }) => {
+  JobArtifactsTab: (props: { selectedJobId: string }) => {
     capturedArtifactsProps = props;
     return <div data-testid="artifacts-tab" />;
   },
@@ -106,6 +106,6 @@ describe("Job detail page artifacts refresh", () => {
       queryKey: queryKeys.jobArtifacts("job-root"),
       exact: true,
     });
-    expect(capturedArtifactsProps).toEqual({ selectedJobId: "job-root", refreshMs: 3000 });
+    expect(capturedArtifactsProps).toEqual({ selectedJobId: "job-root" });
   });
 });

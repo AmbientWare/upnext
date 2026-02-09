@@ -1,5 +1,5 @@
 import { render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import { useEventSource } from "./use-event-source";
 
@@ -37,10 +37,29 @@ function Harness({ onMessage }: { onMessage: (event: MessageEvent) => void }) {
   return null;
 }
 
-describe("useEventSource", () => {
-  it("registers handlers and closes source on unmount", () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+function LifecycleHarness(props: {
+  onOpen: (event: Event) => void;
+  onReconnect: (event: Event) => void;
+  onClose: () => void;
+  onStateChange: (state: string) => void;
+  onError: (event: Event) => void;
+}) {
+  useEventSource("/events", props);
+  return null;
+}
 
+describe("useEventSource", () => {
+  beforeEach(() => {
+    MockEventSource.instances = [];
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("registers handlers and closes source on unmount", () => {
     const onMessage = vi.fn();
     const view = render(<Harness onMessage={onMessage} />);
 
@@ -52,5 +71,48 @@ describe("useEventSource", () => {
 
     view.unmount();
     expect(source.closed).toBe(true);
+  });
+
+  it("reconnects after errors and emits lifecycle callbacks", async () => {
+    const onOpen = vi.fn();
+    const onReconnect = vi.fn();
+    const onClose = vi.fn();
+    const onError = vi.fn();
+    const onStateChange = vi.fn();
+
+    const view = render(
+      <LifecycleHarness
+        onOpen={onOpen}
+        onReconnect={onReconnect}
+        onClose={onClose}
+        onError={onError}
+        onStateChange={onStateChange}
+      />
+    );
+
+    expect(MockEventSource.instances).toHaveLength(1);
+    const first = MockEventSource.instances[0];
+    first.emit("open", new Event("open"));
+
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onReconnect).toHaveBeenCalledTimes(0);
+
+    first.emit("error", new Event("error"));
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(first.closed).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(MockEventSource.instances).toHaveLength(2);
+
+    const second = MockEventSource.instances[1];
+    second.emit("open", new Event("open"));
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(second.closed).toBe(true);
+    expect(onStateChange).toHaveBeenCalledWith("open");
+    expect(onStateChange).toHaveBeenCalledWith("closed");
   });
 });

@@ -7,11 +7,13 @@ interface ApiLiveRequestsPanelProps {
   apiName: string;
 }
 
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
+
 export function ApiLiveRequestsPanel({ apiName }: ApiLiveRequestsPanelProps) {
   const { data, isPending } = useQuery({
     queryKey: queryKeys.apiRequestEvents({ api_name: apiName, limit: 200 }),
     queryFn: () => getApiRequestEvents({ api_name: apiName, limit: 200 }),
-    refetchInterval: 15000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const events = data?.events ?? [];

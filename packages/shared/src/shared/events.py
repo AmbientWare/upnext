@@ -6,9 +6,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-EVENTS_STREAM = "conduit:status:events"
-API_REQUESTS_STREAM = "conduit:api:requests"
-EVENTS_PUBSUB_CHANNEL = "conduit:status:events:pubsub"
+EVENTS_STREAM = "conduit:events"
+API_REQUESTS_STREAM = "conduit:events:api:requests"
+ARTIFACT_EVENTS_STREAM = "conduit:events:artifacts"
+EVENTS_PUBSUB_CHANNEL = "conduit:events:pubsub"
 
 
 class EventType(StrEnum):
@@ -171,3 +172,18 @@ class HealthResponse(BaseModel):
     version: str
     tier: str = "free"
     features: list[str] = Field(default_factory=list)
+
+
+class EventResponse(BaseModel):
+    """Event response."""
+
+    status: str = "ok"
+    event_type: str
+
+
+class BatchEventResponse(BaseModel):
+    """Batch event response."""
+
+    status: str = "ok"
+    processed: int
+    errors: int = 0

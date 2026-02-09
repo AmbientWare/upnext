@@ -1,10 +1,13 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 import { Panel } from "@/components/shared";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getApiTrends, queryKeys } from "@/lib/conduit-api";
+import { env } from "@/lib/env";
+import { useEventSource } from "@/hooks/use-event-source";
+import type { ApiTrendsSnapshotEvent } from "@/lib/types";
 import { BarChart4 } from "lucide-react";
 import {
   Select,
@@ -45,17 +48,40 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 const stackedStatuses = ["2xx", "4xx", "5xx"] as const;
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
 
 export function ApiTrendsPanel({ className }: ApiTrendsPanelProps) {
+  const queryClient = useQueryClient();
   const [timeRange, setTimeRange] = useState<TimeRange>("24h");
   const [granularity, setGranularity] = useState<Granularity>("hourly");
 
   const hours = timeRangeOptions.find((t) => t.value === timeRange)?.hours ?? 24;
+  const trendsQueryKey = queryKeys.apiTrends({ hours });
+  const streamUrl = `${env.VITE_API_BASE_URL}/apis/trends/stream?hours=${encodeURIComponent(String(hours))}`;
 
   const { data: trendsData, isPending } = useQuery({
-    queryKey: queryKeys.apiTrends({ hours }),
+    queryKey: trendsQueryKey,
     queryFn: () => getApiTrends({ hours }),
-    refetchInterval: 30000,
+    refetchInterval: SAFETY_RESYNC_MS,
+  });
+
+  const handleTrendsStreamMessage = useCallback(
+    (event: MessageEvent) => {
+      if (!event.data) return;
+      let payload: ApiTrendsSnapshotEvent;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (payload.type !== "apis.trends.snapshot") return;
+      queryClient.setQueryData(trendsQueryKey, payload.trends);
+    },
+    [queryClient, trendsQueryKey]
+  );
+
+  useEventSource(streamUrl, {
+    onMessage: handleTrendsStreamMessage,
   });
 
   const data = useMemo(() => {

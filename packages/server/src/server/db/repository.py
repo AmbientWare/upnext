@@ -493,6 +493,20 @@ class ArtifactRepository:
         pending_rows = list(pending_result.scalars().all())
         return await self._promote_pending_rows(pending_rows)
 
+    async def promote_pending_for_job_with_artifacts(
+        self, job_id: str
+    ) -> list[Artifact]:
+        """Promote pending artifacts for one job and return promoted rows."""
+        pending_query = (
+            select(PendingArtifact)
+            .where(PendingArtifact.job_id == job_id)
+            .order_by(PendingArtifact.id.asc())
+            .with_for_update(skip_locked=True)
+        )
+        pending_result = await self._session.execute(pending_query)
+        pending_rows = list(pending_result.scalars().all())
+        return await self._promote_pending_rows_with_artifacts(pending_rows)
+
     async def promote_ready_pending(self, *, limit: int = 500) -> int:
         """
         Promote pending artifacts whose job rows now exist.
@@ -540,28 +554,35 @@ class ArtifactRepository:
         self, pending_rows: list[PendingArtifact]
     ) -> int:
         """Promote rows into artifacts and remove source pending rows atomically."""
+        return len(await self._promote_pending_rows_with_artifacts(pending_rows))
+
+    async def _promote_pending_rows_with_artifacts(
+        self, pending_rows: list[PendingArtifact]
+    ) -> list[Artifact]:
+        """Promote rows into artifacts and return created artifact models."""
         if not pending_rows:
-            return 0
+            return []
 
         pending_ids = [row.id for row in pending_rows]
+        created: list[Artifact] = []
         for row in pending_rows:
-            self._session.add(
-                Artifact(
-                    job_id=row.job_id,
-                    name=row.name,
-                    type=row.type,
-                    size_bytes=row.size_bytes,
-                    data=row.data,
-                    path=row.path,
-                    created_at=row.created_at,
-                )
+            artifact = Artifact(
+                job_id=row.job_id,
+                name=row.name,
+                type=row.type,
+                size_bytes=row.size_bytes,
+                data=row.data,
+                path=row.path,
+                created_at=row.created_at,
             )
+            self._session.add(artifact)
+            created.append(artifact)
 
         await self._session.flush()
         await self._session.execute(
             delete(PendingArtifact).where(PendingArtifact.id.in_(pending_ids))
         )
-        return len(pending_rows)
+        return created
 
     async def get_by_id(self, artifact_id: int) -> Artifact | None:
         """Get an artifact by ID."""

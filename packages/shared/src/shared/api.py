@@ -11,10 +11,10 @@ Each hash contains:
 """
 
 # Key prefix for all API tracking keys
-API_PREFIX = "conduit:api"
+API_PREFIX = "conduit:apis"
 
 # Key prefix for API instance heartbeats
-API_INSTANCE_PREFIX = "conduit:api_instances"
+API_INSTANCE_PREFIX = "conduit:apis:instances"
 
 # TTLs (seconds)
 MINUTE_BUCKET_TTL = 600  # 10 minutes

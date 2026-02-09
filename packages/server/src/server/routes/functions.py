@@ -199,12 +199,12 @@ async def get_function(name: str) -> FunctionDetailResponse:
             runs_24h = stats["total"]
             success_rate = round(stats["success_rate"], 1)
 
-            durations = await repo.get_durations(function=function_key, start_date=day_ago)
+            durations = await repo.get_durations(
+                function=function_key, start_date=day_ago
+            )
             if durations:
                 avg_duration_ms = round(sum(durations) / len(durations), 2)
-                p95_idx = min(
-                    math.ceil(len(durations) * 0.95) - 1, len(durations) - 1
-                )
+                p95_idx = min(math.ceil(len(durations) * 0.95) - 1, len(durations) - 1)
                 p95_duration_ms = round(durations[p95_idx], 2)
 
             jobs = await repo.list_jobs(function=function_key, limit=20)
@@ -218,7 +218,9 @@ async def get_function(name: str) -> FunctionDetailResponse:
             for job in jobs:
                 duration_ms = None
                 if job.started_at and job.completed_at:
-                    duration_ms = (job.completed_at - job.started_at).total_seconds() * 1000
+                    duration_ms = (
+                        job.completed_at - job.started_at
+                    ).total_seconds() * 1000
 
                 recent_runs.append(
                     Run(
@@ -226,7 +228,9 @@ async def get_function(name: str) -> FunctionDetailResponse:
                         function=job.function,
                         function_name=job.function_name,
                         status=job.status,
-                        started_at=job.started_at.isoformat() if job.started_at else None,
+                        started_at=job.started_at.isoformat()
+                        if job.started_at
+                        else None,
                         completed_at=job.completed_at.isoformat()
                         if job.completed_at
                         else None,

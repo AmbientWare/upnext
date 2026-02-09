@@ -10,6 +10,7 @@ import type {
   ApisListResponse,
   Job,
   JobListResponse,
+  WorkersListResponse,
 } from "@/lib/types";
 import { EventStreamProvider } from "./event-stream-provider";
 
@@ -67,6 +68,10 @@ function getApiMessageHandler() {
 
 function getApiRequestEventsMessageHandler() {
   return messageHandlers.get("/api/v1/apis/events/stream");
+}
+
+function getWorkersMessageHandler() {
+  return messageHandlers.get("/api/v1/workers/stream");
 }
 
 async function flushQueue() {
@@ -291,7 +296,7 @@ describe("EventStreamProvider", () => {
     expect(list?.jobs.map((j) => j.id)).toEqual(["job-keep"]);
   });
 
-  it("applies api.snapshot/apis.snapshot and api.request updates to API caches", async () => {
+  it("applies API and worker snapshot stream updates to caches", async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { gcTime: Infinity } },
     });
@@ -326,6 +331,10 @@ describe("EventStreamProvider", () => {
         total: 0,
       }
     );
+    client.setQueryData<WorkersListResponse>(queryKeys.workers, {
+      workers: [],
+      total: 0,
+    });
 
     renderWithQueryClient(client, (
       <EventStreamProvider>
@@ -335,8 +344,10 @@ describe("EventStreamProvider", () => {
 
     const apiHandler = getApiMessageHandler();
     const apiRequestEventsHandler = getApiRequestEventsMessageHandler();
+    const workersHandler = getWorkersMessageHandler();
     expect(apiHandler).toBeDefined();
     expect(apiRequestEventsHandler).toBeDefined();
+    expect(workersHandler).toBeDefined();
 
     act(() => {
       apiHandler?.(
@@ -433,5 +444,34 @@ describe("EventStreamProvider", () => {
     );
     expect(requestEvents?.events[0]?.id).toBe("evt_1");
     expect(requestEvents?.events[0]?.api_name).toBe("orders");
+
+    act(() => {
+      workersHandler?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "workers.snapshot",
+            at: "2026-02-09T12:00:04Z",
+            workers: {
+              workers: [
+                {
+                  name: "worker-a",
+                  active: true,
+                  instance_count: 1,
+                  instances: [],
+                  functions: ["fn.task"],
+                  function_names: { "fn.task": "Task" },
+                  concurrency: 2,
+                },
+              ],
+              total: 1,
+            },
+          }),
+        })
+      );
+    });
+
+    const workers = client.getQueryData<WorkersListResponse>(queryKeys.workers);
+    expect(workers?.total).toBe(1);
+    expect(workers?.workers[0]?.name).toBe("worker-a");
   });
 });

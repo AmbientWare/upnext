@@ -17,6 +17,8 @@ export const Route = createFileRoute("/workers/")({
   component: WorkersPage,
 });
 
+const WORKERS_SAFETY_RESYNC_MS = 60 * 1000;
+
 const STATUS_DEFAULT = "active";
 
 function WorkersPage() {
@@ -26,7 +28,7 @@ function WorkersPage() {
   const { data: workersData, isPending } = useQuery({
     queryKey: queryKeys.workers,
     queryFn: getWorkers,
-    refetchInterval: 30000,
+    refetchInterval: WORKERS_SAFETY_RESYNC_MS,
   });
 
   const allWorkers = useMemo(() => workersData?.workers ?? [], [workersData?.workers]);

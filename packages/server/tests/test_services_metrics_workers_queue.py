@@ -4,14 +4,16 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fakeredis.aioredis import FakeRedis
-
-from shared.api import API_PREFIX
-from shared.workers import FUNCTION_KEY_PREFIX, WORKER_DEF_PREFIX, WORKER_KEY_PREFIX
-
 import server.services.api_tracking as api_tracking_module
 import server.services.queue as queue_service_module
 import server.services.workers as workers_service_module
+from fakeredis.aioredis import FakeRedis
+from shared.api import API_PREFIX
+from shared.workers import (
+    FUNCTION_KEY_PREFIX,
+    WORKER_DEF_PREFIX,
+    WORKER_INSTANCE_KEY_PREFIX,
+)
 
 
 @pytest.fixture
@@ -166,8 +168,12 @@ async def test_workers_service_parses_and_lists_instances_and_definitions(
         }
     )
 
-    await redis_text_client.set(f"{WORKER_KEY_PREFIX}:worker-1", instance_payload)
-    await redis_text_client.set(f"{WORKER_KEY_PREFIX}:worker-2", minimal_payload)
+    await redis_text_client.set(
+        f"{WORKER_INSTANCE_KEY_PREFIX}:worker-1", instance_payload
+    )
+    await redis_text_client.set(
+        f"{WORKER_INSTANCE_KEY_PREFIX}:worker-2", minimal_payload
+    )
     await redis_text_client.set(
         f"{WORKER_DEF_PREFIX}:alpha",
         json.dumps({"name": "alpha", "functions": ["fn.a"]}),
@@ -220,11 +226,11 @@ async def test_queue_service_sums_active_jobs_and_handles_errors(
     redis_text_client, monkeypatch
 ) -> None:
     await redis_text_client.set(
-        f"{WORKER_KEY_PREFIX}:worker-1",
+        f"{WORKER_INSTANCE_KEY_PREFIX}:worker-1",
         json.dumps({"id": "w1", "active_jobs": 2}),
     )
     await redis_text_client.set(
-        f"{WORKER_KEY_PREFIX}:worker-2",
+        f"{WORKER_INSTANCE_KEY_PREFIX}:worker-2",
         json.dumps({"id": "w2", "active_jobs": 5}),
     )
 
@@ -234,5 +240,5 @@ async def test_queue_service_sums_active_jobs_and_handles_errors(
     monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
     assert await queue_service_module.get_active_job_count() == 7
 
-    await redis_text_client.set(f"{WORKER_KEY_PREFIX}:worker-bad", "{not-json")
+    await redis_text_client.set(f"{WORKER_INSTANCE_KEY_PREFIX}:worker-bad", "{not-json")
     assert await queue_service_module.get_active_job_count() == 0

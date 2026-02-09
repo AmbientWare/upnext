@@ -23,6 +23,8 @@ export const Route = createFileRoute("/functions/$name/")({
   component: FunctionDetailPage,
 });
 
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
+
 const typeStyles: Record<FunctionType, string> = {
   task: "bg-blue-500/20 text-blue-400",
   cron: "bg-violet-500/20 text-violet-400",
@@ -44,13 +46,13 @@ function FunctionDetailPage() {
   const { data: fn, isPending: isFunctionPending } = useQuery({
     queryKey: queryKeys.function(decodedName),
     queryFn: () => getFunction(decodedName),
-    refetchInterval: 30000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const { data: jobsData, isPending: isJobsPending } = useQuery({
     queryKey: queryKeys.jobs({ function: decodedName, limit: 50 }),
     queryFn: () => getJobs({ function: decodedName, limit: 50 }),
-    refetchInterval: 30000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const jobs = jobsData?.jobs ?? [];

@@ -1,10 +1,13 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn, type JobStatus } from "@/lib/utils";
 import { Panel } from "@/components/shared";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getJobTrends, queryKeys } from "@/lib/conduit-api";
+import { env } from "@/lib/env";
+import { useEventSource } from "@/hooks/use-event-source";
+import type { JobTrendsSnapshotEvent } from "@/lib/types";
 import { BarChart4 } from "lucide-react";
 import {
   Select,
@@ -54,18 +57,44 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 const stackedStatuses: JobStatus[] = ["complete", "failed", "retrying", "active"];
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
 
 export function TrendsPanel({ className }: TrendsPanelProps) {
+  const queryClient = useQueryClient();
   const [timeRange, setTimeRange] = useState<TimeRange>("24h");
   const [jobType, setJobType] = useState<JobType>("all");
   const [granularity, setGranularity] = useState<Granularity>("hourly");
 
   const hours = timeRangeOptions.find((t) => t.value === timeRange)?.hours ?? 24;
+  const typeFilter = jobType === "all" ? undefined : jobType;
+  const trendsQueryKey = queryKeys.jobTrends({ hours, type: typeFilter });
+  const params = new URLSearchParams({ hours: String(hours) });
+  if (typeFilter) params.set("type", typeFilter);
+  const streamUrl = `${env.VITE_API_BASE_URL}/jobs/trends/stream?${params.toString()}`;
 
   const { data: trendsData, isPending } = useQuery({
-    queryKey: queryKeys.jobTrends({ hours, type: jobType === "all" ? undefined : jobType }),
-    queryFn: () => getJobTrends({ hours, type: jobType === "all" ? undefined : jobType }),
-    refetchInterval: 30000,
+    queryKey: trendsQueryKey,
+    queryFn: () => getJobTrends({ hours, type: typeFilter }),
+    refetchInterval: SAFETY_RESYNC_MS,
+  });
+
+  const handleTrendsStreamMessage = useCallback(
+    (event: MessageEvent) => {
+      if (!event.data) return;
+      let payload: JobTrendsSnapshotEvent;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (payload.type !== "jobs.trends.snapshot") return;
+      queryClient.setQueryData(trendsQueryKey, payload.trends);
+    },
+    [queryClient, trendsQueryKey]
+  );
+
+  useEventSource(streamUrl, {
+    onMessage: handleTrendsStreamMessage,
   });
 
   const data = useMemo(() => {

@@ -19,6 +19,7 @@ export const Route = createFileRoute("/apis/")({
 });
 
 const STATUS_DEFAULT = "active";
+const SAFETY_RESYNC_MS = 10 * 60 * 1000;
 
 function ApisPage() {
   const [search, setSearch] = useState("");
@@ -27,7 +28,7 @@ function ApisPage() {
   const { data: apisData, isPending } = useQuery({
     queryKey: queryKeys.apis,
     queryFn: getApis,
-    refetchInterval: 45000,
+    refetchInterval: SAFETY_RESYNC_MS,
   });
 
   const allApis = useMemo(() => apisData?.apis ?? [], [apisData?.apis]);

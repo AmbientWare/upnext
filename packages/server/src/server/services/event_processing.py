@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from shared.events import (
+    ARTIFACT_EVENTS_STREAM,
     EventType,
     JobCheckpointEvent,
     JobCompletedEvent,
@@ -18,10 +19,12 @@ from shared.events import (
     JobRetryingEvent,
     JobStartedEvent,
 )
+from shared.schemas import ArtifactResponse, ArtifactStreamEvent
 
 from server.db.repository import ArtifactRepository, JobRepository
 from server.db.session import get_database
 from server.config import get_settings
+from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +99,46 @@ async def process_event(
 async def _promote_pending_artifacts(session: Any, job_id: str) -> None:
     """Promote queued artifacts once the job row exists."""
     artifact_repo = ArtifactRepository(session)
-    promoted = await artifact_repo.promote_pending_for_job(job_id)
-    if promoted > 0:
-        logger.debug("Promoted %d pending artifact(s) for job %s", promoted, job_id)
+    promoted = await artifact_repo.promote_pending_for_job_with_artifacts(job_id)
+    if promoted:
+        logger.debug("Promoted %d pending artifact(s) for job %s", len(promoted), job_id)
+    for artifact in promoted:
+        await _publish_artifact_event(
+            ArtifactStreamEvent(
+                type="artifact.promoted",
+                at=datetime.now(UTC).isoformat(),
+                job_id=artifact.job_id,
+                artifact_id=artifact.id,
+                pending_id=None,
+                artifact=ArtifactResponse(
+                    id=artifact.id,
+                    job_id=artifact.job_id,
+                    name=artifact.name,
+                    type=artifact.type,
+                    size_bytes=artifact.size_bytes,
+                    data=artifact.data,
+                    path=artifact.path,
+                    created_at=artifact.created_at,
+                ),
+            )
+        )
+
+
+async def _publish_artifact_event(event: ArtifactStreamEvent) -> None:
+    """Publish artifact lifecycle updates for realtime UI consumers."""
+    try:
+        redis_client = await get_redis()
+    except RuntimeError:
+        return
+    try:
+        await redis_client.xadd(
+            ARTIFACT_EVENTS_STREAM,
+            {"data": event.model_dump_json()},
+            maxlen=10_000,
+            approximate=True,
+        )
+    except Exception as exc:  # pragma: no cover - best effort path
+        logger.debug("Failed publishing artifact event: %s", exc)
 
 
 async def _handle_job_started(

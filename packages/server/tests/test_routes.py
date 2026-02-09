@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from typing import AsyncIterator, cast
 
 import pytest
 from fastapi import HTTPException, Response
@@ -11,6 +13,8 @@ from shared.schemas import (
     ArtifactType,
     CreateArtifactRequest,
     FunctionType,
+    JobTrendHour,
+    JobTrendsResponse,
     WorkerInstance,
     WorkerStats,
 )
@@ -18,12 +22,20 @@ from shared.events import BatchEventItem, BatchEventRequest
 
 from server.db.repository import JobRepository
 import server.routes.apis as apis_route
+import server.routes.apis.apis_root as apis_root_route
 import server.routes.artifacts as artifacts_route
+import server.routes.artifacts.job_artifacts as job_artifacts_route
+import server.routes.artifacts.artifacts_stream as artifacts_stream_route
 import server.routes.dashboard as dashboard_route
 import server.routes.events as events_route
+import server.routes.events.events_root as events_root_route
 import server.routes.functions as functions_route
 import server.routes.jobs as jobs_route
+import server.routes.jobs.jobs_root as jobs_root_route
+import server.routes.jobs.jobs_stream as jobs_stream_route
 import server.routes.workers as workers_route
+import server.routes.workers.workers_root as workers_root_route
+import server.routes.workers.workers_stream as workers_stream_route
 
 
 @pytest.mark.asyncio
@@ -44,7 +56,7 @@ async def test_jobs_list_get_and_trends_routes_cover_happy_paths(sqlite_db, monk
             }
         )
 
-    monkeypatch.setattr(jobs_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(jobs_root_route, "get_database", lambda: sqlite_db)
 
     listed = await jobs_route.list_jobs(
         function="fn.list",
@@ -77,7 +89,7 @@ async def test_jobs_routes_handle_missing_database_and_not_found(monkeypatch) ->
     def no_db():
         raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr(jobs_route, "get_database", no_db)
+    monkeypatch.setattr(jobs_root_route, "get_database", no_db)
 
     listed = await jobs_route.list_jobs(
         function=None,
@@ -105,6 +117,155 @@ async def test_jobs_routes_handle_missing_database_and_not_found(monkeypatch) ->
     with pytest.raises(HTTPException, match="Job not found") as job_exc:
         await jobs_route.get_job("missing")
     assert job_exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) -> None:
+    class _RedisStub:
+        async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return [
+                (
+                    "conduit:status:events",
+                    [("1000-0", {"type": "job.started", "data": "{}"})],
+                )
+            ]
+
+    class _RequestStub:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def is_disconnected(self) -> bool:
+            self._calls += 1
+            return self._calls > 2
+
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    call_count = {"value": 0}
+
+    async def _get_job_trends(
+        hours: int = 24,
+        function: str | None = None,
+        type: str | None = None,
+    ) -> JobTrendsResponse:
+        _ = hours, function, type
+        call_count["value"] += 1
+        return JobTrendsResponse(
+            hourly=[
+                JobTrendHour(
+                    hour="2026-02-09T12:00:00Z",
+                    complete=call_count["value"],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(jobs_stream_route, "get_redis", _get_redis)
+    monkeypatch.setattr(jobs_stream_route, "get_job_trends", _get_job_trends)
+
+    response = await jobs_route.stream_job_trends(_RequestStub())
+    body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
+    open_frame = await anext(body)
+    first_snapshot_frame = await anext(body)
+    second_snapshot_frame = await anext(body)
+
+    assert open_frame == "event: open\ndata: connected\n\n"
+
+    first = json.loads(first_snapshot_frame.removeprefix("data: ").strip())
+    second = json.loads(second_snapshot_frame.removeprefix("data: ").strip())
+    assert first["type"] == "jobs.trends.snapshot"
+    assert first["trends"]["hourly"][0]["complete"] == 1
+    assert second["type"] == "jobs.trends.snapshot"
+    assert second["trends"]["hourly"][0]["complete"] == 2
+
+
+@pytest.mark.asyncio
+async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
+    class _RedisStub:
+        def __init__(self) -> None:
+            self._call = 0
+
+        async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            self._call += 1
+            if self._call == 1:
+                return [
+                    (
+                        "conduit:status:events",
+                        [
+                            (
+                                "1000-0",
+                                {
+                                    "type": "job.progress",
+                                    "data": json.dumps(
+                                        {"function": "fn.list", "progress": 0.5}
+                                    ),
+                                },
+                            )
+                        ],
+                    )
+                ]
+            return [
+                (
+                    "conduit:status:events",
+                    [
+                        (
+                            "1001-0",
+                            {
+                                "type": "job.started",
+                                "data": json.dumps({"function": "fn.list"}),
+                            },
+                        )
+                    ],
+                )
+            ]
+
+    class _RequestStub:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def is_disconnected(self) -> bool:
+            self._calls += 1
+            return self._calls > 3
+
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    call_count = {"value": 0}
+
+    async def _get_job_trends(
+        hours: int = 24,
+        function: str | None = None,
+        type: str | None = None,
+    ) -> JobTrendsResponse:
+        _ = hours, function, type
+        call_count["value"] += 1
+        return JobTrendsResponse(
+            hourly=[
+                JobTrendHour(
+                    hour="2026-02-09T12:00:00Z",
+                    complete=call_count["value"],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(jobs_stream_route, "get_redis", _get_redis)
+    monkeypatch.setattr(jobs_stream_route, "get_job_trends", _get_job_trends)
+
+    response = await jobs_route.stream_job_trends(_RequestStub())
+    body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
+    open_frame = await anext(body)
+    first_snapshot_frame = await anext(body)
+    second_snapshot_frame = await anext(body)
+
+    assert open_frame == "event: open\ndata: connected\n\n"
+
+    first = json.loads(first_snapshot_frame.removeprefix("data: ").strip())
+    second = json.loads(second_snapshot_frame.removeprefix("data: ").strip())
+    assert first["type"] == "jobs.trends.snapshot"
+    assert first["trends"]["hourly"][0]["complete"] == 1
+    assert second["type"] == "jobs.trends.snapshot"
+    assert second["trends"]["hourly"][0]["complete"] == 2
+    # Initial snapshot + one update from job.started. job.progress is ignored.
+    assert call_count["value"] == 2
 
 
 @pytest.mark.asyncio
@@ -253,12 +414,107 @@ async def test_workers_route_includes_defs_and_instance_only_workers(monkeypatch
             ),
         ]
 
-    monkeypatch.setattr(workers_route, "get_worker_definitions", fake_defs)
-    monkeypatch.setattr(workers_route, "list_worker_instances", fake_instances)
+    monkeypatch.setattr(workers_root_route, "get_worker_definitions", fake_defs)
+    monkeypatch.setattr(workers_root_route, "list_worker_instances", fake_instances)
 
     out = await workers_route.list_workers_route()
     names = {w.name for w in out.workers}
     assert names == {"defined-worker", "ephemeral-worker"}
+
+
+@pytest.mark.asyncio
+async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> None:
+    class _Settings:
+        api_realtime_enabled = True
+
+    class _RedisStub:
+        async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return [
+                (
+                    "conduit:workers:events",
+                    [
+                        (
+                            "1000-0",
+                            {
+                                "data": json.dumps(
+                                    {
+                                        "type": "worker.heartbeat",
+                                        "at": "2026-02-09T12:00:01Z",
+                                        "worker_id": "w-1",
+                                        "worker_name": "defined-worker",
+                                    }
+                                )
+                            },
+                        )
+                    ],
+                )
+            ]
+
+    class _RequestStub:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def is_disconnected(self) -> bool:
+            self._calls += 1
+            return self._calls > 2
+
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    call_count = {"value": 0}
+
+    async def _list_workers() -> workers_route.WorkersListResponse:
+        call_count["value"] += 1
+        return workers_route.WorkersListResponse(
+            workers=[
+                workers_route.WorkerInfo(
+                    name="defined-worker",
+                    active=True,
+                    instance_count=1,
+                    instances=[],
+                    functions=["fn.defined"],
+                    function_names={"fn.defined": "defined"},
+                    concurrency=2,
+                )
+            ],
+            total=1,
+        )
+
+    monkeypatch.setattr(workers_stream_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(workers_stream_route, "get_redis", _get_redis)
+    monkeypatch.setattr(workers_stream_route, "list_workers_route", _list_workers)
+
+    response = await workers_route.stream_workers(_RequestStub())
+    body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
+    open_frame = await anext(body)
+    first_snapshot_frame = await anext(body)
+    second_snapshot_frame = await anext(body)
+
+    assert open_frame == "event: open\ndata: connected\n\n"
+
+    first = json.loads(first_snapshot_frame.removeprefix("data: ").strip())
+    second = json.loads(second_snapshot_frame.removeprefix("data: ").strip())
+    assert first["type"] == "workers.snapshot"
+    assert first["workers"]["total"] == 1
+    assert second["type"] == "workers.snapshot"
+    assert second["workers"]["workers"][0]["name"] == "defined-worker"
+    assert call_count["value"] == 2
+
+
+@pytest.mark.asyncio
+async def test_workers_stream_can_be_disabled(monkeypatch) -> None:
+    class _Settings:
+        api_realtime_enabled = False
+
+    class _RequestStub:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    monkeypatch.setattr(workers_stream_route, "get_settings", lambda: _Settings())
+
+    with pytest.raises(HTTPException, match="disabled") as exc:
+        await workers_route.stream_workers(_RequestStub())
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -308,7 +564,7 @@ async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) ->
     async def raise_integrity(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise IntegrityError("insert", {}, Exception("fk race"))
 
-    monkeypatch.setattr(artifacts_route.ArtifactRepository, "create", raise_integrity)
+    monkeypatch.setattr(job_artifacts_route.ArtifactRepository, "create", raise_integrity)
 
     response = Response()
     out = await artifacts_route.create_artifact(
@@ -322,13 +578,98 @@ async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None:
+    class _RedisStub:
+        async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return [
+                (
+                    "conduit:artifacts:events",
+                    [
+                        (
+                            "1000-0",
+                            {
+                                "data": json.dumps(
+                                    {
+                                        "type": "artifact.created",
+                                        "at": "2026-02-09T12:00:00Z",
+                                        "job_id": "job-a",
+                                        "artifact_id": 1,
+                                        "pending_id": None,
+                                        "artifact": {
+                                            "id": 1,
+                                            "job_id": "job-a",
+                                            "name": "summary",
+                                            "type": "json",
+                                            "size_bytes": 11,
+                                            "data": {"ok": True},
+                                            "path": None,
+                                            "created_at": "2026-02-09T12:00:00Z",
+                                        },
+                                    }
+                                )
+                            },
+                        ),
+                        (
+                            "1001-0",
+                            {
+                                "data": json.dumps(
+                                    {
+                                        "type": "artifact.created",
+                                        "at": "2026-02-09T12:00:01Z",
+                                        "job_id": "job-b",
+                                        "artifact_id": 2,
+                                        "pending_id": None,
+                                        "artifact": {
+                                            "id": 2,
+                                            "job_id": "job-b",
+                                            "name": "skip-me",
+                                            "type": "json",
+                                            "size_bytes": 10,
+                                            "data": {"ok": False},
+                                            "path": None,
+                                            "created_at": "2026-02-09T12:00:01Z",
+                                        },
+                                    }
+                                )
+                            },
+                        ),
+                    ],
+                )
+            ]
+
+    class _RequestStub:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def is_disconnected(self) -> bool:
+            self._calls += 1
+            return self._calls > 2
+
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    monkeypatch.setattr(artifacts_stream_route, "get_redis", _get_redis)
+
+    response = await artifacts_route.stream_job_artifacts("job-a", _RequestStub())
+    body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
+    open_frame = await anext(body)
+    event_frame = await anext(body)
+
+    assert open_frame == "event: open\ndata: connected\n\n"
+    payload = json.loads(event_frame.removeprefix("data: ").strip())
+    assert payload["type"] == "artifact.created"
+    assert payload["job_id"] == "job-a"
+    assert payload["artifact_id"] == 1
+
+
+@pytest.mark.asyncio
 async def test_event_batch_reports_processed_and_errors(monkeypatch) -> None:
     async def fake_process_event(event_type: str, data: dict, worker_id: str | None) -> bool:
         if event_type == "bad.event":
             raise RuntimeError("bad")
         return event_type != "ignored.event"
 
-    monkeypatch.setattr(events_route, "process_event", fake_process_event)
+    monkeypatch.setattr(events_root_route, "process_event", fake_process_event)
 
     req = BatchEventRequest(
         events=[
@@ -403,8 +744,8 @@ async def test_apis_route_merges_tracked_and_active_instances(monkeypatch) -> No
             ),
         ]
 
-    monkeypatch.setattr(apis_route, "get_metrics_reader", fake_reader)
-    monkeypatch.setattr(apis_route, "list_api_instances", fake_instances)
+    monkeypatch.setattr(apis_root_route, "get_metrics_reader", fake_reader)
+    monkeypatch.setattr(apis_root_route, "list_api_instances", fake_instances)
 
     out = await apis_route.list_apis()
     names = {api.name for api in out.apis}

@@ -14,6 +14,7 @@ from server.db.repository import JobRepository
 from server.services.event_processing import process_event
 import server.services.event_processing as event_processing_module
 import server.routes.jobs as jobs_route
+import server.routes.jobs.jobs_root as jobs_root_route
 
 
 @pytest.mark.contract
@@ -198,7 +199,7 @@ async def test_job_trends_route_zero_fills_missing_hours(sqlite_db, monkeypatch)
             }
         )
 
-    monkeypatch.setattr(jobs_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(jobs_root_route, "get_database", lambda: sqlite_db)
     out = await jobs_route.get_job_trends(hours=4, function="fn.trend", type=None)
 
     assert len(out.hourly) == 4

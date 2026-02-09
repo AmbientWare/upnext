@@ -14,19 +14,13 @@ from shared.schemas import (
 
 from server.db.repository import JobRepository
 from server.db.session import get_database
+from server.routes.jobs.jobs_utils import (
+    calculate_duration_ms,
+)
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/jobs", tags=["jobs"])
-
-
-def _calculate_duration_ms(
-    started_at: datetime | None, completed_at: datetime | None
-) -> float | None:
-    """Calculate job duration in milliseconds."""
-    if started_at and completed_at:
-        return (completed_at - started_at).total_seconds() * 1000
-    return None
+router = APIRouter(tags=["jobs"])
 
 
 @router.get("", response_model=JobListResponse)
@@ -97,7 +91,7 @@ async def list_jobs(
                 metadata=job.metadata_,
                 result=job.result,
                 error=job.error,
-                duration_ms=_calculate_duration_ms(job.started_at, job.completed_at),
+                duration_ms=calculate_duration_ms(job.started_at, job.completed_at),
             )
             for job in jobs
         ]
@@ -269,7 +263,7 @@ async def get_job_timeline(job_id: str) -> JobListResponse:
                     metadata=job.metadata_,
                     result=job.result,
                     error=job.error,
-                    duration_ms=_calculate_duration_ms(
+                    duration_ms=calculate_duration_ms(
                         job.started_at, job.completed_at
                     ),
                 )
@@ -319,7 +313,7 @@ async def get_job(job_id: str) -> JobHistoryResponse:
             metadata=job.metadata_,
             result=job.result,
             error=job.error,
-            duration_ms=_calculate_duration_ms(job.started_at, job.completed_at),
+            duration_ms=calculate_duration_ms(job.started_at, job.completed_at),
         )
 
 

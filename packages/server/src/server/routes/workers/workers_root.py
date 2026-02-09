@@ -17,10 +17,10 @@ from server.services.workers import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/workers", tags=["workers"])
+worker_root_router = APIRouter(tags=["workers"])
 
 
-@router.get("", response_model=WorkersListResponse)
+@worker_root_router.get("", response_model=WorkersListResponse)
 async def list_workers_route() -> WorkersListResponse:
     """List all workers with active instances, matching API pattern."""
     try:
@@ -69,7 +69,7 @@ async def list_workers_route() -> WorkersListResponse:
     return WorkersListResponse(workers=workers, total=len(workers))
 
 
-@router.get("/{worker_id}", response_model=WorkerInstance)
+@worker_root_router.get("/{worker_id}", response_model=WorkerInstance)
 async def get_worker_route(worker_id: str) -> WorkerInstance:
     """Get a specific worker instance by ID."""
     try:

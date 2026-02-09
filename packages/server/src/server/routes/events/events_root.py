@@ -1,84 +1,23 @@
 """Event ingestion routes."""
 
-import asyncio
 import logging
-from typing import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi import APIRouter
 from shared.events import (
-    EVENTS_PUBSUB_CHANNEL,
     BatchEventRequest,
+    BatchEventResponse,
     EventRequest,
+    EventResponse,
 )
 
 from server.services.event_processing import process_event
-from server.services import get_redis
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/events", tags=["events"])
+events_root_router = APIRouter(tags=["events"])
 
 
-class EventResponse(BaseModel):
-    """Event response."""
-
-    status: str = "ok"
-    event_type: str
-
-
-class BatchEventResponse(BaseModel):
-    """Batch event response."""
-
-    status: str = "ok"
-    processed: int
-    errors: int = 0
-
-
-@router.get("/stream")
-async def stream_events() -> StreamingResponse:
-    """Stream job events via Server-Sent Events (SSE)."""
-    try:
-        redis_client = await get_redis()
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe(EVENTS_PUBSUB_CHANNEL)
-
-    async def event_stream() -> AsyncGenerator[str, None]:
-        try:
-            yield "event: open\ndata: connected\n\n"
-            while True:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True,
-                    timeout=15.0,
-                )
-                if message and message.get("type") == "message":
-                    data = message.get("data")
-                    if isinstance(data, bytes):
-                        data = data.decode()
-                    yield f"data: {data}\n\n"
-                else:
-                    yield ": keep-alive\n\n"
-        except asyncio.CancelledError:
-            pass
-
-        finally:
-            await pubsub.unsubscribe(EVENTS_PUBSUB_CHANNEL)
-            await pubsub.close()
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
-    )
-
-
-@router.post("/", response_model=EventResponse)
+@events_root_router.post("/", response_model=EventResponse)
 async def ingest_event(request: EventRequest) -> EventResponse:
     """
     Ingest a job event from a worker.
@@ -99,7 +38,7 @@ async def ingest_event(request: EventRequest) -> EventResponse:
     return EventResponse(status="ok", event_type=event_type)
 
 
-@router.post("/batch", response_model=BatchEventResponse)
+@events_root_router.post("/batch", response_model=BatchEventResponse)
 async def ingest_batch(request: BatchEventRequest) -> BatchEventResponse:
     """
     Ingest a batch of events from a worker.

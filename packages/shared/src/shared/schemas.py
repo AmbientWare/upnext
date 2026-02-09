@@ -86,6 +86,14 @@ class JobTrendsResponse(BaseModel):
     hourly: list[JobTrendHour]
 
 
+class JobTrendsSnapshotEvent(BaseModel):
+    """Realtime snapshot event for job trends."""
+
+    type: Literal["jobs.trends.snapshot"] = "jobs.trends.snapshot"
+    at: str
+    trends: JobTrendsResponse
+
+
 # =============================================================================
 # Artifact Schemas
 # =============================================================================
@@ -130,6 +138,22 @@ class ArtifactQueuedResponse(BaseModel):
 
 
 ArtifactCreateResponse = ArtifactResponse | ArtifactQueuedResponse
+
+
+class ArtifactStreamEvent(BaseModel):
+    """Realtime artifact lifecycle event for dashboard consumers."""
+
+    type: Literal[
+        "artifact.created",
+        "artifact.queued",
+        "artifact.promoted",
+        "artifact.deleted",
+    ]
+    at: str
+    job_id: str
+    artifact_id: int | None = None
+    pending_id: int | None = None
+    artifact: ArtifactResponse | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -197,6 +221,14 @@ class WorkersListResponse(BaseModel):
 
     workers: list[WorkerInfo]
     total: int
+
+
+class WorkersSnapshotEvent(BaseModel):
+    """Realtime snapshot event for workers list."""
+
+    type: Literal["workers.snapshot"] = "workers.snapshot"
+    at: str
+    workers: WorkersListResponse
 
 
 class WorkerStats(BaseModel):
@@ -366,6 +398,14 @@ class ApiTrendsResponse(BaseModel):
     """API trends response."""
 
     hourly: list[ApiTrendHour]
+
+
+class ApiTrendsSnapshotEvent(BaseModel):
+    """Realtime snapshot event for API trends."""
+
+    type: Literal["apis.trends.snapshot"] = "apis.trends.snapshot"
+    at: str
+    trends: ApiTrendsResponse
 
 
 # =============================================================================

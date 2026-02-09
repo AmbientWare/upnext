@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 import server.routes.events as events_route
+import server.routes.events.events_stream as events_stream_route
 
 
 @dataclass
@@ -52,7 +53,7 @@ async def test_stream_events_returns_503_when_redis_unavailable(monkeypatch) -> 
     async def fail_get_redis():  # type: ignore[no-untyped-def]
         raise RuntimeError("redis unavailable")
 
-    monkeypatch.setattr(events_route, "get_redis", fail_get_redis)
+    monkeypatch.setattr(events_stream_route, "get_redis", fail_get_redis)
 
     with pytest.raises(HTTPException, match="redis unavailable") as exc:
         await events_route.stream_events()
@@ -73,7 +74,7 @@ async def test_stream_events_emits_frames_and_cleans_pubsub(monkeypatch) -> None
     async def fake_get_redis() -> _RedisStub:
         return redis_stub
 
-    monkeypatch.setattr(events_route, "get_redis", fake_get_redis)
+    monkeypatch.setattr(events_stream_route, "get_redis", fake_get_redis)
 
     response = await events_route.stream_events()
     assert response.media_type == "text/event-stream"

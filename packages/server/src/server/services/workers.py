@@ -9,7 +9,11 @@ import logging
 from typing import Any
 
 from shared.schemas import WorkerInstance, WorkerStats
-from shared.workers import FUNCTION_KEY_PREFIX, WORKER_DEF_PREFIX, WORKER_KEY_PREFIX
+from shared.workers import (
+    FUNCTION_KEY_PREFIX,
+    WORKER_DEF_PREFIX,
+    WORKER_INSTANCE_KEY_PREFIX,
+)
 
 from server.services.redis import get_redis
 
@@ -37,10 +41,18 @@ def _parse_worker_instance(data: str) -> WorkerInstance:
 async def get_worker_instance(worker_id: str) -> WorkerInstance | None:
     """Get a worker instance by ID."""
     r = await get_redis()
-    data = await r.get(f"{WORKER_KEY_PREFIX}:{worker_id}")
+    key = f"{WORKER_INSTANCE_KEY_PREFIX}:{worker_id}"
+    try:
+        data = await r.get(key)
+    except Exception:
+        return None
     if not data:
         return None
-    return _parse_worker_instance(data)
+    try:
+        return _parse_worker_instance(data)
+    except Exception:
+        logger.debug("Invalid worker instance payload for key=%s", key)
+        return None
 
 
 async def list_worker_instances() -> list[WorkerInstance]:
@@ -48,10 +60,21 @@ async def list_worker_instances() -> list[WorkerInstance]:
     r = await get_redis()
     instances: list[WorkerInstance] = []
 
-    async for key in r.scan_iter(match=f"{WORKER_KEY_PREFIX}:*", count=100):
-        data = await r.get(key)
-        if data:
+    async for key in r.scan_iter(match=f"{WORKER_INSTANCE_KEY_PREFIX}:*", count=100):
+        try:
+            data = await r.get(key)
+        except Exception:
+            logger.debug("Skipping unreadable worker key %s", key)
+            continue
+
+        if not data:
+            continue
+
+        try:
             instances.append(_parse_worker_instance(data))
+        except Exception:
+            logger.debug("Skipping malformed worker payload for key %s", key)
+            continue
 
     return instances
 
@@ -74,10 +97,8 @@ async def get_worker_stats() -> WorkerStats:
     """Get worker statistics."""
     r = await get_redis()
     total = 0
-
-    async for _ in r.scan_iter(match=f"{WORKER_KEY_PREFIX}:*", count=100):
+    async for _ in r.scan_iter(match=f"{WORKER_INSTANCE_KEY_PREFIX}:*", count=100):
         total += 1
-
     return WorkerStats(total=total)
 
 

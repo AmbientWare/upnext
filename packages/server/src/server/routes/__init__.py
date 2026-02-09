@@ -14,10 +14,10 @@ from server.routes.workers import router as workers_router
 v1_router = APIRouter(prefix="/api/v1")
 
 # Include routers
-v1_router.include_router(artifacts_router)
 v1_router.include_router(events_router)
 v1_router.include_router(workers_router)
 v1_router.include_router(jobs_router)
+v1_router.include_router(artifacts_router)
 v1_router.include_router(functions_router)
 v1_router.include_router(dashboard_router)
 v1_router.include_router(apis_router)

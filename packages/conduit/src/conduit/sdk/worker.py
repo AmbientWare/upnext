@@ -24,7 +24,8 @@ from shared.workers import (
     FUNCTION_KEY_PREFIX,
     WORKER_DEF_PREFIX,
     WORKER_DEF_TTL,
-    WORKER_KEY_PREFIX,
+    WORKER_EVENTS_STREAM,
+    WORKER_INSTANCE_KEY_PREFIX,
     WORKER_TTL,
 )
 
@@ -511,8 +512,9 @@ class Worker:
         """Write worker data to Redis with TTL."""
         if not self._redis_client or not self._worker_id:
             return
-        key = f"{WORKER_KEY_PREFIX}:{self._worker_id}"
+        key = f"{WORKER_INSTANCE_KEY_PREFIX}:{self._worker_id}"
         await self._redis_client.setex(key, WORKER_TTL, self._worker_data())
+        await self._publish_worker_signal("worker.heartbeat")
 
     async def _write_worker_definition(self) -> None:
         """Write persistent worker definition to Redis with 30-day TTL.
@@ -533,6 +535,7 @@ class Worker:
             }
         )
         await self._redis_client.setex(key, WORKER_DEF_TTL, data)
+        await self._publish_worker_signal("worker.definition.updated")
 
     async def _write_function_definitions(self) -> None:
         """Write function definitions to Redis with a 30-day TTL.
@@ -550,6 +553,37 @@ class Worker:
                 continue
             key = f"{FUNCTION_KEY_PREFIX}:{function_key}"
             await self._redis_client.setex(key, FUNCTION_DEF_TTL, json.dumps(func_def))
+
+    async def _publish_worker_signal(self, signal_type: str) -> None:
+        """Publish worker heartbeat/lifecycle signal for realtime dashboards."""
+        if not self._redis_client or not self._worker_id:
+            return
+
+        payload = json.dumps(
+            {
+                "type": signal_type,
+                "at": datetime.now(UTC).isoformat(),
+                "worker_id": self._worker_id,
+                "worker_name": self.name,
+            }
+        )
+        try:
+            try:
+                await self._redis_client.xadd(
+                    WORKER_EVENTS_STREAM,
+                    {"data": payload},
+                    maxlen=10_000,
+                    approximate=True,
+                )
+            except TypeError:
+                # Compatibility fallback for Redis clients lacking approximate trim.
+                await self._redis_client.xadd(
+                    WORKER_EVENTS_STREAM,
+                    {"data": payload},
+                    maxlen=10_000,
+                )
+        except Exception as e:
+            logger.debug(f"Failed to publish worker signal '{signal_type}': {e}")
 
     async def _heartbeat_loop(self) -> None:
         """Refresh worker heartbeat TTL in Redis periodically."""
@@ -592,7 +626,11 @@ class Worker:
         task_handle = self._task_handles.get(function_name)
         if not task_handle:
             task_handle = next(
-                (h for h in self._task_handles.values() if h.function_key == function_name),
+                (
+                    h
+                    for h in self._task_handles.values()
+                    if h.function_key == function_name
+                ),
                 None,
             )
         if not task_handle:
@@ -708,8 +746,9 @@ class Worker:
         if self._redis_client and self._worker_id:
             try:
                 await self._redis_client.delete(
-                    f"{WORKER_KEY_PREFIX}:{self._worker_id}"
+                    f"{WORKER_INSTANCE_KEY_PREFIX}:{self._worker_id}"
                 )
+                await self._publish_worker_signal("worker.stopped")
             except Exception:
                 pass
         if self._queue_backend:
