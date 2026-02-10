@@ -1,7 +1,7 @@
 [project]
-name = "conduit-server"
+name = "upnext-server"
 dynamic = ["version"]
-description = "Conduit hosted API server"
+description = "UpNext hosted API server"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,7 +14,7 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.12.0",
     "redis>=7.1.0",
-    "conduit-shared",
+    "upnext-shared",
     "sqlalchemy>=2.0.36",
     "uvicorn>=0.34.0",
 ]
@@ -38,4 +38,4 @@ packages = ["src/server"]
 path = "../shared/src/shared/_version.py"
 
 [tool.uv.sources]
-"conduit-shared" = { workspace = true }
+"upnext-shared" = { workspace = true }

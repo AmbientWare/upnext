@@ -1,4 +1,4 @@
-"""Alembic environment configuration for Conduit migrations."""
+"""Alembic environment configuration for UpNext migrations."""
 
 import os
 from logging.config import fileConfig
@@ -24,7 +24,7 @@ target_metadata = Base.metadata
 
 def get_url() -> str:
     """Get database URL from environment or config."""
-    url = os.environ.get("CONDUIT_DATABASE_URL") or os.environ.get("DATABASE_URL")
+    url = os.environ.get("UPNEXT_DATABASE_URL") or os.environ.get("DATABASE_URL")
     if url:
         # Convert asyncpg to psycopg2 for alembic (alembic doesn't support async)
         if "+asyncpg" in url:

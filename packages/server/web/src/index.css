@@ -7,18 +7,18 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  /* Conduit Brand Colors */
-  --color-conduit-50: oklch(0.97 0.02 220);
-  --color-conduit-100: oklch(0.93 0.04 220);
-  --color-conduit-200: oklch(0.86 0.08 220);
-  --color-conduit-300: oklch(0.76 0.12 220);
-  --color-conduit-400: oklch(0.68 0.16 220);
-  --color-conduit-500: oklch(0.60 0.18 220);
-  --color-conduit-600: oklch(0.52 0.16 220);
-  --color-conduit-700: oklch(0.44 0.14 220);
-  --color-conduit-800: oklch(0.36 0.12 220);
-  --color-conduit-900: oklch(0.28 0.10 220);
-  --color-conduit-950: oklch(0.20 0.08 220);
+  /* UpNext Brand Colors */
+  --color-upnext-50: oklch(0.97 0.02 220);
+  --color-upnext-100: oklch(0.93 0.04 220);
+  --color-upnext-200: oklch(0.86 0.08 220);
+  --color-upnext-300: oklch(0.76 0.12 220);
+  --color-upnext-400: oklch(0.68 0.16 220);
+  --color-upnext-500: oklch(0.60 0.18 220);
+  --color-upnext-600: oklch(0.52 0.16 220);
+  --color-upnext-700: oklch(0.44 0.14 220);
+  --color-upnext-800: oklch(0.36 0.12 220);
+  --color-upnext-900: oklch(0.28 0.10 220);
+  --color-upnext-950: oklch(0.20 0.08 220);
 
   /* Status Colors */
   --color-status-active: oklch(0.60 0.20 250);

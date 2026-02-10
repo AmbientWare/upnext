@@ -1,4 +1,4 @@
-# Conduit Server - Multi-stage build
+# UpNext Server - Multi-stage build
 
 # Stage 1: Build frontend
 FROM oven/bun:1 AS frontend-builder
@@ -42,7 +42,7 @@ COPY packages/server ./packages/server
 COPY --from=frontend-builder /static ./packages/server/static
 
 # Install dependencies using workspace
-RUN uv sync --frozen --no-dev --package conduit-server
+RUN uv sync --frozen --no-dev --package upnext-server
 
 # Set working directory to server package
 WORKDIR /app/packages/server

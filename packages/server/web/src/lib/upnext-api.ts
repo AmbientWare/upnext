@@ -1,0 +1,230 @@
+/**
+ * UpNext API client for the web dashboard.
+ * All API calls to the backend go through this module.
+ */
+
+import type {
+  ArtifactListResponse,
+  ApisListResponse,
+  ApiPageResponse,
+  ApiRequestEventsResponse,
+  ApiTrendsResponse,
+  DashboardStats,
+  FunctionDetailResponse,
+  Job,
+  FunctionsListResponse,
+  JobListResponse,
+  JobTrendsResponse,
+  WorkersListResponse,
+} from "./types";
+import { env } from "./env";
+
+const API_BASE = env.VITE_API_BASE_URL;
+
+// =============================================================================
+// Error Handling
+// =============================================================================
+
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+
+  constructor(status: number, statusText: string, message?: string) {
+    super(message || `API Error: ${status} ${statusText}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.statusText = statusText;
+  }
+}
+
+async function handleResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new ApiError(response.status, response.statusText, text);
+  }
+  return response.json();
+}
+
+// =============================================================================
+// Dashboard
+// =============================================================================
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  const response = await fetch(`${API_BASE}/dashboard/stats`);
+  return handleResponse<DashboardStats>(response);
+}
+
+// =============================================================================
+// Jobs
+// =============================================================================
+
+export interface GetJobsParams {
+  function?: string;
+  status?: string[];
+  worker_id?: string;
+  after?: string;
+  before?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function getJobs(params: GetJobsParams = {}): Promise<JobListResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.function) searchParams.set("function", params.function);
+  if (params.status?.length) {
+    params.status.forEach((s) => searchParams.append("status", s));
+  }
+  if (params.worker_id) searchParams.set("worker_id", params.worker_id);
+  if (params.after) searchParams.set("after", params.after);
+  if (params.before) searchParams.set("before", params.before);
+  if (params.limit !== undefined) searchParams.set("limit", String(params.limit));
+  if (params.offset !== undefined) searchParams.set("offset", String(params.offset));
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/jobs${query ? `?${query}` : ""}`;
+
+  const response = await fetch(url);
+  return handleResponse<JobListResponse>(response);
+}
+
+export interface GetJobTrendsParams {
+  hours?: number;
+  function?: string;
+  type?: string;
+}
+
+export async function getJobTrends(params: GetJobTrendsParams = {}): Promise<JobTrendsResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.hours !== undefined) searchParams.set("hours", String(params.hours));
+  if (params.function) searchParams.set("function", params.function);
+  if (params.type) searchParams.set("type", params.type);
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/jobs/trends${query ? `?${query}` : ""}`;
+
+  const response = await fetch(url);
+  return handleResponse<JobTrendsResponse>(response);
+}
+
+export async function getJob(jobId: string): Promise<Job> {
+  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`);
+  return handleResponse<Job>(response);
+}
+
+export async function getJobTimeline(jobId: string): Promise<JobListResponse> {
+  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/timeline`);
+  return handleResponse<JobListResponse>(response);
+}
+
+export async function getJobArtifacts(jobId: string): Promise<ArtifactListResponse> {
+  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/artifacts`);
+  return handleResponse<ArtifactListResponse>(response);
+}
+
+// =============================================================================
+// Workers
+// =============================================================================
+
+export async function getWorkers(): Promise<WorkersListResponse> {
+  const response = await fetch(`${API_BASE}/workers`);
+  return handleResponse<WorkersListResponse>(response);
+}
+
+// =============================================================================
+// Functions
+// =============================================================================
+
+export interface GetFunctionsParams {
+  type?: 'task' | 'cron' | 'event';
+}
+
+export async function getFunctions(params: GetFunctionsParams = {}): Promise<FunctionsListResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.type) searchParams.set("type", params.type);
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/functions${query ? `?${query}` : ""}`;
+
+  const response = await fetch(url);
+  return handleResponse<FunctionsListResponse>(response);
+}
+
+export async function getFunction(name: string): Promise<FunctionDetailResponse> {
+  const response = await fetch(`${API_BASE}/functions/${encodeURIComponent(name)}`);
+  return handleResponse<FunctionDetailResponse>(response);
+}
+
+// =============================================================================
+// API Endpoints
+// =============================================================================
+
+export async function getApis(): Promise<ApisListResponse> {
+  const response = await fetch(`${API_BASE}/apis`);
+  return handleResponse<ApisListResponse>(response);
+}
+
+export interface GetApiTrendsParams {
+  hours?: number;
+}
+
+export async function getApiTrends(params: GetApiTrendsParams = {}): Promise<ApiTrendsResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.hours !== undefined) searchParams.set("hours", String(params.hours));
+
+  const query = searchParams.toString();
+  const url = `${API_BASE}/apis/trends${query ? `?${query}` : ""}`;
+
+  const response = await fetch(url);
+  return handleResponse<ApiTrendsResponse>(response);
+}
+
+export async function getApi(name: string): Promise<ApiPageResponse> {
+  const response = await fetch(`${API_BASE}/apis/${encodeURIComponent(name)}`);
+  return handleResponse<ApiPageResponse>(response);
+}
+
+export interface GetApiRequestEventsParams {
+  api_name?: string;
+  limit?: number;
+}
+
+export async function getApiRequestEvents(
+  params: GetApiRequestEventsParams = {}
+): Promise<ApiRequestEventsResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.api_name) searchParams.set("api_name", params.api_name);
+  if (params.limit !== undefined) searchParams.set("limit", String(params.limit));
+
+  const query = searchParams.toString();
+  const response = await fetch(`${API_BASE}/apis/events${query ? `?${query}` : ""}`);
+  return handleResponse<ApiRequestEventsResponse>(response);
+}
+
+// =============================================================================
+// Query Keys (for TanStack Query)
+// =============================================================================
+
+export const queryKeys = {
+  dashboard: ["dashboard"] as const,
+  dashboardStats: ["dashboard", "stats"] as const,
+
+  jobs: (params?: GetJobsParams) => ["jobs", params] as const,
+  job: (jobId: string) => ["jobs", "job", jobId] as const,
+  jobTimeline: (jobId: string) => ["jobs", "timeline", jobId] as const,
+  jobArtifacts: (jobId: string) => ["jobs", "artifacts", jobId] as const,
+  jobTrends: (params?: GetJobTrendsParams) => ["jobs", "trends", params] as const,
+
+  workers: ["workers"] as const,
+
+  functions: (params?: GetFunctionsParams) => ["functions", params] as const,
+  function: (name: string) => ["functions", name] as const,
+
+  apis: ["apis"] as const,
+  apiRequestEvents: (params?: GetApiRequestEventsParams) => ["apis", "events", params] as const,
+  api: (name: string) => ["apis", "api", name] as const,
+  apiTrends: (params?: GetApiTrendsParams) => ["apis", "trends", params] as const,
+};

@@ -21,7 +21,7 @@ export function Sidebar() {
           <div className="w-7 h-7 rounded bg-emerald-500/20 flex items-center justify-center">
             <span className="text-emerald-400 font-bold text-sm">C</span>
           </div>
-          <span className="font-semibold text-foreground tracking-tight">Conduit</span>
+          <span className="font-semibold text-foreground tracking-tight">UpNext</span>
         </div>
       </div>
 

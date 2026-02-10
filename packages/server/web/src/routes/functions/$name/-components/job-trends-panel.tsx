@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type JobStatus } from "@/lib/utils";
-import { getJobTrends, queryKeys } from "@/lib/conduit-api";
+import { getJobTrends, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { JobTrendsSnapshotEvent } from "@/lib/types";

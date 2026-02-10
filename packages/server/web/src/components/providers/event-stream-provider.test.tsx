@@ -3,7 +3,7 @@ import { render, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
-import { queryKeys } from "@/lib/conduit-api";
+import { queryKeys } from "@/lib/upnext-api";
 import type {
   ApiPageResponse,
   ApiRequestEventsResponse,

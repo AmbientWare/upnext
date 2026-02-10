@@ -1,11 +1,11 @@
 {
   "include": [
-    "packages/conduit/src",
+    "packages/upnext/src",
     "packages/server/src",
     "packages/shared/src"
   ],
   "extraPaths": [
-    "packages/conduit/src",
+    "packages/upnext/src",
     "packages/server/src",
     "packages/shared/src"
   ],

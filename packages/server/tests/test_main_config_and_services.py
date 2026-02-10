@@ -5,13 +5,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
-from shared import __version__ as shared_version
-
 import server.config as config_module
 import server.main as main_module
 import server.services.api_instances as api_instances_module
 import server.services.redis as redis_module
+from fastapi import FastAPI
+from shared import __version__ as shared_version
 
 
 @dataclass
@@ -112,8 +111,8 @@ def _reset_singletons() -> None:
 
 
 def test_server_settings_defaults_and_flags(monkeypatch) -> None:
-    monkeypatch.delenv("CONDUIT_DATABASE_URL", raising=False)
-    monkeypatch.setenv("CONDUIT_ENV", "dev")
+    monkeypatch.delenv("UPNEXT_DATABASE_URL", raising=False)
+    monkeypatch.setenv("UPNEXT_ENV", "dev")
     settings = config_module.get_settings()
 
     assert settings.is_development is True
@@ -124,8 +123,10 @@ def test_server_settings_defaults_and_flags(monkeypatch) -> None:
 
 
 def test_server_settings_database_override(monkeypatch) -> None:
-    monkeypatch.setenv("CONDUIT_ENV", "prod")
-    monkeypatch.setenv("CONDUIT_DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/conduit")
+    monkeypatch.setenv("UPNEXT_ENV", "prod")
+    monkeypatch.setenv(
+        "UPNEXT_DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/upnext"
+    )
     settings = config_module.get_settings()
 
     assert settings.is_production is True
@@ -165,7 +166,7 @@ async def test_get_redis_requires_connection() -> None:
 @pytest.mark.asyncio
 async def test_list_api_instances_parses_payloads_and_defaults(monkeypatch) -> None:
     values = {
-        "conduit:apis:api-1": json.dumps(
+        "upnext:apis:api-1": json.dumps(
             {
                 "id": "api-1",
                 "api_name": "orders",
@@ -177,7 +178,7 @@ async def test_list_api_instances_parses_payloads_and_defaults(monkeypatch) -> N
                 "hostname": "host-a",
             }
         ),
-        "conduit:apis:api-2": json.dumps(
+        "upnext:apis:api-2": json.dumps(
             {
                 "id": "api-2",
                 "api_name": "billing",
@@ -185,7 +186,7 @@ async def test_list_api_instances_parses_payloads_and_defaults(monkeypatch) -> N
                 "last_heartbeat": "2026-02-08T10:00:10Z",
             }
         ),
-        "conduit:apis:stale": None,
+        "upnext:apis:stale": None,
     }
     fake_redis = _ScanRedis(values)
 
@@ -221,7 +222,9 @@ async def test_lifespan_sqlite_path_runs_cleanup_without_redis(monkeypatch) -> N
     monkeypatch.setattr(main_module, "StreamSubscriber", _FakeStreamSubscriber)
 
     async def fail_if_called(_url: str):  # pragma: no cover - defensive guard
-        raise AssertionError("connect_redis should not be called when redis_url is unset")
+        raise AssertionError(
+            "connect_redis should not be called when redis_url is unset"
+        )
 
     monkeypatch.setattr(main_module, "connect_redis", fail_if_called)
 

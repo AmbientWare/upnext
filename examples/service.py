@@ -1,5 +1,5 @@
 """
-Example Conduit service with worker and API.
+Example UpNext service with worker and API.
 
 Demonstrates:
 - Tasks with retries and timeouts
@@ -7,7 +7,7 @@ Demonstrates:
 - Event handlers
 - API endpoints
 
-Run with: conduit run examples/service.py
+Run with: upnext run examples/service.py
 """
 
 import asyncio
@@ -15,14 +15,14 @@ import logging
 import random
 from datetime import datetime
 
-import conduit
+import upnext
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Create worker and API
-worker = conduit.Worker("example-worker", concurrency=10)
-api = conduit.Api("example-api", port=8001)
+worker = upnext.Worker("example-worker", concurrency=10)
+api = upnext.Api("example-api", port=8001)
 
 
 # =============================================================================
@@ -33,7 +33,7 @@ api = conduit.Api("example-api", port=8001)
 @worker.task(retries=3, timeout=30.0)
 async def process_order(order_id: str, items: list[str]) -> dict:
     """Process an order - simulates work with progress updates."""
-    ctx = conduit.get_current_context()
+    ctx = upnext.get_current_context()
 
     logger.info(f"Processing order {order_id} with {len(items)} items")
 
@@ -60,7 +60,7 @@ async def send_notification(user_id: str, message: str, channel: str = "email") 
     await asyncio.sleep(random.uniform(0.1, 0.3))
 
     # Create an artifact with the notification details
-    await conduit.create_artifact(
+    await upnext.create_artifact(
         name="notification_sent",
         data={
             "user_id": user_id,
@@ -75,7 +75,7 @@ async def send_notification(user_id: str, message: str, channel: str = "email") 
 @worker.task
 async def generate_report(report_type: str, date_range: dict | None = None) -> dict:
     """Generate a report - a longer running task."""
-    ctx = conduit.get_current_context()
+    ctx = upnext.get_current_context()
 
     logger.info(f"Generating {report_type} report")
 
@@ -92,7 +92,7 @@ async def generate_report(report_type: str, date_range: dict | None = None) -> d
         "rows": random.randint(100, 1000),
     }
 
-    await conduit.create_artifact(
+    await upnext.create_artifact(
         name=f"report_{report_type}",
         data=report_data,
     )
@@ -116,7 +116,7 @@ def sync_inventory(product_ids: list[str]) -> dict:
 @worker.task(timeout=30.0)
 async def timeline_demo_step(segment: int, step: int, delay_s: float) -> dict:
     """Leaf task for timeline demo (visible bar growth)."""
-    ctx = conduit.get_current_context()
+    ctx = upnext.get_current_context()
     ctx.set_progress(5, f"Segment {segment} step {step} queued")
 
     await asyncio.sleep(delay_s * 0.5)
@@ -135,7 +135,7 @@ async def timeline_demo_step(segment: int, step: int, delay_s: float) -> dict:
 @worker.task(timeout=90.0)
 async def timeline_demo_segment(segment: int, steps: int = 3) -> dict:
     """Parent task that spawns nested leaf tasks."""
-    ctx = conduit.get_current_context()
+    ctx = upnext.get_current_context()
     completed_steps: list[dict] = []
 
     for step in range(1, steps + 1):
@@ -163,7 +163,7 @@ async def timeline_demo_segment(segment: int, steps: int = 3) -> dict:
 @worker.task(timeout=240.0)
 async def timeline_demo_flow(segments: int = 3) -> dict:
     """Orchestrator task for a multi-level, watchable timeline."""
-    ctx = conduit.get_current_context()
+    ctx = upnext.get_current_context()
     segment_summaries: list[dict] = []
 
     for segment in range(1, segments + 1):
@@ -182,7 +182,7 @@ async def timeline_demo_flow(segments: int = 3) -> dict:
         "segments": segment_summaries,
         "segment_count": segments,
     }
-    await conduit.create_artifact(name="timeline_demo_summary", data=summary)
+    await upnext.create_artifact(name="timeline_demo_summary", data=summary)
     return summary
 
 
@@ -235,7 +235,7 @@ async def timeline_demo_cron():
         "flow_job_id": result.job_id,
         "saved_at": datetime.now().isoformat(),
     }
-    await conduit.create_artifact(
+    await upnext.create_artifact(
         name="timeline_demo_cron_result",
         data=cron_artifact,
     )
@@ -361,4 +361,4 @@ async def trigger_inventory_sync(request: dict):
 # =============================================================================
 
 if __name__ == "__main__":
-    conduit.run(api, worker)
+    upnext.run(api, worker)

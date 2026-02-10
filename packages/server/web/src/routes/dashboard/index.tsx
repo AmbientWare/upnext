@@ -7,7 +7,7 @@ import {
   getApiRequestEvents,
   getJobs,
   queryKeys,
-} from "@/lib/conduit-api";
+} from "@/lib/upnext-api";
 import { SystemOverviewPanel } from "./-components/system-overview-panel";
 import { SystemOverviewSkeleton } from "./-components/skeletons";
 import { TrendsPanel } from "./-components/trends-panel";

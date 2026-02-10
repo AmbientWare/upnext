@@ -6,10 +6,9 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, cast
 
 import pytest
-from fastapi import HTTPException
-
 import server.routes.events as events_route
 import server.routes.events.events_stream as events_stream_route
+from fastapi import HTTPException
 
 
 @dataclass
@@ -93,6 +92,6 @@ async def test_stream_events_emits_frames_and_cleans_pubsub(monkeypatch) -> None
     assert open_frame == "event: open\ndata: connected\n\n"
     assert data_frame == 'data: {"job_id":"job-1"}\n\n'
     assert keep_alive == ": keep-alive\n\n"
-    assert pubsub.subscribed == ["conduit:status:events:pubsub"]
-    assert pubsub.unsubscribed == ["conduit:status:events:pubsub"]
+    assert pubsub.subscribed == ["upnext:status:events:pubsub"]
+    assert pubsub.unsubscribed == ["upnext:status:events:pubsub"]
     assert pubsub.closed is True

@@ -1,4 +1,4 @@
-"""Database module for Conduit API."""
+"""Database module for UpNext API."""
 
 from server.db.models import Base, JobHistory
 from server.db.repository import JobRepository

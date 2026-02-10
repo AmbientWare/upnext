@@ -3,7 +3,7 @@ import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 
-import { getApi, queryKeys } from "@/lib/conduit-api";
+import { getApi, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { ApiEndpoint, ApiSnapshotEvent } from "@/lib/types";

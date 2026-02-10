@@ -1,5 +1,5 @@
 """
-Traffic generator for the example Conduit service.
+Traffic generator for the example UpNext service.
 
 Continuously submits jobs to the example service to generate
 realistic dashboard data.
@@ -22,8 +22,12 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 API_URL = os.environ.get("API_URL", "http://localhost:8001")
-INTERVAL_MIN = float(os.environ.get("INTERVAL_MIN", "0.5"))  # Min seconds between requests
-INTERVAL_MAX = float(os.environ.get("INTERVAL_MAX", "2.0"))  # Max seconds between requests
+INTERVAL_MIN = float(
+    os.environ.get("INTERVAL_MIN", "0.5")
+)  # Min seconds between requests
+INTERVAL_MAX = float(
+    os.environ.get("INTERVAL_MAX", "2.0")
+)  # Max seconds between requests
 
 # Sample data
 PRODUCT_IDS = [f"prod_{i}" for i in range(1, 20)]
@@ -70,7 +74,9 @@ async def create_order(session: aiohttp.ClientSession) -> dict | None:
         async with session.post(f"{API_URL}/orders", json=payload) as resp:
             if resp.status == 200:
                 result = await resp.json()
-                logger.info(f"Created order: {result['order_id']} with {len(items)} items")
+                logger.info(
+                    f"Created order: {result['order_id']} with {len(items)} items"
+                )
                 return result
             else:
                 logger.warning(f"Failed to create order: {resp.status}")

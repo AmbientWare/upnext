@@ -30,9 +30,9 @@ trap cleanup EXIT
 REDIS_CONTAINER="$(docker run -d --rm -P redis:7-alpine redis-server --appendonly yes)"
 POSTGRES_CONTAINER="$(
   docker run -d --rm -P \
-    -e POSTGRES_DB=conduit \
-    -e POSTGRES_USER=conduit \
-    -e POSTGRES_PASSWORD=conduit \
+    -e POSTGRES_DB=upnext \
+    -e POSTGRES_USER=upnext \
+    -e POSTGRES_PASSWORD=upnext \
     postgres:17-alpine
 )"
 
@@ -44,7 +44,7 @@ for _ in {1..60}; do
 done
 
 for _ in {1..60}; do
-  if docker exec "$POSTGRES_CONTAINER" pg_isready -U conduit -d conduit >/dev/null 2>&1; then
+  if docker exec "$POSTGRES_CONTAINER" pg_isready -U upnext -d upnext >/dev/null 2>&1; then
     break
   fi
   sleep 1
@@ -53,12 +53,12 @@ done
 REDIS_PORT="$(docker port "$REDIS_CONTAINER" 6379/tcp | awk -F: '{print $NF}')"
 POSTGRES_PORT="$(docker port "$POSTGRES_CONTAINER" 5432/tcp | awk -F: '{print $NF}')"
 
-export CONDUIT_TEST_REDIS_URL="redis://127.0.0.1:${REDIS_PORT}/0"
-export CONDUIT_TEST_DATABASE_URL="postgresql+asyncpg://conduit:conduit@127.0.0.1:${POSTGRES_PORT}/conduit"
-export CONDUIT_RUN_PACKAGE_SMOKE="1"
+export UPNEXT_TEST_REDIS_URL="redis://127.0.0.1:${REDIS_PORT}/0"
+export UPNEXT_TEST_DATABASE_URL="postgresql+asyncpg://upnext:upnext@127.0.0.1:${POSTGRES_PORT}/upnext"
+export UPNEXT_RUN_PACKAGE_SMOKE="1"
 
 .venv/bin/python -m pytest \
   packages/server/tests/test_stream_pipeline_real_integration.py \
-  packages/conduit/tests/test_package_publish_smoke.py \
+  packages/upnext/tests/test_package_publish_smoke.py \
   -m integration
 

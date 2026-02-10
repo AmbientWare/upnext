@@ -1,13 +1,14 @@
-"""Database session management for Conduit."""
+"""Database session management for UpNext."""
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
-from server.db.models import Base
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from server.db.models import Base
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -20,7 +21,7 @@ class Database:
     Async database connection manager.
 
     Example:
-        db = Database(url="postgresql+asyncpg://user:pass@localhost/conduit")
+        db = Database(url="postgresql+asyncpg://user:pass@localhost/upnext")
         await db.connect()
 
         async with db.session() as session:

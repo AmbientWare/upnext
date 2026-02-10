@@ -1,6 +1,6 @@
 """Redis stream subscriber for status events.
 
-Subscribes to the conduit:status:events stream and processes events
+Subscribes to the upnext:status:events stream and processes events
 directly to the database. This replaces HTTP-based event ingestion
 for improved performance and decoupling.
 

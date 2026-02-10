@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getJobArtifacts, queryKeys } from "@/lib/conduit-api";
+import { getJobArtifacts, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { Artifact, ArtifactListResponse, ArtifactStreamEvent } from "@/lib/types";

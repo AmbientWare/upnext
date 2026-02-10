@@ -6,24 +6,23 @@ from uuid import uuid4
 
 import pytest
 import redis.asyncio as redis
-
-from conduit.engine.status import StatusPublisher, StatusPublisherConfig
-from server.db.models import JobHistory
-from server.db.session import init_database
 import server.db.session as session_module
 import server.services.event_processing as event_processing_module
+from server.db.models import JobHistory
+from server.db.session import init_database
 from server.services.stream_subscriber import StreamSubscriber, StreamSubscriberConfig
+from upnext.engine.status import StatusPublisher, StatusPublisherConfig
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
 async def real_infra(monkeypatch):
-    redis_url = os.getenv("CONDUIT_TEST_REDIS_URL")
-    database_url = os.getenv("CONDUIT_TEST_DATABASE_URL")
+    redis_url = os.getenv("UPNEXT_TEST_REDIS_URL")
+    database_url = os.getenv("UPNEXT_TEST_DATABASE_URL")
     if not redis_url or not database_url:
         pytest.skip(
-            "Set CONDUIT_TEST_REDIS_URL and CONDUIT_TEST_DATABASE_URL to run real infra tests."
+            "Set UPNEXT_TEST_REDIS_URL and UPNEXT_TEST_DATABASE_URL to run real infra tests."
         )
 
     redis_client = redis.from_url(redis_url, decode_responses=True)
@@ -49,7 +48,7 @@ async def test_real_round_trip_worker_events_persist_to_postgres(real_infra) -> 
     redis_client, db = real_infra
 
     suffix = uuid4().hex
-    stream = f"conduit:status:events:real:{suffix}"
+    stream = f"upnext:status:events:real:{suffix}"
     group = f"group-{suffix}"
     consumer = f"consumer-{suffix}"
     job_id = suffix
@@ -110,7 +109,7 @@ async def test_real_stale_pending_event_is_reclaimed_after_consumer_crash(
     redis_client, db = real_infra
 
     suffix = uuid4().hex
-    stream = f"conduit:status:events:real-reclaim:{suffix}"
+    stream = f"upnext:status:events:real-reclaim:{suffix}"
     group = f"group-{suffix}"
     consumer = f"consumer-{suffix}"
     job_id = suffix
@@ -143,7 +142,9 @@ async def test_real_stale_pending_event_is_reclaimed_after_consumer_crash(
     )
 
     # Simulate crashed consumer that read but never ACKed.
-    await redis_client.xreadgroup(group, f"crashed-{suffix}", {stream: ">"}, count=1, block=0)
+    await redis_client.xreadgroup(
+        group, f"crashed-{suffix}", {stream: ">"}, count=1, block=0
+    )
 
     processed = await subscriber._process_batch(drain=False)  # noqa: SLF001
     assert processed == 1
@@ -167,7 +168,7 @@ async def test_real_consumer_restart_continues_processing_same_group(
     redis_client, db = real_infra
 
     suffix = uuid4().hex
-    stream = f"conduit:status:events:real-restart:{suffix}"
+    stream = f"upnext:status:events:real-restart:{suffix}"
     group = f"group-{suffix}"
     job_id = suffix
 

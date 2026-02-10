@@ -5,11 +5,19 @@ from datetime import UTC, datetime, timedelta
 from typing import AsyncIterator, cast
 
 import pytest
-from fastapi import HTTPException, Response
-from fastapi import FastAPI
+import server.routes.apis as apis_route
+import server.routes.apis.apis_root as apis_root_route
+import server.routes.apis.apis_stream as apis_stream_route
+import server.routes.apis.apis_utils as apis_utils_route
+import server.routes.artifacts as artifacts_route
+import server.routes.artifacts.artifacts_root as artifacts_root_route
+import server.routes.artifacts.job_artifacts as job_artifacts_route
+import server.routes.functions as functions_route
+from fastapi import FastAPI, HTTPException, Response
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
-
+from server.db.models import PendingArtifact
+from server.db.repository import JobRepository
+from server.routes import v1_router
 from shared.schemas import (
     ApiInstance,
     ApiPageResponse,
@@ -21,18 +29,7 @@ from shared.schemas import (
     FunctionType,
     WorkerInstance,
 )
-
-from server.db.models import PendingArtifact
-from server.db.repository import JobRepository
-import server.routes.apis as apis_route
-import server.routes.apis.apis_root as apis_root_route
-import server.routes.apis.apis_stream as apis_stream_route
-import server.routes.apis.apis_utils as apis_utils_route
-import server.routes.artifacts as artifacts_route
-import server.routes.artifacts.job_artifacts as job_artifacts_route
-import server.routes.artifacts.artifacts_root as artifacts_root_route
-import server.routes.functions as functions_route
-from server.routes import v1_router
+from sqlalchemy import select
 
 
 def _worker(
@@ -134,7 +131,9 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
     response = Response()
     queued = await artifacts_route.create_artifact(
         "missing-job",
-        CreateArtifactRequest(name="payload", type=ArtifactType.JSON, data={"ok": True}),
+        CreateArtifactRequest(
+            name="payload", type=ArtifactType.JSON, data={"ok": True}
+        ),
         response,
     )
     assert isinstance(queued, ArtifactQueuedResponse)
@@ -144,10 +143,16 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
 
     async with sqlite_db.session() as session:
         rows = (
-            await session.execute(
-                select(PendingArtifact).where(PendingArtifact.job_id == "missing-job")
+            (
+                await session.execute(
+                    select(PendingArtifact).where(
+                        PendingArtifact.job_id == "missing-job"
+                    )
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     assert len(rows) == 1
     assert rows[0].name == "payload"
@@ -693,7 +698,7 @@ async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
                 (
-                    "conduit:api:requests",
+                    "upnext:api:requests",
                     [
                         (
                             "1001-0",
@@ -836,7 +841,7 @@ async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
                 (
-                    "conduit:api:requests",
+                    "upnext:api:requests",
                     [
                         (
                             "1001-0",

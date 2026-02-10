@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { cn, formatNumber, formatDuration, formatTimeAgo, formatTimeUntil } from "@/lib/utils";
-import { getFunction, getJobs, queryKeys } from "@/lib/conduit-api";
+import { getFunction, getJobs, queryKeys } from "@/lib/upnext-api";
 import type { FunctionType } from "@/lib/types";
 import { Panel, JobsTablePanel } from "@/components/shared";
 import { FunctionDetailSkeleton } from "./-components/skeletons";

@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 import { Panel } from "@/components/shared";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getApiTrends, queryKeys } from "@/lib/conduit-api";
+import { getApiTrends, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { ApiTrendsSnapshotEvent } from "@/lib/types";

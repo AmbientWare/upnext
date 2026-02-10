@@ -7,15 +7,15 @@ so only one server instance performs cleanup at a time.
 import asyncio
 import logging
 import random
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
 from server.db.repository import ArtifactRepository, JobRepository
 from server.db.session import get_database
 
 logger = logging.getLogger(__name__)
 
-CLEANUP_LOCK_KEY = "conduit:cleanup_lock"
+CLEANUP_LOCK_KEY = "upnext:cleanup_lock"
 CLEANUP_LOCK_TTL = 300  # 5 minutes max for cleanup to run
 RELEASE_LOCK_SCRIPT = """
 if redis.call('get', KEYS[1]) == ARGV[1] then

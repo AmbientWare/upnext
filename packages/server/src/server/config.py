@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     """Server configuration."""
 
     model_config = SettingsConfigDict(
-        env_prefix="CONDUIT_",
+        env_prefix="UPNEXT_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         """Get database URL, defaulting to SQLite if not configured."""
         if self.database_url:
             return self.database_url
-        return "sqlite+aiosqlite:///conduit.db"
+        return "sqlite+aiosqlite:///upnext.db"
 
     @property
     def is_sqlite(self) -> bool:

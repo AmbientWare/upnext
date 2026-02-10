@@ -4,15 +4,16 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-
 import server.services.stream_subscriber as stream_subscriber_module
 from server.services.stream_subscriber import StreamSubscriber, StreamSubscriberConfig
 
 
 @pytest.mark.asyncio
-async def test_process_batch_acks_only_successful_events(fake_redis, monkeypatch) -> None:
+async def test_process_batch_acks_only_successful_events(
+    fake_redis, monkeypatch
+) -> None:
     config = StreamSubscriberConfig(
-        stream="conduit:status:events",
+        stream="upnext:status:events",
         group="test-group",
         consumer_id="consumer-1",
         batch_size=10,
@@ -23,7 +24,9 @@ async def test_process_batch_acks_only_successful_events(fake_redis, monkeypatch
 
     call_log: list[str] = []
 
-    async def fake_process_event(event_type: str, data: dict, worker_id: str | None) -> bool:
+    async def fake_process_event(
+        event_type: str, data: dict, worker_id: str | None
+    ) -> bool:
         call_log.append(event_type)
         if event_type == "job.failed":
             raise RuntimeError("boom")
@@ -79,9 +82,11 @@ async def test_process_batch_acks_only_successful_events(fake_redis, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(fake_redis, monkeypatch) -> None:
+async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
+    fake_redis, monkeypatch
+) -> None:
     config = StreamSubscriberConfig(
-        stream="conduit:status:events",
+        stream="upnext:status:events",
         group="test-order",
         consumer_id="consumer-a",
         batch_size=10,
@@ -93,7 +98,9 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(fake_redis,
 
     processed_ids: list[str] = []
 
-    async def fake_process_event(event_type: str, data: dict, worker_id: str | None) -> bool:
+    async def fake_process_event(
+        event_type: str, data: dict, worker_id: str | None
+    ) -> bool:
         processed_ids.append(data["job_id"])
         return True
 
@@ -157,7 +164,7 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(fake_redis,
 @pytest.mark.asyncio
 async def test_publish_event_filters_sensitive_fields(fake_redis) -> None:
     config = StreamSubscriberConfig(
-        stream="conduit:status:events",
+        stream="upnext:status:events",
         group="test-sse",
         consumer_id="consumer-sse",
     )
@@ -189,7 +196,7 @@ async def test_publish_event_filters_sensitive_fields(fake_redis) -> None:
         "worker-1",
     )
 
-    assert published["channel"] == "conduit:status:events:pubsub"
+    assert published["channel"] == "upnext:status:events:pubsub"
     body = json.loads(published["payload"])
     assert body["job_id"] == "job-safe-1"
     assert "kwargs" not in body
@@ -202,7 +209,7 @@ async def test_reclaim_of_stale_pending_event_processes_once_and_acks(
     fake_redis, monkeypatch
 ) -> None:
     config = StreamSubscriberConfig(
-        stream="conduit:status:events",
+        stream="upnext:status:events",
         group="test-reclaim-race",
         consumer_id="consumer-b",
         batch_size=10,
@@ -303,7 +310,7 @@ async def test_subscribe_loop_retries_then_drains_on_shutdown(monkeypatch) -> No
     subscriber = StreamSubscriber(
         redis_client=object(),
         config=StreamSubscriberConfig(
-            stream="conduit:status:events",
+            stream="upnext:status:events",
             group="test-loop",
             consumer_id="consumer-loop",
             poll_interval=0.01,
@@ -336,9 +343,11 @@ async def test_subscribe_loop_retries_then_drains_on_shutdown(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_process_batch_returns_processed_when_ack_fails(fake_redis, monkeypatch) -> None:
+async def test_process_batch_returns_processed_when_ack_fails(
+    fake_redis, monkeypatch
+) -> None:
     config = StreamSubscriberConfig(
-        stream="conduit:status:events",
+        stream="upnext:status:events",
         group="test-ack-failure",
         consumer_id="consumer-ack",
         batch_size=10,
@@ -347,7 +356,9 @@ async def test_process_batch_returns_processed_when_ack_fails(fake_redis, monkey
     subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
     assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
 
-    async def fake_process_event(event_type: str, data: dict, worker_id: str | None) -> bool:  # noqa: ARG001
+    async def fake_process_event(
+        event_type: str, data: dict, worker_id: str | None
+    ) -> bool:  # noqa: ARG001
         return True
 
     monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)
@@ -384,9 +395,11 @@ async def test_process_batch_returns_processed_when_ack_fails(fake_redis, monkey
 
 
 @pytest.mark.asyncio
-async def test_process_batch_coalesces_duplicate_progress_events(fake_redis, monkeypatch) -> None:
+async def test_process_batch_coalesces_duplicate_progress_events(
+    fake_redis, monkeypatch
+) -> None:
     config = StreamSubscriberConfig(
-        stream="conduit:status:events",
+        stream="upnext:status:events",
         group="test-progress-coalesce",
         consumer_id="consumer-progress",
         batch_size=10,
@@ -397,7 +410,9 @@ async def test_process_batch_coalesces_duplicate_progress_events(fake_redis, mon
 
     seen_progress: list[float] = []
 
-    async def fake_process_event(event_type: str, data: dict, worker_id: str | None) -> bool:  # noqa: ARG001
+    async def fake_process_event(
+        event_type: str, data: dict, worker_id: str | None
+    ) -> bool:  # noqa: ARG001
         if event_type == "job.progress":
             seen_progress.append(float(data.get("progress", 0)))
         return True

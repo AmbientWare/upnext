@@ -1,7 +1,7 @@
 [project]
-name = "conduit-workspace"
-version = "0.0.2"
-description = "Conduit - Modal-inspired task queue and API framework"
+name = "upnext-workspace"
+version = "0.0.1"
+description = "UpNext - Modal-inspired task queue and API framework"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
@@ -12,7 +12,7 @@ package = false
 
 [tool.uv.workspace]
 members = [
-    "packages/conduit",
+    "packages/upnext",
     "packages/server",
     "packages/shared",
 ]

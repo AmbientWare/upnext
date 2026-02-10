@@ -5,9 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 .venv/bin/python -m pytest \
-  packages/conduit/tests \
+  packages/upnext/tests \
   packages/server/tests \
-  --cov=conduit \
+  --cov=upnext \
   --cov=server \
   --cov=shared \
   --cov-branch \

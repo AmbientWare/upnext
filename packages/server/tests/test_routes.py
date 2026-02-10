@@ -5,27 +5,11 @@ from datetime import UTC, datetime, timedelta
 from typing import AsyncIterator, cast
 
 import pytest
-from fastapi import HTTPException, Response
-from sqlalchemy.exc import IntegrityError
-
-from shared.schemas import (
-    ApiInstance,
-    ArtifactType,
-    CreateArtifactRequest,
-    FunctionType,
-    JobTrendHour,
-    JobTrendsResponse,
-    WorkerInstance,
-    WorkerStats,
-)
-from shared.events import BatchEventItem, BatchEventRequest
-
-from server.db.repository import JobRepository
 import server.routes.apis as apis_route
 import server.routes.apis.apis_root as apis_root_route
 import server.routes.artifacts as artifacts_route
-import server.routes.artifacts.job_artifacts as job_artifacts_route
 import server.routes.artifacts.artifacts_stream as artifacts_stream_route
+import server.routes.artifacts.job_artifacts as job_artifacts_route
 import server.routes.dashboard as dashboard_route
 import server.routes.events as events_route
 import server.routes.events.events_root as events_root_route
@@ -36,10 +20,26 @@ import server.routes.jobs.jobs_stream as jobs_stream_route
 import server.routes.workers as workers_route
 import server.routes.workers.workers_root as workers_root_route
 import server.routes.workers.workers_stream as workers_stream_route
+from fastapi import HTTPException, Response
+from server.db.repository import JobRepository
+from shared.events import BatchEventItem, BatchEventRequest
+from shared.schemas import (
+    ApiInstance,
+    ArtifactType,
+    CreateArtifactRequest,
+    FunctionType,
+    JobTrendHour,
+    JobTrendsResponse,
+    WorkerInstance,
+    WorkerStats,
+)
+from sqlalchemy.exc import IntegrityError
 
 
 @pytest.mark.asyncio
-async def test_jobs_list_get_and_trends_routes_cover_happy_paths(sqlite_db, monkeypatch) -> None:
+async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
+    sqlite_db, monkeypatch
+) -> None:
     now = datetime.now(UTC).replace(microsecond=0)
     async with sqlite_db.session() as session:
         repo = JobRepository(session)
@@ -125,7 +125,7 @@ async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
                 (
-                    "conduit:status:events",
+                    "upnext:status:events",
                     [("1000-0", {"type": "job.started", "data": "{}"})],
                 )
             ]
@@ -189,7 +189,7 @@ async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
             if self._call == 1:
                 return [
                     (
-                        "conduit:status:events",
+                        "upnext:status:events",
                         [
                             (
                                 "1000-0",
@@ -205,7 +205,7 @@ async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
                 ]
             return [
                 (
-                    "conduit:status:events",
+                    "upnext:status:events",
                     [
                         (
                             "1001-0",
@@ -313,7 +313,9 @@ async def test_jobs_timeline_returns_recursive_subtree(sqlite_db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_functions_route_aggregates_defs_stats_and_workers(sqlite_db, monkeypatch) -> None:
+async def test_functions_route_aggregates_defs_stats_and_workers(
+    sqlite_db, monkeypatch
+) -> None:
     async with sqlite_db.session() as session:
         repo = JobRepository(session)
         await repo.record_job(
@@ -373,7 +375,9 @@ async def test_functions_route_aggregates_defs_stats_and_workers(sqlite_db, monk
 
 
 @pytest.mark.asyncio
-async def test_workers_route_includes_defs_and_instance_only_workers(monkeypatch) -> None:
+async def test_workers_route_includes_defs_and_instance_only_workers(
+    monkeypatch,
+) -> None:
     async def fake_defs() -> dict:
         return {
             "defined-worker": {
@@ -431,7 +435,7 @@ async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> No
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
                 (
-                    "conduit:workers:events",
+                    "upnext:workers:events",
                     [
                         (
                             "1000-0",
@@ -518,7 +522,9 @@ async def test_workers_stream_can_be_disabled(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dashboard_returns_defaults_when_database_unavailable(monkeypatch) -> None:
+async def test_dashboard_returns_defaults_when_database_unavailable(
+    monkeypatch,
+) -> None:
     def no_db():
         raise RuntimeError("db unavailable")
 
@@ -564,7 +570,9 @@ async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) ->
     async def raise_integrity(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise IntegrityError("insert", {}, Exception("fk race"))
 
-    monkeypatch.setattr(job_artifacts_route.ArtifactRepository, "create", raise_integrity)
+    monkeypatch.setattr(
+        job_artifacts_route.ArtifactRepository, "create", raise_integrity
+    )
 
     response = Response()
     out = await artifacts_route.create_artifact(
@@ -583,7 +591,7 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
                 (
-                    "conduit:artifacts:events",
+                    "upnext:artifacts:events",
                     [
                         (
                             "1000-0",
@@ -664,7 +672,9 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
 
 @pytest.mark.asyncio
 async def test_event_batch_reports_processed_and_errors(monkeypatch) -> None:
-    async def fake_process_event(event_type: str, data: dict, worker_id: str | None) -> bool:
+    async def fake_process_event(
+        event_type: str, data: dict, worker_id: str | None
+    ) -> bool:
         if event_type == "bad.event":
             raise RuntimeError("bad")
         return event_type != "ignored.event"

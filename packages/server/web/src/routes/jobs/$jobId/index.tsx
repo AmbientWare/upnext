@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { getJobTimeline, queryKeys } from "@/lib/conduit-api";
+import { getJobTimeline, queryKeys } from "@/lib/upnext-api";
 import { Panel } from "@/components/shared";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { JobRunHeader } from "./-components/job-run-header";

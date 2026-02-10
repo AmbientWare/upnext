@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to Conduit.
+Thanks for contributing to UpNext.
 
 The core quality bar for this project is runtime correctness and test quality, not raw test count.
 
@@ -14,7 +14,7 @@ uv sync --all-packages --all-groups
 
 All contributions that change runtime behavior must include tests.
 
-- Add or update tests under `packages/conduit/tests` and/or `packages/server/tests`.
+- Add or update tests under `packages/upnext/tests` and/or `packages/server/tests`.
 - Prefer behavior-level assertions over internals-only assertions.
 - Avoid fixed timing sleeps for async behavior; use polling with explicit deadlines.
 - Validate user-facing contracts: CLI behavior, task execution, retries, routing, serialization, and error handling.
@@ -23,7 +23,7 @@ Before opening a PR, run:
 
 ```bash
 uv sync --all-packages --all-groups
-./scripts/verify-conduit-package.sh
+./scripts/verify-upnext-package.sh
 ./scripts/verify-all-packages.sh
 ```
 
@@ -35,10 +35,10 @@ Before cutting a release or publishing packages, also run:
 
 Current verification gates include:
 
-- `pytest` pass for `packages/conduit/tests`
+- `pytest` pass for `packages/upnext/tests`
 - branch coverage enabled
-- minimum package coverage (`conduit`) of **55%**
-- minimum workspace Python coverage (`conduit` + `server` + `shared`) of **60%**
+- minimum package coverage (`upnext`) of **55%**
+- minimum workspace Python coverage (`upnext` + `server` + `shared`) of **60%**
 - frontend unit coverage thresholds in `packages/server/web/vite.config.ts`:
   statements **70%**, branches **50%**, functions **70%**, lines **70%**
 - integration checks for Redis+Postgres stream reliability and wheel/sdist smoke install
@@ -72,7 +72,7 @@ When preparing a release:
 
 - verify package names and metadata are publish-safe
 - ensure dependency wiring works outside workspace-only sources
-- ensure `conduit-py` default install and `conduit-server` package wiring work outside workspace-only sources
+- ensure `upnext` default install and `upnext-server` package wiring work outside workspace-only sources
 - run integration verification before publishing artifacts
 - include release notes describing behavior, compatibility, and migration impact
 

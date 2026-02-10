@@ -1,4 +1,4 @@
-"""Shared API schemas for Conduit."""
+"""Shared API schemas for UpNext."""
 
 from datetime import datetime
 from enum import StrEnum

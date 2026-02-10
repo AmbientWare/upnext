@@ -3,10 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-
-from conduit.engine.status import StatusPublisher
 from server.db.models import JobHistory
 from server.services.stream_subscriber import StreamSubscriber, StreamSubscriberConfig
+from upnext.engine.status import StatusPublisher
 
 
 @pytest.mark.asyncio
@@ -15,7 +14,7 @@ async def test_worker_events_round_trip_to_database_via_stream_subscriber(
 ) -> None:
     publisher = StatusPublisher(fake_redis, worker_id="worker-e2e")
     config = StreamSubscriberConfig(
-        stream="conduit:status:events",
+        stream="upnext:status:events",
         group="test-e2e-roundtrip",
         consumer_id="consumer-e2e",
         batch_size=10,
@@ -66,7 +65,7 @@ async def test_stale_pending_worker_event_is_reclaimed_and_persisted_once(
 ) -> None:
     publisher = StatusPublisher(fake_redis, worker_id="worker-reclaim")
     config = StreamSubscriberConfig(
-        stream="conduit:status:events",
+        stream="upnext:status:events",
         group="test-e2e-reclaim",
         consumer_id="consumer-reclaim",
         batch_size=10,

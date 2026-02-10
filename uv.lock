@@ -4,10 +4,10 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
-    "conduit-py",
-    "conduit-server",
-    "conduit-shared",
-    "conduit-workspace",
+    "upnext",
+    "upnext-server",
+    "upnext-shared",
+    "upnext-workspace",
 ]
 
 [[package]]
@@ -248,110 +248,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93a6792e2acffb9d9d5cb0a5cfd8802644b7b1c9a02e4/colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44", size = 27697, upload-time = "2022-10-25T02:36:22.414Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
-]
-
-[[package]]
-name = "conduit-py"
-source = { editable = "packages/conduit" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "conduit-server" },
-    { name = "conduit-shared" },
-    { name = "croniter" },
-    { name = "fastapi" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "redis" },
-    { name = "rich" },
-    { name = "typer" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.11.0" },
-    { name = "conduit-server", editable = "packages/server" },
-    { name = "conduit-shared", editable = "packages/shared" },
-    { name = "croniter", specifier = ">=6.0.0" },
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pydantic-settings", specifier = ">=2.12.0" },
-    { name = "redis", specifier = ">=5.2.0" },
-    { name = "rich", specifier = ">=13.9.0" },
-    { name = "typer", specifier = ">=0.15.0" },
-    { name = "uvicorn", specifier = ">=0.34.0" },
-]
-provides-extras = ["server"]
-
-[[package]]
-name = "conduit-server"
-source = { editable = "packages/server" }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "alembic" },
-    { name = "asyncpg" },
-    { name = "conduit-shared" },
-    { name = "fastapi" },
-    { name = "greenlet" },
-    { name = "psycopg2-binary" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "redis" },
-    { name = "sqlalchemy" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.22.1" },
-    { name = "alembic", specifier = ">=1.14.0" },
-    { name = "asyncpg", specifier = ">=0.30.0" },
-    { name = "conduit-shared", editable = "packages/shared" },
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "greenlet", specifier = ">=3.3.1" },
-    { name = "psycopg2-binary", specifier = ">=2.9.0" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pydantic-settings", specifier = ">=2.12.0" },
-    { name = "redis", specifier = ">=7.1.0" },
-    { name = "sqlalchemy", specifier = ">=2.0.36" },
-    { name = "uvicorn", specifier = ">=0.34.0" },
-]
-
-[[package]]
-name = "conduit-shared"
-source = { editable = "packages/shared" }
-dependencies = [
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.10.0" }]
-
-[[package]]
-name = "conduit-workspace"
-version = "0.0.2"
-source = { virtual = "." }
-
-[package.dev-dependencies]
-dev = [
-    { name = "anyio" },
-    { name = "fakeredis", extra = ["lua"] },
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "anyio", specifier = ">=4.11.0" },
-    { name = "fakeredis", extras = ["lua"], specifier = ">=2.26.0" },
-    { name = "httpx", specifier = ">=0.28.0" },
-    { name = "pytest", specifier = ">=8.4.0" },
-    { name = "pytest-asyncio", specifier = ">=1.2.0" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
 ]
 
 [[package]]
@@ -1371,6 +1267,110 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/55/e3/70399cb7dd41c10ac53367ae42139cf4b1ca5f36bb3dc6c9d33acdb43655/typing_inspection-0.4.2.tar.gz", hash = "sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464", size = 75949, upload-time = "2025-10-01T02:14:41.687Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/9b/47798a6c91d8bdb567fe2698fe81e0c6b7cb7ef4d13da4114b41d239f65d/typing_inspection-0.4.2-py3-none-any.whl", hash = "sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7", size = 14611, upload-time = "2025-10-01T02:14:40.154Z" },
+]
+
+[[package]]
+name = "upnext"
+source = { editable = "packages/upnext" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "croniter" },
+    { name = "fastapi" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "redis" },
+    { name = "rich" },
+    { name = "typer" },
+    { name = "upnext-server" },
+    { name = "upnext-shared" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.11.0" },
+    { name = "croniter", specifier = ">=6.0.0" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "redis", specifier = ">=5.2.0" },
+    { name = "rich", specifier = ">=13.9.0" },
+    { name = "typer", specifier = ">=0.15.0" },
+    { name = "upnext-server", editable = "packages/server" },
+    { name = "upnext-shared", editable = "packages/shared" },
+    { name = "uvicorn", specifier = ">=0.34.0" },
+]
+provides-extras = ["server"]
+
+[[package]]
+name = "upnext-server"
+source = { editable = "packages/server" }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "fastapi" },
+    { name = "greenlet" },
+    { name = "psycopg2-binary" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "redis" },
+    { name = "sqlalchemy" },
+    { name = "upnext-shared" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.22.1" },
+    { name = "alembic", specifier = ">=1.14.0" },
+    { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "greenlet", specifier = ">=3.3.1" },
+    { name = "psycopg2-binary", specifier = ">=2.9.0" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "redis", specifier = ">=7.1.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.36" },
+    { name = "upnext-shared", editable = "packages/shared" },
+    { name = "uvicorn", specifier = ">=0.34.0" },
+]
+
+[[package]]
+name = "upnext-shared"
+source = { editable = "packages/shared" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.10.0" }]
+
+[[package]]
+name = "upnext-workspace"
+version = "0.0.1"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "anyio" },
+    { name = "fakeredis", extra = ["lua"] },
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "anyio", specifier = ">=4.11.0" },
+    { name = "fakeredis", extras = ["lua"], specifier = ">=2.26.0" },
+    { name = "httpx", specifier = ">=0.28.0" },
+    { name = "pytest", specifier = ">=8.4.0" },
+    { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
 ]
 
 [[package]]

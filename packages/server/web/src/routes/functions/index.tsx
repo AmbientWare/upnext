@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getFunctions, queryKeys } from "@/lib/conduit-api";
+import { getFunctions, queryKeys } from "@/lib/upnext-api";
 import type { FunctionType } from "@/lib/types";
 import { Search, X, FunctionSquare } from "lucide-react";
 import { FunctionsTableSkeleton } from "./-components/skeletons";
@@ -177,7 +177,7 @@ function FunctionsPage() {
             </div>
             <div className="text-sm font-medium">No functions available</div>
             <div className="text-xs mt-1 text-muted-foreground/80">
-              {hasNonDefaultFilters ? "Try adjusting your filters" : "Functions will appear here when workers register with Conduit."}
+              {hasNonDefaultFilters ? "Try adjusting your filters" : "Functions will appear here when workers register with UpNext."}
             </div>
           </div>
         ) : (

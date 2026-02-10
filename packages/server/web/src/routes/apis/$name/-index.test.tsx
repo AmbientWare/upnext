@@ -15,8 +15,8 @@ vi.mock("@tanstack/react-router", async () => {
 const getApiMock = vi.fn();
 const getApiRequestEventsMock = vi.fn();
 
-vi.mock("@/lib/conduit-api", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/conduit-api")>("@/lib/conduit-api");
+vi.mock("@/lib/upnext-api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/upnext-api")>("@/lib/upnext-api");
   return {
     ...actual,
     getApi: (...args: unknown[]) => getApiMock(...args),

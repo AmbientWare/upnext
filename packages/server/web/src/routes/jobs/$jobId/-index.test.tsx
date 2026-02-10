@@ -7,8 +7,8 @@ import type { ComponentType } from "react";
 const getJobTimelineMock = vi.fn();
 let capturedArtifactsProps: { selectedJobId: string } | null = null;
 
-vi.mock("@/lib/conduit-api", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/conduit-api")>("@/lib/conduit-api");
+vi.mock("@/lib/upnext-api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/upnext-api")>("@/lib/upnext-api");
   return {
     ...actual,
     getJobTimeline: (...args: unknown[]) => getJobTimelineMock(...args),
@@ -41,7 +41,7 @@ vi.mock("./-components/skeletons", () => ({
 }));
 
 import { Route } from "./index";
-import { queryKeys } from "@/lib/conduit-api";
+import { queryKeys } from "@/lib/upnext-api";
 
 describe("Job detail page artifacts refresh", () => {
   it("shows refresh button in artifacts tab and refetches selected job artifacts", async () => {

@@ -1,3 +1,3 @@
-"""Canonical package version for the Conduit workspace."""
+"""Canonical package version for the UpNext workspace."""
 
-__version__ = "0.0.2"
+__version__ = "0.0.1"

@@ -1,20 +1,20 @@
 """API tracking constants shared between SDK middleware and server reader.
 
 Redis key structure:
-    conduit:api:registry                                    -> SET of api names
-    conduit:api:{api}:endpoints                             -> SET of "METHOD:path"
-    conduit:api:{api}:{method}:{path}:m:{YYYY-MM-DDTHH:MM} -> HASH (minute bucket)
-    conduit:api:{api}:{method}:{path}:h:{YYYY-MM-DDTHH}    -> HASH (hourly bucket)
+    upnext:api:registry                                    -> SET of api names
+    upnext:api:{api}:endpoints                             -> SET of "METHOD:path"
+    upnext:api:{api}:{method}:{path}:m:{YYYY-MM-DDTHH:MM} -> HASH (minute bucket)
+    upnext:api:{api}:{method}:{path}:h:{YYYY-MM-DDTHH}    -> HASH (hourly bucket)
 
 Each hash contains:
     requests, errors, total_latency_ms, status_2xx, status_4xx, status_5xx
 """
 
 # Key prefix for all API tracking keys
-API_PREFIX = "conduit:apis"
+API_PREFIX = "upnext:apis"
 
 # Key prefix for API instance heartbeats
-API_INSTANCE_PREFIX = "conduit:apis:instances"
+API_INSTANCE_PREFIX = "upnext:apis:instances"
 
 # TTLs (seconds)
 MINUTE_BUCKET_TTL = 600  # 10 minutes

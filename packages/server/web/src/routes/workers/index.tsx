@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getWorkers, queryKeys } from "@/lib/conduit-api";
+import { getWorkers, queryKeys } from "@/lib/upnext-api";
 import { Search, X, Server } from "lucide-react";
 import { WorkersTableSkeleton } from "./-components/skeletons";
 import { WorkersTable } from "./-components/workers-table";
@@ -116,7 +116,7 @@ function WorkersPage() {
             </div>
             <div className="text-sm font-medium">No workers connected</div>
             <div className="text-xs mt-1 text-muted-foreground/80">
-              {hasNonDefaultFilters ? "Try adjusting your filters" : "Workers will appear here when they register with Conduit."}
+              {hasNonDefaultFilters ? "Try adjusting your filters" : "Workers will appear here when they register with UpNext."}
             </div>
           </div>
         ) : (

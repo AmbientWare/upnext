@@ -1,4 +1,4 @@
-"""Conduit API Server."""
+"""UpNext API Server."""
 
 from shared import __version__
 

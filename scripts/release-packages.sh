@@ -6,16 +6,16 @@ cd "$ROOT_DIR"
 
 usage() {
   cat <<'USAGE'
-Build and optionally publish Conduit packages.
+Build and optionally publish UpNext packages.
 
 Usage:
   scripts/release-packages.sh -r <target> [options]
 
 Targets:
-  all                    Build/publish in dependency order: shared -> server -> conduit
-  shared|conduit-shared  Shared package only
-  server|conduit-server  Server package only
-  conduit|conduit-py     Main package only
+  all                    Build/publish in dependency order: shared -> server -> upnext
+  shared|upnext-shared  Shared package only
+  server|upnext-server  Server package only
+  upnext     Main package only
 
 Options:
   -r, --release <target>   Release target (required)
@@ -29,7 +29,7 @@ Options:
 
 Examples:
   scripts/release-packages.sh -r all
-  scripts/release-packages.sh -r conduit --build-only
+  scripts/release-packages.sh -r upnext --build-only
   scripts/release-packages.sh -r all -i testpypi --dry-run
 USAGE
 }
@@ -101,16 +101,16 @@ fi
 resolve_targets() {
   case "$release_target" in
     all)
-      echo "shared server conduit"
+      echo "shared server upnext"
       ;;
-    shared|conduit-shared)
+    shared|upnext-shared)
       echo "shared"
       ;;
-    server|conduit-server)
+    server|upnext-server)
       echo "server"
       ;;
-    conduit|conduit-py)
-      echo "conduit"
+    upnext)
+      echo "upnext"
       ;;
     *)
       echo "Invalid release target: $release_target" >&2
@@ -123,7 +123,7 @@ package_dir_for() {
   case "$1" in
     shared) echo "packages/shared" ;;
     server) echo "packages/server" ;;
-    conduit) echo "packages/conduit" ;;
+    upnext) echo "packages/upnext" ;;
     *)
       echo "Unknown package key: $1" >&2
       exit 1
@@ -133,9 +133,9 @@ package_dir_for() {
 
 dist_name_for() {
   case "$1" in
-    shared) echo "conduit-shared" ;;
-    server) echo "conduit-server" ;;
-    conduit) echo "conduit-py" ;;
+    shared) echo "upnext-shared" ;;
+    server) echo "upnext-server" ;;
+    upnext) echo "upnext" ;;
     *)
       echo "Unknown package key: $1" >&2
       exit 1

@@ -6,19 +6,20 @@ The SDK middleware writes per-endpoint metrics to Redis hash buckets:
 
 This module reads and aggregates those buckets for the API routes.
 
-Redis key structure (written by conduit.sdk.middleware):
-    conduit:api:registry                                    → SET of api names
-    conduit:api:{api}:endpoints                             → SET of "METHOD:path"
-    conduit:api:{api}:{method}:{path}:m:{YYYY-MM-DDTHH:MM} → HASH (minute)
-    conduit:api:{api}:{method}:{path}:h:{YYYY-MM-DDTHH}    → HASH (hourly)
+Redis key structure (written by upnext.sdk.middleware):
+    upnext:api:registry                                    → SET of api names
+    upnext:api:{api}:endpoints                             → SET of "METHOD:path"
+    upnext:api:{api}:{method}:{path}:m:{YYYY-MM-DDTHH:MM} → HASH (minute)
+    upnext:api:{api}:{method}:{path}:h:{YYYY-MM-DDTHH}    → HASH (hourly)
 """
 
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from server.services.redis import get_redis
 from shared.api import API_PREFIX
+
+from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,7 @@ class ApiMetricsReader:
 
         results = []
         for api_name in api_names:
-            endpoints = await self._redis.smembers(
-                f"{API_PREFIX}:{api_name}:endpoints"
-            )
+            endpoints = await self._redis.smembers(f"{API_PREFIX}:{api_name}:endpoints")
             if not endpoints:
                 continue
 
@@ -63,9 +62,7 @@ class ApiMetricsReader:
                     "avg_latency_ms": round(
                         totals["total_latency_ms"] / totals["requests"], 2
                     ),
-                    "error_rate": round(
-                        totals["errors"] / totals["requests"] * 100, 1
-                    ),
+                    "error_rate": round(totals["errors"] / totals["requests"] * 100, 1),
                     "requests_per_min": await self._get_req_per_min(
                         api_name, endpoints
                     ),
@@ -80,9 +77,7 @@ class ApiMetricsReader:
         if api_name:
             api_names = [api_name]
         else:
-            api_names = list(
-                await self._redis.smembers(f"{API_PREFIX}:registry") or []
-            )
+            api_names = list(await self._redis.smembers(f"{API_PREFIX}:registry") or [])
 
         results = []
         for name in api_names:
@@ -96,9 +91,7 @@ class ApiMetricsReader:
                     continue
                 method, path = parts
 
-                totals = await self._aggregate_hourly(
-                    name, [ep_key], hours=24
-                )
+                totals = await self._aggregate_hourly(name, [ep_key], hours=24)
                 if totals["requests"] == 0:
                     continue
 
@@ -139,9 +132,10 @@ class ApiMetricsReader:
         api_names = await self._redis.smembers(f"{API_PREFIX}:registry") or set()
         all_endpoints: list[tuple[str, str]] = []
         for api_name in api_names:
-            endpoints = await self._redis.smembers(
-                f"{API_PREFIX}:{api_name}:endpoints"
-            ) or set()
+            endpoints = (
+                await self._redis.smembers(f"{API_PREFIX}:{api_name}:endpoints")
+                or set()
+            )
             for ep in endpoints:
                 all_endpoints.append((api_name, ep))
 
@@ -184,12 +178,8 @@ class ApiMetricsReader:
         apis = await self.get_apis()
 
         total_requests = sum(a["requests_24h"] for a in apis)
-        total_latency = sum(
-            a["avg_latency_ms"] * a["requests_24h"] for a in apis
-        )
-        total_errors = sum(
-            a["error_rate"] / 100 * a["requests_24h"] for a in apis
-        )
+        total_latency = sum(a["avg_latency_ms"] * a["requests_24h"] for a in apis)
+        total_errors = sum(a["error_rate"] / 100 * a["requests_24h"] for a in apis)
 
         return {
             "requests_24h": total_requests,
@@ -232,9 +222,7 @@ class ApiMetricsReader:
             if data:
                 totals["requests"] += int(data.get("requests", 0))
                 totals["errors"] += int(data.get("errors", 0))
-                totals["total_latency_ms"] += float(
-                    data.get("total_latency_ms", 0)
-                )
+                totals["total_latency_ms"] += float(data.get("total_latency_ms", 0))
                 totals["status_2xx"] += int(data.get("status_2xx", 0))
                 totals["status_4xx"] += int(data.get("status_4xx", 0))
                 totals["status_5xx"] += int(data.get("status_5xx", 0))
@@ -248,8 +236,7 @@ class ApiMetricsReader:
         now = datetime.now(UTC)
         # Check last 2 complete minutes (current minute is partial)
         minute_keys = [
-            (now - timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M")
-            for i in range(1, 3)
+            (now - timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M") for i in range(1, 3)
         ]
 
         pipe = self._redis.pipeline(transaction=False)

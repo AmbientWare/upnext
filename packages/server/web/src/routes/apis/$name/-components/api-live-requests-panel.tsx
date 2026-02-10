@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { getApiRequestEvents, queryKeys } from "@/lib/conduit-api";
+import { getApiRequestEvents, queryKeys } from "@/lib/upnext-api";
 import { Panel, ApiRequestsTable } from "@/components/shared";
 
 interface ApiLiveRequestsPanelProps {

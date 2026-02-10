@@ -1,4 +1,4 @@
-"""Core data models for Conduit."""
+"""Core data models for UpNext."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ class Job:
     """
     Represents a job to be executed.
 
-    Jobs are the fundamental unit of work in Conduit.
+    Jobs are the fundamental unit of work in UpNext.
     """
 
     # Identity

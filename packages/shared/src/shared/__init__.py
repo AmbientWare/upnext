@@ -1,4 +1,4 @@
-"""Shared models for Conduit packages."""
+"""Shared models for UpNext packages."""
 
 from shared._version import __version__
 from shared.api import API_PREFIX, HOURLY_BUCKET_TTL, MINUTE_BUCKET_TTL, REGISTRY_TTL
@@ -28,13 +28,13 @@ from shared.schemas import (
     ApiRequestEvent,
     ApiRequestEventsResponse,
     ApiRequestSnapshotEvent,
-    ApisSnapshotEvent,
     ApisListResponse,
     ApiSnapshotEvent,
+    ApisSnapshotEvent,
     ApiStats,
     ApiTrendHour,
-    ApiTrendsSnapshotEvent,
     ApiTrendsResponse,
+    ApiTrendsSnapshotEvent,
     ArtifactCreateResponse,
     ArtifactListResponse,
     ArtifactQueuedResponse,
@@ -52,8 +52,8 @@ from shared.schemas import (
     JobListResponse,
     JobStatsResponse,
     JobTrendHour,
-    JobTrendsSnapshotEvent,
     JobTrendsResponse,
+    JobTrendsSnapshotEvent,
     Run,
     RunStats,
     WorkerInfo,

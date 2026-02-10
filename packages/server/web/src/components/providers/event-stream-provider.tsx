@@ -4,7 +4,7 @@ import {
   queryKeys,
   type GetApiRequestEventsParams,
   type GetJobsParams,
-} from "@/lib/conduit-api";
+} from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type {

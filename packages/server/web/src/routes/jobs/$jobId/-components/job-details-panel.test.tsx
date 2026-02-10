@@ -26,7 +26,7 @@ function mkJob(): Job {
     },
     metadata: {
       stream_key:
-        "conduit:fn:very_long_function_name:stream:with:extra:segments:that:force:horizontal:overflow",
+        "upnext:fn:very_long_function_name:stream:with:extra:segments:that:force:horizontal:overflow",
     },
     result: null,
     error: null,

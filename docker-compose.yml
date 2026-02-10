@@ -19,13 +19,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: conduit
-      POSTGRES_USER: conduit
-      POSTGRES_PASSWORD: conduit
+      POSTGRES_DB: upnext
+      POSTGRES_USER: upnext
+      POSTGRES_PASSWORD: upnext
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U conduit -d conduit"]
+      test: ["CMD-SHELL", "pg_isready -U upnext -d upnext"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -37,12 +37,12 @@ services:
       dockerfile: packages/server/Dockerfile
     command: ["uv", "run", "alembic", "upgrade", "head"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://conduit:conduit@postgres:5432/conduit
+      DATABASE_URL: postgresql+asyncpg://upnext:upnext@postgres:5432/upnext
     depends_on:
       postgres:
         condition: service_healthy
 
-  # Conduit Server (API + Dashboard)
+  # UpNext Server (API + Dashboard)
   server:
     build:
       context: .
@@ -59,9 +59,9 @@ services:
       - "8080:8080"
     environment:
       PYTHONUNBUFFERED: "1"
-      CONDUIT_DATABASE_URL: postgresql+asyncpg://conduit:conduit@postgres:5432/conduit
-      DATABASE_URL: postgresql+asyncpg://conduit:conduit@postgres:5432/conduit
-      CONDUIT_REDIS_URL: redis://redis:6379
+      UPNEXT_DATABASE_URL: postgresql+asyncpg://upnext:upnext@postgres:5432/upnext
+      DATABASE_URL: postgresql+asyncpg://upnext:upnext@postgres:5432/upnext
+      UPNEXT_REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
       PORT: "8080"
     volumes:
@@ -94,11 +94,11 @@ services:
       dockerfile: examples/Dockerfile
     environment:
       PYTHONUNBUFFERED: "1"
-      CONDUIT_REDIS_URL: redis://redis:6379
-      CONDUIT_URL: http://server:8080
+      UPNEXT_REDIS_URL: redis://redis:6379
+      UPNEXT_URL: http://server:8080
     volumes:
       - ./examples:/app/examples
-      - ./packages/conduit/src:/app/packages/conduit/src
+      - ./packages/upnext/src:/app/packages/upnext/src
       - ./packages/shared/src:/app/packages/shared/src
     depends_on:
       redis:
@@ -122,7 +122,7 @@ services:
       INTERVAL_MAX: "1.5"
     volumes:
       - ./examples:/app/examples
-      - ./packages/conduit/src:/app/packages/conduit/src
+      - ./packages/upnext/src:/app/packages/upnext/src
       - ./packages/shared/src:/app/packages/shared/src
     depends_on:
       example-service:

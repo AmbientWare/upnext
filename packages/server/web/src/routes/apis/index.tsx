@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getApis, queryKeys } from "@/lib/conduit-api";
+import { getApis, queryKeys } from "@/lib/upnext-api";
 import { Search, X, Cloud } from "lucide-react";
 import { useAnimatedNumber } from "@/hooks/use-animated-number";
 import { ApisTableSkeleton } from "./-components/skeletons";

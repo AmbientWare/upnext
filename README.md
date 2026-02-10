@@ -1,10 +1,10 @@
-# Conduit
+# UpNext
 
 Background jobs and APIs for Python.
 
-Conduit is an alpha-stage framework for running workers, APIs, cron jobs, and event-driven tasks with a shared Redis-backed runtime.
+UpNext is an alpha-stage framework for running workers, APIs, cron jobs, and event-driven tasks with a shared Redis-backed runtime.
 
-## Why Conduit
+## Why UpNext
 
 - Task, cron, and event APIs with simple decorators
 - Built-in job state transitions, retries, and progress updates
@@ -14,7 +14,7 @@ Conduit is an alpha-stage framework for running workers, APIs, cron jobs, and ev
 
 ## Repository Layout
 
-- `packages/conduit`: SDK, runtime engine, and `conduit` CLI
+- `packages/upnext`: SDK, runtime engine, and `upnext` CLI
 - `packages/server`: hosted API server + web dashboard
 - `packages/shared`: shared models and schemas
 - `examples/service.py`: sample API + worker service
@@ -45,8 +45,8 @@ docker run --rm -p 6379:6379 redis:7-alpine
 ### 3) Run the example service (API + worker)
 
 ```bash
-CONDUIT_REDIS_URL=redis://localhost:6379 \
-uv run --package conduit-py conduit run examples/service.py
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+uv run --package upnext upnext run examples/service.py
 ```
 
 The example API listens on `http://localhost:8001`.
@@ -55,7 +55,7 @@ The example API listens on `http://localhost:8001`.
 
 ```bash
 API_URL=http://localhost:8001 \
-uv run --package conduit-py python examples/client.py
+uv run --package upnext python examples/client.py
 ```
 
 ### 5) Call the API directly
@@ -71,13 +71,13 @@ curl -X POST http://localhost:8001/orders \
 SDK + CLI + hosted server commands:
 
 ```bash
-uv add conduit-py
+uv add upnext
 ```
 
 Server-only environments can install just:
 
 ```bash
-uv add conduit-server
+uv add upnext-server
 ```
 
 ## Hosted Server
@@ -87,16 +87,16 @@ Server commands work from source checkout and installed package environments.
 Start server (SQLite + Redis):
 
 ```bash
-CONDUIT_DATABASE_URL=sqlite+aiosqlite:///conduit.db \
-CONDUIT_REDIS_URL=redis://localhost:6379 \
-uv run --package conduit-py conduit server start --port 8080
+UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+uv run --package upnext upnext server start --port 8080
 ```
 
 If using PostgreSQL, run migrations first:
 
 ```bash
-CONDUIT_DATABASE_URL=postgresql+asyncpg://conduit:conduit@localhost:5432/conduit \
-uv run --package conduit-py conduit server db upgrade head
+UPNEXT_DATABASE_URL=postgresql+asyncpg://upnext:upnext@localhost:5432/upnext \
+uv run --package upnext upnext server db upgrade head
 ```
 
 ## Realtime Update Model
@@ -114,7 +114,7 @@ This keeps UI updates near-realtime while reducing avoidable polling load.
 Package-level:
 
 ```bash
-./scripts/verify-conduit-package.sh
+./scripts/verify-upnext-package.sh
 ```
 
 Workspace-level (Python + web):
@@ -133,15 +133,15 @@ Integration checks (real Redis/Postgres + publish smoke):
 
 This repo publishes using globally unique package names:
 
-- `conduit-py`
-- `conduit-server`
-- `conduit-shared`
+- `upnext`
+- `upnext-server`
+- `upnext-shared`
 
 while keeping:
 
-- import package: `conduit`
-- CLI command: `conduit`
-- product name: Conduit
+- import package: `upnext`
+- CLI command: `upnext`
+- product name: upnext
 
 ## Contributing
 

@@ -1,4 +1,4 @@
-"""Conduit API Server."""
+"""UpNext API Server."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
-    logger.info("Starting Conduit API server...")
+    logger.info("Starting UpNext API server...")
 
     settings = get_settings()
 
@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
         )
         await subscriber.start()
     else:
-        logger.info("Redis not configured (CONDUIT_REDIS_URL not set)")
+        logger.info("Redis not configured (UPNEXT_REDIS_URL not set)")
 
     # Start periodic cleanup service
     cleanup = CleanupService(redis_client=redis_client)
@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    logger.info("Shutting down Conduit API server...")
+    logger.info("Shutting down UpNext API server...")
 
     # Stop background services
     await cleanup.stop()
@@ -103,8 +103,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="Conduit API",
-    description="API server for Conduit job tracking and dashboard",
+    title="UpNext API",
+    description="API server for UpNext job tracking and dashboard",
     version=get_settings().version,
     lifespan=lifespan,
 )
@@ -148,7 +148,7 @@ else:
     async def root():
         """Root endpoint (dev mode without built frontend)."""
         return {
-            "name": "Conduit API",
+            "name": "UpNext API",
             "version": get_settings().version,
             "docs": "/docs",
             "note": "Frontend not built. Run 'bun run build' in web/ directory.",

@@ -1,4 +1,4 @@
-"""SQLAlchemy models for Conduit persistence."""
+"""SQLAlchemy models for UpNext persistence."""
 
 from datetime import UTC, datetime
 from typing import Any
