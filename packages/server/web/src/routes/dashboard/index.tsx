@@ -12,6 +12,7 @@ import { QueueStatsSkeleton, SystemOverviewSkeleton } from "./-components/skelet
 import { TrendsPanel } from "./-components/trends-panel";
 import { ApiTrendsPanel } from "./-components/api-trends-panel";
 import { LiveActivityPanel } from "./-components/live-activity-panel";
+import { RunbookPanels } from "./-components/runbook-panels";
 
 export const Route = createFileRoute("/dashboard/")({
   component: DataMatrixDashboard,
@@ -47,7 +48,7 @@ function DataMatrixDashboard() {
   const isOverviewPending = isDashboardPending || isWorkersPending || isApisPending;
 
   return (
-    <div className="p-4 flex flex-col gap-3 h-full min-h-0 overflow-hidden">
+    <div className="p-4 flex flex-col gap-3 h-full min-h-0 overflow-auto">
       <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] items-stretch gap-3 shrink-0">
         {/* Queue Stats */}
         {isOverviewPending ? (
@@ -77,6 +78,14 @@ function DataMatrixDashboard() {
         <TrendsPanel className="flex-1" />
         <ApiTrendsPanel className="flex-1" />
       </div>
+
+      <RunbookPanels
+        stats={dashboardStats}
+        isPending={isDashboardPending}
+        className="shrink-0"
+        onFunctionClick={(name) => navigate({ to: "/functions/$name", params: { name } })}
+        onJobClick={(jobId) => navigate({ to: "/jobs/$jobId", params: { jobId } })}
+      />
 
       <LiveActivityPanel
         onJobClick={(job) => navigate({ to: "/jobs/$jobId", params: { jobId: job.id } })}

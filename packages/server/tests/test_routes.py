@@ -23,6 +23,7 @@ import server.routes.workers.workers_root as workers_root_route
 import server.routes.workers.workers_stream as workers_stream_route
 from fastapi import HTTPException, Response
 from server.db.repository import JobRepository
+from server.services.queue import QueuedJobSnapshot
 from shared.models import Job
 from shared.events import ARTIFACT_EVENTS_STREAM, BatchEventItem, BatchEventRequest
 from shared.schemas import (
@@ -754,6 +755,133 @@ async def test_dashboard_includes_queue_depth_when_database_available(
     assert out.queue.claimed == 5
     assert out.queue.capacity == 8
     assert out.queue.total == 5
+
+
+@pytest.mark.asyncio
+async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with sqlite_db.session() as session:
+        repo = JobRepository(session)
+        await repo.record_job(
+            {
+                "job_id": "job-fail-1",
+                "function": "fn.fail",
+                "function_name": "Fail Fn",
+                "status": "failed",
+                "root_id": "job-fail-1",
+                "created_at": now - timedelta(hours=2),
+                "started_at": now - timedelta(hours=2),
+                "completed_at": now - timedelta(hours=2) + timedelta(seconds=2),
+            }
+        )
+        await repo.record_job(
+            {
+                "job_id": "job-fail-2",
+                "function": "fn.fail",
+                "function_name": "Fail Fn",
+                "status": "failed",
+                "root_id": "job-fail-2",
+                "created_at": now - timedelta(hours=1),
+                "started_at": now - timedelta(hours=1),
+                "completed_at": now - timedelta(hours=1) + timedelta(seconds=1),
+            }
+        )
+        await repo.record_job(
+            {
+                "job_id": "job-ok-1",
+                "function": "fn.fail",
+                "function_name": "Fail Fn",
+                "status": "complete",
+                "root_id": "job-ok-1",
+                "created_at": now - timedelta(minutes=30),
+                "started_at": now - timedelta(minutes=30),
+                "completed_at": now - timedelta(minutes=30) + timedelta(seconds=1),
+            }
+        )
+        await repo.record_job(
+            {
+                "job_id": "job-stuck-1",
+                "function": "fn.stuck",
+                "function_name": "Stuck Fn",
+                "status": "active",
+                "root_id": "job-stuck-1",
+                "worker_id": "worker-a",
+                "created_at": now - timedelta(hours=1),
+                "started_at": now - timedelta(minutes=40),
+            }
+        )
+
+    class _QueueDepth:
+        running = 1
+        waiting = 2
+        claimed = 0
+        capacity = 4
+        total = 3
+
+    class _Settings:
+        dashboard_top_failing_limit = 5
+        dashboard_oldest_queued_limit = 5
+        dashboard_stuck_active_limit = 5
+        dashboard_stuck_active_seconds = 900
+
+    async def fake_queue_depth() -> _QueueDepth:
+        return _QueueDepth()
+
+    async def fake_worker_stats() -> WorkerStats:
+        return WorkerStats(total=2)
+
+    class FakeReader:
+        async def get_summary(self) -> dict[str, float]:
+            return {"requests_24h": 0, "avg_latency_ms": 0, "error_rate": 0}
+
+    async def fake_reader() -> FakeReader:
+        return FakeReader()
+
+    async def fake_defs() -> dict[str, FunctionConfig]:
+        return {
+            "fn.fail": FunctionConfig(
+                key="fn.fail",
+                name="Orders Processor",
+                type=FunctionType.TASK,
+            ),
+            "fn.stuck": FunctionConfig(
+                key="fn.stuck",
+                name="Stuck Fn",
+                type=FunctionType.TASK,
+            ),
+        }
+
+    async def fake_oldest(limit: int = 10) -> list[QueuedJobSnapshot]:
+        _ = limit
+        return [
+            QueuedJobSnapshot(
+                id="job-q-1",
+                function="fn.queue",
+                function_name="Queue Fn",
+                queued_at=now - timedelta(minutes=12),
+                age_seconds=720.0,
+                source="stream",
+            )
+        ]
+
+    monkeypatch.setattr(dashboard_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(dashboard_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
+    monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
+    monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
+    monkeypatch.setattr(dashboard_route, "get_function_definitions", fake_defs)
+    monkeypatch.setattr(dashboard_route, "get_oldest_queued_jobs", fake_oldest)
+
+    out = await dashboard_route.get_dashboard_stats()
+    assert out.top_failing_functions[0].key == "fn.fail"
+    assert out.top_failing_functions[0].name == "Orders Processor"
+    assert out.top_failing_functions[0].failures_24h == 2
+    assert out.top_failing_functions[0].runs_24h == 3
+    assert out.top_failing_functions[0].failure_rate == pytest.approx(66.67)
+    assert out.stuck_active_jobs[0].id == "job-stuck-1"
+    assert out.stuck_active_jobs[0].worker_id == "worker-a"
+    assert out.oldest_queued_jobs[0].id == "job-q-1"
+    assert out.oldest_queued_jobs[0].source == "stream"
 
 
 @pytest.mark.asyncio

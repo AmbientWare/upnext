@@ -373,6 +373,33 @@ export interface ApiStats {
   error_rate: number;
 }
 
+export interface TopFailingFunction {
+  key: string;
+  name: string;
+  runs_24h: number;
+  failures_24h: number;
+  failure_rate: number;
+  last_run_at: string | null;
+}
+
+export interface OldestQueuedJob {
+  id: string;
+  function: string;
+  function_name: string;
+  queued_at: string;
+  age_seconds: number;
+  source: string;
+}
+
+export interface StuckActiveJob {
+  id: string;
+  function: string;
+  function_name: string;
+  worker_id: string | null;
+  started_at: string;
+  age_seconds: number;
+}
+
 export interface DashboardStats {
   runs: RunStats;
   queue: QueueStats;
@@ -380,4 +407,7 @@ export interface DashboardStats {
   apis: ApiStats;
   recent_runs: Run[];
   recent_failures: Run[];
+  top_failing_functions: TopFailingFunction[];
+  oldest_queued_jobs: OldestQueuedJob[];
+  stuck_active_jobs: StuckActiveJob[];
 }

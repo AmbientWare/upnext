@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     alert_p95_wait_ms_threshold: float = 10_000.0
     alert_queue_backlog_threshold: int = 100
 
+    # Runbook dashboard panel settings.
+    dashboard_top_failing_limit: int = 5
+    dashboard_oldest_queued_limit: int = 10
+    dashboard_stuck_active_limit: int = 10
+    dashboard_stuck_active_seconds: int = 900
+
     version: str = __version__
 
     @property

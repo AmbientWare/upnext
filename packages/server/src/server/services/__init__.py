@@ -10,9 +10,11 @@ from server.services.artifact_storage import (
 from server.services.cleanup import CleanupService
 from server.services.queue import (
     FunctionQueueDepthStats,
+    QueuedJobSnapshot,
     QueueDepthStats,
     get_function_dispatch_reason_stats,
     get_function_queue_depth_stats,
+    get_oldest_queued_jobs,
     get_queue_depth_stats,
 )
 from server.services.redis import close_redis, connect_redis, get_redis
@@ -49,9 +51,11 @@ __all__ = [
     "get_artifact_storage",
     # Queue
     "FunctionQueueDepthStats",
+    "QueuedJobSnapshot",
     "get_function_dispatch_reason_stats",
     "QueueDepthStats",
     "get_function_queue_depth_stats",
+    "get_oldest_queued_jobs",
     "get_queue_depth_stats",
     # Cleanup
     "CleanupService",

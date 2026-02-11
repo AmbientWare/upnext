@@ -9,6 +9,7 @@ import server.services.queue as queue_service_module
 import server.services.workers as workers_service_module
 from fakeredis.aioredis import FakeRedis
 from shared.api import API_PREFIX
+from shared.models import Job
 from shared.workers import (
     FUNCTION_KEY_PREFIX,
     WORKER_DEF_PREFIX,
@@ -318,3 +319,48 @@ async def test_queue_service_returns_zero_stats_when_redis_unavailable(
 
     reason_stats = await queue_service_module.get_function_dispatch_reason_stats()
     assert reason_stats == {}
+
+
+@pytest.mark.asyncio
+async def test_queue_service_lists_oldest_queued_jobs(redis_text_client, monkeypatch) -> None:
+    now = datetime.now(UTC)
+    stream_job = Job(
+        id="job-stream-1",
+        function="fn.stream",
+        function_name="Stream Fn",
+        scheduled_at=now - timedelta(minutes=5),
+    )
+    scheduled_job = Job(
+        id="job-scheduled-1",
+        function="fn.scheduled",
+        function_name="Scheduled Fn",
+        scheduled_at=now - timedelta(minutes=15),
+    )
+
+    await redis_text_client.xadd(
+        "upnext:fn:fn.stream:stream",
+        {
+            "job_id": stream_job.id,
+            "data": stream_job.to_json(),
+        },
+    )
+    await redis_text_client.zadd(
+        "upnext:fn:fn.scheduled:scheduled",
+        {scheduled_job.id: (now - timedelta(minutes=15)).timestamp()},
+    )
+    await redis_text_client.set(
+        "upnext:job:fn.scheduled:job-scheduled-1",
+        scheduled_job.to_json(),
+    )
+
+    async def fake_get_redis() -> FakeRedis:
+        return redis_text_client
+
+    monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
+
+    rows = await queue_service_module.get_oldest_queued_jobs(limit=10)
+    assert [row.id for row in rows] == ["job-scheduled-1", "job-stream-1"]
+    assert rows[0].source == "scheduled"
+    assert rows[0].function_name == "Scheduled Fn"
+    assert rows[1].source == "stream"
+    assert rows[1].function_name == "Stream Fn"

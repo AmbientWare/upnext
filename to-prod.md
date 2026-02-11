@@ -74,7 +74,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: configurable thresholds + webhook/notification integration points.
   - Done: alert fires on sustained error rate/latency/lag violations.
 
-- [ ] Add runbook-oriented dashboard views.
+- [x] Add runbook-oriented dashboard views.
   - How: include “top failing functions”, “oldest queued”, “stuck active jobs”.
   - Done: on-call can triage incidents without querying raw Redis/DB.
 
