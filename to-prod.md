@@ -52,7 +52,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: per-cron policy (`catch_up`, `latest_only`, `skip`) and max catch-up window.
   - Done: behavior is configurable and test-covered.
 
-- [ ] Protect against double-scheduling.
+- [x] Protect against double-scheduling.
   - How: atomic schedule reservation per function+window.
   - Done: no duplicate cron emissions for same window in failover races.
 
