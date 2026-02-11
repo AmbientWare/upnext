@@ -368,6 +368,18 @@ class JobProcessor:
                 attempt_info,
             )
 
+            started_metadata = dict(job.metadata or {})
+            if job.scheduled_at is not None:
+                started_metadata.setdefault(
+                    "queued_at",
+                    job.scheduled_at.isoformat(),
+                )
+                queue_wait_ms = max(
+                    0.0,
+                    (time.time() - job.scheduled_at.timestamp()) * 1000,
+                )
+                started_metadata["queue_wait_ms"] = round(queue_wait_ms, 3)
+
             if self._status_buffer:
                 await self._status_buffer.record_job_started(
                     job.id,
@@ -377,7 +389,7 @@ class JobProcessor:
                     job.max_retries,
                     parent_id=job.parent_id,
                     root_id=job.root_id,
-                    metadata=job.metadata,
+                    metadata=started_metadata,
                 )
 
             # Execute job (track for auto-heartbeating)

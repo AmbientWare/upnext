@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -12,6 +13,28 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.db.models import Artifact, JobHistory, PendingArtifact
+
+
+@dataclass(frozen=True)
+class FunctionJobStats:
+    """Aggregated execution stats for a single function."""
+
+    function: str
+    runs: int
+    successes: int
+    failures: int
+    avg_duration_ms: float
+    last_run_at: str | None
+    last_run_status: str | None
+
+
+@dataclass(frozen=True)
+class FunctionWaitStats:
+    """Aggregated queue wait-time stats for a single function."""
+
+    function: str
+    avg_wait_ms: float
+    p95_wait_ms: float
 
 
 def _infer_artifact_metadata(
@@ -367,7 +390,7 @@ class JobRepository:
         self,
         *,
         start_date: datetime,
-    ) -> dict[str, dict[str, Any]]:
+    ) -> dict[str, FunctionJobStats]:
         """
         Get aggregated job stats per function key in a single query.
 
@@ -375,8 +398,7 @@ class JobRepository:
         and last-run info (status, timestamp) in one table scan, then filters to
         one row per function.
 
-        Returns dict mapping function key to stats dict with:
-        runs, successes, failures, avg_duration_ms, last_run_at, last_run_status
+        Returns dict mapping function key to `FunctionJobStats`.
         """
         duration_expr = self._duration_ms_expr()
 
@@ -434,20 +456,69 @@ class JobRepository:
 
         result = await self._session.execute(query)
 
-        stats: dict[str, dict[str, Any]] = {}
+        stats: dict[str, FunctionJobStats] = {}
         for row in result.all():
-            stats[row.function] = {
-                "runs": row.runs,
-                "successes": row.successes,
-                "failures": row.failures,
-                "avg_duration_ms": round(row.avg_duration_ms, 2)
+            stats[row.function] = FunctionJobStats(
+                function=row.function,
+                runs=row.runs,
+                successes=row.successes,
+                failures=row.failures,
+                avg_duration_ms=round(row.avg_duration_ms, 2)
                 if row.avg_duration_ms
-                else 0,
-                "last_run_at": row.run_time.isoformat() if row.run_time else None,
-                "last_run_status": row.status,
-            }
+                else 0.0,
+                last_run_at=row.run_time.isoformat() if row.run_time else None,
+                last_run_status=row.status,
+            )
 
         return stats
+
+    async def get_function_wait_stats(
+        self,
+        *,
+        start_date: datetime,
+        function: str | None = None,
+    ) -> dict[str, FunctionWaitStats]:
+        """
+        Compute per-function queue wait metrics from persisted job metadata.
+
+        Wait time is expected in `metadata.queue_wait_ms` and is written by
+        workers when a job starts execution.
+        """
+        query = select(JobHistory.function, JobHistory.metadata_).where(
+            JobHistory.created_at >= start_date,
+            JobHistory.started_at.isnot(None),
+        )
+        if function:
+            query = query.where(JobHistory.function == function)
+
+        result = await self._session.execute(query)
+        waits_by_function: dict[str, list[float]] = {}
+
+        for row in result.all():
+            metadata = row.metadata_ if isinstance(row.metadata_, dict) else {}
+            raw_wait = metadata.get("queue_wait_ms")
+            if raw_wait is None:
+                continue
+            try:
+                wait_ms = float(raw_wait)
+            except (TypeError, ValueError):
+                continue
+            if wait_ms < 0:
+                continue
+            waits_by_function.setdefault(row.function, []).append(wait_ms)
+
+        out: dict[str, FunctionWaitStats] = {}
+        for fn_key, waits in waits_by_function.items():
+            if not waits:
+                continue
+            waits.sort()
+            p95_idx = min((len(waits) * 95 + 99) // 100 - 1, len(waits) - 1)
+            out[fn_key] = FunctionWaitStats(
+                function=fn_key,
+                avg_wait_ms=round(sum(waits) / len(waits), 2),
+                p95_wait_ms=round(waits[p95_idx], 2),
+            )
+        return out
 
     async def list_old_job_ids(self, retention_days: int = 30) -> list[str]:
         """Return job IDs older than retention cutoff."""

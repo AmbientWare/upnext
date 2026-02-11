@@ -42,8 +42,10 @@ export function FunctionsTable({
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Type</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Workers</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">24H Runs</TableHead>
+          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Backlog</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Success</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Avg Duration</TableHead>
+          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">P95 Wait</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Timeout</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Retries</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Schedule/Pattern</TableHead>
@@ -87,6 +89,7 @@ export function FunctionsTable({
               )}
             </TableCell>
             <TableCell className="mono text-[11px] py-2">{formatNumber(fn.runs_24h)}</TableCell>
+            <TableCell className="mono text-[11px] py-2">{formatNumber(fn.queue_backlog)}</TableCell>
             <TableCell className="mono text-[11px] py-2">
               <span
                 className={cn(
@@ -101,6 +104,9 @@ export function FunctionsTable({
               </span>
             </TableCell>
             <TableCell className="mono text-[11px] text-muted-foreground py-2">{formatDuration(fn.avg_duration_ms)}</TableCell>
+            <TableCell className="mono text-[11px] text-muted-foreground py-2">
+              {fn.p95_wait_ms != null ? formatDuration(fn.p95_wait_ms) : "\u2014"}
+            </TableCell>
             <TableCell className="mono text-[11px] text-muted-foreground py-2">{fn.timeout ?? "\u2014"}s</TableCell>
             <TableCell className="mono text-[11px] text-muted-foreground py-2">{fn.max_retries ?? "\u2014"}</TableCell>
             <TableCell className="mono text-[10px] text-muted-foreground py-2">{fn.schedule || fn.pattern || "\u2014"}</TableCell>

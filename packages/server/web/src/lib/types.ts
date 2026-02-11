@@ -8,6 +8,7 @@
 // =============================================================================
 
 export type FunctionType = 'task' | 'cron' | 'event';
+export type MissedRunPolicy = 'catch_up' | 'latest_only' | 'skip';
 export type JobStatus =
   | 'pending'
   | 'queued'
@@ -177,9 +178,14 @@ export interface FunctionInfo {
   max_retries: number | null;
   retry_delay: number | null;
   rate_limit: string | null;
+  max_concurrency: number | null;
+  routing_group: string | null;
+  group_max_concurrency: number | null;
   // Cron config
   schedule: string | null;
   next_run_at: string | null;
+  missed_run_policy: MissedRunPolicy | null;
+  max_catch_up_seconds: number | null;
   // Event config
   pattern: string | null;
   // Workers currently handling this function
@@ -189,6 +195,9 @@ export interface FunctionInfo {
   success_rate: number;
   avg_duration_ms: number;
   p95_duration_ms: number | null;
+  avg_wait_ms: number | null;
+  p95_wait_ms: number | null;
+  queue_backlog: number;
   last_run_at: string | null;
   last_run_status: string | null;
 }

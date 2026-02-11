@@ -58,7 +58,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
 
 ## 4) Operational Observability
 
-- [ ] Expose queue lag and wait-time by function.
+- [x] Expose queue lag and wait-time by function.
   - How: record enqueue->start delay histograms and queued depth per function.
   - Done: dashboard shows lag, p95 wait, and backlog hotspots.
 

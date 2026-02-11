@@ -744,6 +744,7 @@ class RedisQueue(BaseQueue):
     async def enqueue(self, job: Job, *, delay: float = 0.0) -> str:
         """Add a job to the queue."""
         client = await self._ensure_connected()
+        now = time.time()
 
         stream_key = self._stream_key(job.function)
         scheduled_key = self._scheduled_key(job.function)
@@ -751,6 +752,8 @@ class RedisQueue(BaseQueue):
         job_key = self._job_key(job)
         job_index_key = self._job_index_key(job.id)
 
+        run_at = now + delay if delay > 0 else now
+        job.scheduled_at = datetime.fromtimestamp(run_at, UTC)
         job.mark_queued()
 
         if delay <= 0:
@@ -758,7 +761,7 @@ class RedisQueue(BaseQueue):
 
         if self._enqueue_sha:
             dest_key = scheduled_key if delay > 0 else stream_key
-            scheduled_time = time.time() + delay if delay > 0 else 0
+            scheduled_time = run_at if delay > 0 else 0
 
             result = await client.evalsha(
                 self._enqueue_sha,
@@ -1166,6 +1169,7 @@ class RedisQueue(BaseQueue):
     async def retry(self, job: Job, delay: float) -> None:
         """Reschedule job for retry."""
         client = await self._ensure_connected()
+        now = time.time()
 
         msg_id = job.metadata.get("_stream_msg_id") if job.metadata else None
         old_stream_key = job.metadata.get("_stream_key") if job.metadata else None
@@ -1175,6 +1179,8 @@ class RedisQueue(BaseQueue):
             job.metadata.pop("_stream_msg_id", None)
             job.metadata.pop("_stream_key", None)
 
+        run_at = now + delay if delay > 0 else now
+        job.scheduled_at = datetime.fromtimestamp(run_at, UTC)
         job.mark_queued("Re-queued for retry")
 
         job_key = self._job_key(job)
@@ -1216,7 +1222,7 @@ class RedisQueue(BaseQueue):
             await client.setex(job_index_key, self._job_ttl_seconds, job_key)
 
             if delay > 0:
-                await client.zadd(dest_key, {job.id: time.time() + delay})
+                await client.zadd(dest_key, {job.id: run_at})
             else:
                 await self._xadd_job_payload(
                     dest_key,
@@ -1918,6 +1924,7 @@ class RedisQueue(BaseQueue):
             return False
 
         job.key = f"cron:{job.function}:{self._cron_window_token(next_run_at)}"
+        job.scheduled_at = datetime.fromtimestamp(next_run_at, UTC)
         job.mark_queued("Cron job scheduled")
         job.metadata = job.metadata or {}
         job.metadata["cron_window_at"] = next_run_at
@@ -1953,6 +1960,7 @@ class RedisQueue(BaseQueue):
         )
         new_job.metadata.setdefault("cron", True)
         new_job.metadata["cron_window_at"] = next_run_at
+        new_job.scheduled_at = datetime.fromtimestamp(next_run_at, UTC)
         new_job.mark_queued("Cron job rescheduled")
 
         reserved, owner = await self._reserve_cron_window(
@@ -2066,6 +2074,7 @@ class RedisQueue(BaseQueue):
         catchup_job.metadata.setdefault("cron", True)
         catchup_job.metadata["cron_window_at"] = selected_window
         catchup_job.metadata["startup_reconciled"] = True
+        catchup_job.scheduled_at = datetime.fromtimestamp(selected_window, UTC)
         if policy == MissedRunPolicy.LATEST_ONLY:
             catchup_job.metadata["startup_policy"] = MissedRunPolicy.LATEST_ONLY
             catchup_job.mark_queued("Cron startup reconciliation latest-only run")

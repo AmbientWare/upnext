@@ -476,6 +476,9 @@ class FunctionInfo(BaseModel):
     success_rate: float = 100.0
     avg_duration_ms: float = 0.0
     p95_duration_ms: float | None = None
+    avg_wait_ms: float | None = None
+    p95_wait_ms: float | None = None
+    queue_backlog: int = 0
     last_run_at: str | None = None
     last_run_status: str | None = None
 

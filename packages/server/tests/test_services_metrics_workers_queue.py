@@ -271,6 +271,14 @@ async def test_queue_service_reads_depth_from_stream_groups(
     assert stats.capacity == 5
     assert stats.total == 6
 
+    function_stats = await queue_service_module.get_function_queue_depth_stats()
+    assert function_stats["fn.a"].waiting == 2
+    assert function_stats["fn.a"].claimed == 1
+    assert function_stats["fn.a"].backlog == 3
+    assert function_stats["fn.b"].waiting == 1
+    assert function_stats["fn.b"].claimed == 2
+    assert function_stats["fn.b"].backlog == 3
+
 
 @pytest.mark.asyncio
 async def test_queue_service_returns_zero_stats_when_redis_unavailable(
@@ -287,3 +295,6 @@ async def test_queue_service_returns_zero_stats_when_redis_unavailable(
     assert stats.running == 0
     assert stats.capacity == 0
     assert stats.total == 0
+
+    function_stats = await queue_service_module.get_function_queue_depth_stats()
+    assert function_stats == {}

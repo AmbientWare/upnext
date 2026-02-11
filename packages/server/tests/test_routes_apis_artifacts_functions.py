@@ -20,6 +20,7 @@ from httpx import ASGITransport, AsyncClient
 from server.db.models import PendingArtifact
 from server.db.repository import JobRepository
 from server.routes import v1_router
+from server.services.queue import FunctionQueueDepthStats
 from shared.schemas import (
     ApiInstance,
     ApiPageResponse,
@@ -232,6 +233,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
                 "created_at": now - timedelta(hours=2),
                 "started_at": now - timedelta(hours=2),
                 "completed_at": now - timedelta(hours=2) + timedelta(seconds=1),
+                "metadata": {"queue_wait_ms": 100},
             }
         )
         await repo.record_job(
@@ -244,6 +246,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
                 "created_at": now - timedelta(hours=1),
                 "started_at": now - timedelta(hours=1),
                 "completed_at": now - timedelta(hours=1) + timedelta(seconds=3),
+                "metadata": {"queue_wait_ms": 300},
             }
         )
 
@@ -284,8 +287,23 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             ),
         ]
 
+    async def _queue_depth() -> dict[str, FunctionQueueDepthStats]:
+        return {
+            "fn.task": FunctionQueueDepthStats(
+                function="fn.task",
+                waiting=4,
+                claimed=2,
+            ),
+            "fn.event": FunctionQueueDepthStats(
+                function="fn.event",
+                waiting=1,
+                claimed=0,
+            ),
+        }
+
     monkeypatch.setattr(functions_route, "get_function_definitions", _defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", _workers)
+    monkeypatch.setattr(functions_route, "get_function_queue_depth_stats", _queue_depth)
     monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
 
     all_functions = await functions_route.list_functions(type=None)
@@ -298,11 +316,15 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
     assert task.runs_24h == 2
     assert task.success_rate == 50.0
     assert task.rate_limit == "100/m"
+    assert task.avg_wait_ms == pytest.approx(200.0)
+    assert task.p95_wait_ms == pytest.approx(300.0)
+    assert task.queue_backlog == 6
     assert set(task.workers) == {"alpha (2)", "host-1"}
     assert task.active is True
 
     assert event.runs_24h == 0
     assert event.success_rate == 100.0
+    assert event.queue_backlog == 1
     assert set(event.workers) == {"host-1", "workerid"}
     assert event.active is True
 
@@ -328,6 +350,7 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
                 "created_at": now - timedelta(minutes=5),
                 "started_at": now - timedelta(minutes=5),
                 "completed_at": now - timedelta(minutes=5) + timedelta(seconds=1),
+                "metadata": {"queue_wait_ms": 40},
             }
         )
         await repo.record_job(
@@ -341,6 +364,7 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
                 "started_at": now - timedelta(minutes=4),
                 "completed_at": now - timedelta(minutes=4) + timedelta(seconds=3),
                 "error": "boom",
+                "metadata": {"queue_wait_ms": 120},
             }
         )
         await repo.record_job(
@@ -352,6 +376,7 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
                 "root_id": "fn-detail-3",
                 "created_at": now - timedelta(minutes=3),
                 "started_at": now - timedelta(minutes=3),
+                "metadata": {"queue_wait_ms": 80},
             }
         )
 
@@ -379,8 +404,18 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             ),
         ]
 
+    async def _queue_depth() -> dict[str, FunctionQueueDepthStats]:
+        return {
+            "fn.detail": FunctionQueueDepthStats(
+                function="fn.detail",
+                waiting=2,
+                claimed=1,
+            )
+        }
+
     monkeypatch.setattr(functions_route, "get_function_definitions", _defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", _workers)
+    monkeypatch.setattr(functions_route, "get_function_queue_depth_stats", _queue_depth)
     monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
 
     detail = await functions_route.get_function("fn.detail")
@@ -389,6 +424,9 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
     assert detail.success_rate == 33.3
     assert detail.avg_duration_ms == pytest.approx(2000.0, abs=0.1)
     assert detail.p95_duration_ms == pytest.approx(3000.0, abs=0.1)
+    assert detail.avg_wait_ms == pytest.approx(80.0, abs=0.1)
+    assert detail.p95_wait_ms == pytest.approx(120.0, abs=0.1)
+    assert detail.queue_backlog == 3
     assert detail.last_run_status == "active"
     assert detail.workers == ["worker-a (2)"]
     assert [run.id for run in detail.recent_runs] == [
