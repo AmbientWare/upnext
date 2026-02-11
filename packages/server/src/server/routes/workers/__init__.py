@@ -13,8 +13,10 @@ from server.routes.workers.workers_stream import stream_workers, worker_stream_r
 WORKERS_PREFIX = "/workers"
 
 router = APIRouter(tags=["workers"])
-router.include_router(worker_root_router, prefix=WORKERS_PREFIX)
+# Register concrete stream route before dynamic `/{worker_id}` route so
+# `/workers/stream` is not captured as a worker id.
 router.include_router(worker_stream_router, prefix=WORKERS_PREFIX)
+router.include_router(worker_root_router, prefix=WORKERS_PREFIX)
 
 __all__ = [
     "WORKERS_PREFIX",

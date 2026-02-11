@@ -13,13 +13,14 @@ import {
 
 interface ApiLiveRequestsPanelProps {
   apiName: string;
+  className?: string;
 }
 
 const LIVE_RESYNC_MS = 5 * 1000;
 const DISPLAY_LIMIT = 50;
 const WINDOW_QUERY_LIMIT = 500;
 
-export function ApiLiveRequestsPanel({ apiName }: ApiLiveRequestsPanelProps) {
+export function ApiLiveRequestsPanel({ apiName, className }: ApiLiveRequestsPanelProps) {
   const [live, setLive] = useState(true);
   const [windowPreset, setWindowPreset] = useState<TimeWindowPreset>("custom");
   const [dateRange, setDateRange] = useState<DateRange>();
@@ -78,7 +79,7 @@ export function ApiLiveRequestsPanel({ apiName }: ApiLiveRequestsPanelProps) {
           <span className="text-[10px] mono text-muted-foreground">{events.length} events</span>
         </div>
       }
-      className="flex-1 min-h-[260px] flex flex-col overflow-hidden"
+      className={className ?? "flex-1 min-h-[260px] flex flex-col overflow-hidden"}
       contentClassName="flex-1 overflow-hidden p-0"
     >
       <ApiRequestsTable

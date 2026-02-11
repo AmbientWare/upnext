@@ -428,9 +428,6 @@ async def test_workers_route_includes_defs_and_instance_only_workers(
 
 @pytest.mark.asyncio
 async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> None:
-    class _Settings:
-        api_realtime_enabled = True
-
     class _RedisStub:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
@@ -484,7 +481,6 @@ async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> No
             total=1,
         )
 
-    monkeypatch.setattr(workers_stream_route, "get_settings", lambda: _Settings())
     monkeypatch.setattr(workers_stream_route, "get_redis", _get_redis)
     monkeypatch.setattr(workers_stream_route, "list_workers_route", _list_workers)
 
@@ -506,19 +502,19 @@ async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_workers_stream_can_be_disabled(monkeypatch) -> None:
-    class _Settings:
-        api_realtime_enabled = False
-
+async def test_workers_stream_returns_503_when_redis_unavailable(monkeypatch) -> None:
     class _RequestStub:
         async def is_disconnected(self) -> bool:
             return False
 
-    monkeypatch.setattr(workers_stream_route, "get_settings", lambda: _Settings())
+    async def _get_redis() -> None:
+        raise RuntimeError("redis unavailable")
 
-    with pytest.raises(HTTPException, match="disabled") as exc:
+    monkeypatch.setattr(workers_stream_route, "get_redis", _get_redis)
+
+    with pytest.raises(HTTPException, match="redis unavailable") as exc:
         await workers_route.stream_workers(_RequestStub())
-    assert exc.value.status_code == 404
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio

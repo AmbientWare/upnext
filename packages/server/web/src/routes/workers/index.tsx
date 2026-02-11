@@ -17,7 +17,7 @@ export const Route = createFileRoute("/workers/")({
   component: WorkersPage,
 });
 
-const WORKERS_SAFETY_RESYNC_MS = 60 * 1000;
+const WORKERS_SAFETY_RESYNC_MS = 10 * 60 * 1000;
 
 const STATUS_DEFAULT = "active";
 
@@ -64,45 +64,47 @@ function WorkersPage() {
   return (
     <div className="p-4 h-full flex flex-col gap-4 overflow-hidden">
       {/* Filters Bar */}
-      <div className="flex items-center gap-4 shrink-0">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search workers..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-64 bg-muted border border-input rounded-md pl-9 pr-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-ring"
-          />
+      <div className="shrink-0 space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 min-w-0 lg:flex-1">
+            <div className="relative w-full sm:max-w-80">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search workers..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-muted border border-input rounded-md pl-9 pr-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-ring"
+              />
+            </div>
+
+            {/* Status Filter */}
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger size="sm" className="w-full sm:w-[140px] bg-muted border-input text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {hasNonDefaultFilters && (
+              <button
+                onClick={clearFilters}
+                className="flex items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors self-start sm:self-auto"
+              >
+                <X className="w-3 h-3" />
+                Clear
+              </button>
+            )}
+          </div>
+
+          <span className="text-xs text-muted-foreground mono lg:text-right">
+            {filteredWorkers.length} of {allWorkers.length} workers
+          </span>
         </div>
-
-        {/* Status Filter */}
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger size="sm" className="w-[120px] bg-muted border-input text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="inactive">Inactive</SelectItem>
-          </SelectContent>
-        </Select>
-
-        {hasNonDefaultFilters && (
-          <button
-            onClick={clearFilters}
-            className="flex items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X className="w-3 h-3" />
-            Clear
-          </button>
-        )}
-
-        <div className="flex-1" />
-
-        <span className="text-xs text-muted-foreground mono">
-          {filteredWorkers.length} of {allWorkers.length} workers
-        </span>
       </div>
 
       {/* Workers Table */}

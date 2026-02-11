@@ -5,13 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-
-export type TimeWindowPreset = "15m" | "1h" | "6h" | "24h" | "custom";
-
-interface TimeWindowBounds {
-  from: Date;
-  to: Date;
-}
+import {
+  formatTimeWindowLabel,
+  type TimeWindowPreset,
+} from "./live-window-utils";
 
 const PRESET_OPTIONS: Array<{ value: Exclude<TimeWindowPreset, "custom">; label: string }> = [
   { value: "15m", label: "Last 15m" },
@@ -19,60 +16,6 @@ const PRESET_OPTIONS: Array<{ value: Exclude<TimeWindowPreset, "custom">; label:
   { value: "6h", label: "Last 6h" },
   { value: "24h", label: "Last 24h" },
 ];
-
-function formatDateShort(date: Date): string {
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-export function getTimeWindowBounds(
-  preset: TimeWindowPreset,
-  dateRange: DateRange | undefined
-): TimeWindowBounds | null {
-  const now = new Date();
-  const nowTime = now.getTime();
-
-  if (preset === "15m") {
-    return { from: new Date(nowTime - 15 * 60 * 1000), to: now };
-  }
-  if (preset === "1h") {
-    return { from: new Date(nowTime - 60 * 60 * 1000), to: now };
-  }
-  if (preset === "6h") {
-    return { from: new Date(nowTime - 6 * 60 * 60 * 1000), to: now };
-  }
-  if (preset === "24h") {
-    return { from: new Date(nowTime - 24 * 60 * 60 * 1000), to: now };
-  }
-
-  if (!dateRange?.from) {
-    return null;
-  }
-
-  const from = new Date(dateRange.from);
-  from.setHours(0, 0, 0, 0);
-
-  const to = dateRange.to ? new Date(dateRange.to) : new Date(dateRange.from);
-  to.setHours(23, 59, 59, 999);
-
-  return { from, to };
-}
-
-export function formatTimeWindowLabel(
-  preset: TimeWindowPreset,
-  dateRange: DateRange | undefined
-): string {
-  if (preset === "15m") return "15m";
-  if (preset === "1h") return "1h";
-  if (preset === "6h") return "6h";
-  if (preset === "24h") return "24h";
-  if (!dateRange?.from) return "Custom";
-
-  if (!dateRange.to) {
-    return formatDateShort(dateRange.from);
-  }
-
-  return `${formatDateShort(dateRange.from)} - ${formatDateShort(dateRange.to)}`;
-}
 
 interface LiveWindowControlsProps {
   live: boolean;

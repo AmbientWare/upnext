@@ -93,77 +93,79 @@ function FunctionsPage() {
   return (
     <div className="p-4 h-full flex flex-col gap-4 overflow-hidden">
       {/* Filters Bar */}
-      <div className="flex items-center gap-4 shrink-0">
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search functions..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-64 bg-muted border border-input rounded-md pl-9 pr-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-ring"
-          />
+      <div className="shrink-0 space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 min-w-0 lg:flex-1">
+            {/* Search */}
+            <div className="relative w-full sm:max-w-80">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search functions..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-muted border border-input rounded-md pl-9 pr-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-ring"
+              />
+            </div>
+
+            {/* Type Filter */}
+            <Select value={selectedType} onValueChange={setSelectedType}>
+              <SelectTrigger size="sm" className="w-full sm:w-[130px] bg-muted border-input text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {typeOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Worker Filter */}
+            {workerOptions.length > 0 && (
+              <Select value={selectedWorker} onValueChange={setSelectedWorker}>
+                <SelectTrigger size="sm" className="w-full sm:w-[170px] bg-muted border-input text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Workers</SelectItem>
+                  {workerOptions.map((w) => (
+                    <SelectItem key={w} value={w}>{w}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            {/* Status Filter */}
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger size="sm" className="w-full sm:w-[140px] bg-muted border-input text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Clear Filters */}
+            {hasNonDefaultFilters && (
+              <button
+                onClick={clearFilters}
+                className="flex items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors self-start sm:self-auto"
+              >
+                <X className="w-3 h-3" />
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Results count */}
+          <span className="text-xs text-muted-foreground mono lg:text-right">
+            {filteredFunctions.length} of {allFunctions.length} functions
+          </span>
         </div>
-
-        {/* Type Filter */}
-        <Select value={selectedType} onValueChange={setSelectedType}>
-          <SelectTrigger size="sm" className="w-[120px] bg-muted border-input text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {typeOptions.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {/* Worker Filter */}
-        {workerOptions.length > 0 && (
-          <Select value={selectedWorker} onValueChange={setSelectedWorker}>
-            <SelectTrigger size="sm" className="w-[160px] bg-muted border-input text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Workers</SelectItem>
-              {workerOptions.map((w) => (
-                <SelectItem key={w} value={w}>{w}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-
-        {/* Status Filter */}
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger size="sm" className="w-[120px] bg-muted border-input text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="inactive">Inactive</SelectItem>
-          </SelectContent>
-        </Select>
-
-        {/* Clear Filters */}
-        {hasNonDefaultFilters && (
-          <button
-            onClick={clearFilters}
-            className="flex items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X className="w-3 h-3" />
-            Clear
-          </button>
-        )}
-
-        <div className="flex-1" />
-
-        {/* Results count */}
-        <span className="text-xs text-muted-foreground mono">
-          {filteredFunctions.length} of {allFunctions.length} functions
-        </span>
       </div>
 
       {/* Functions Table */}

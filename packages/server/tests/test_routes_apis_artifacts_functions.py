@@ -13,6 +13,8 @@ import server.routes.artifacts as artifacts_route
 import server.routes.artifacts.artifacts_root as artifacts_root_route
 import server.routes.artifacts.job_artifacts as job_artifacts_route
 import server.routes.functions as functions_route
+import server.routes.jobs.jobs_stream as jobs_stream_route
+import server.routes.workers.workers_stream as workers_stream_route
 from fastapi import FastAPI, HTTPException, Response
 from httpx import ASGITransport, AsyncClient
 from server.db.models import PendingArtifact
@@ -571,10 +573,6 @@ async def test_apis_routes_fallback_to_empty_when_sources_fail(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
-    class _Settings:
-        api_realtime_enabled = True
-        api_request_events_default_limit = 200
-
     class _RedisStub:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return []
@@ -610,7 +608,6 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
     async def _get_redis() -> _RedisStub:
         return _RedisStub()
 
-    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
     monkeypatch.setattr(apis_stream_route, "list_apis", _list_apis)
     monkeypatch.setattr(apis_stream_route, "get_api", _get_api)
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
@@ -645,36 +642,31 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_apis_stream_routes_can_be_disabled(monkeypatch) -> None:
-    class _Settings:
-        api_realtime_enabled = False
-        api_request_events_default_limit = 200
-
+async def test_apis_stream_routes_return_503_when_redis_unavailable(monkeypatch) -> None:
     class _RequestStub:
         async def is_disconnected(self) -> bool:
             return False
 
-    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
+    async def _get_redis() -> None:
+        raise RuntimeError("redis unavailable")
 
-    with pytest.raises(HTTPException, match="disabled") as list_exc:
+    monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
+
+    with pytest.raises(HTTPException, match="redis unavailable") as list_exc:
         await apis_route.stream_apis(_RequestStub())
-    assert list_exc.value.status_code == 404
+    assert list_exc.value.status_code == 503
 
-    with pytest.raises(HTTPException, match="disabled") as detail_exc:
+    with pytest.raises(HTTPException, match="redis unavailable") as detail_exc:
         await apis_route.stream_api("orders", _RequestStub())
-    assert detail_exc.value.status_code == 404
+    assert detail_exc.value.status_code == 503
 
-    with pytest.raises(HTTPException, match="disabled") as events_exc:
+    with pytest.raises(HTTPException, match="redis unavailable") as events_exc:
         await apis_route.stream_api_request_events(_RequestStub())
-    assert events_exc.value.status_code == 404
+    assert events_exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
 async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
-    class _Settings:
-        api_realtime_enabled = True
-        api_request_events_default_limit = 200
-
     class _RedisStub:
         async def xrevrange(self, _stream: str, count: int):  # type: ignore[no-untyped-def]
             _ = count
@@ -737,7 +729,6 @@ async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
     async def _get_redis() -> _RedisStub:
         return _RedisStub()
 
-    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
     listed = await apis_route.list_api_request_events(api_name="orders", limit=10)
@@ -763,10 +754,6 @@ async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
 async def test_api_request_events_skip_malformed_rows_without_crashing(
     monkeypatch,
 ) -> None:
-    class _Settings:
-        api_realtime_enabled = True
-        api_request_events_default_limit = 200
-
     class _RedisStub:
         async def xrevrange(self, _stream: str, count: int):  # type: ignore[no-untyped-def]
             _ = count
@@ -805,7 +792,6 @@ async def test_api_request_events_skip_malformed_rows_without_crashing(
     async def _get_redis() -> _RedisStub:
         return _RedisStub()
 
-    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
     listed = await apis_route.list_api_request_events(api_name="orders", limit=10)
@@ -817,10 +803,10 @@ async def test_api_request_events_skip_malformed_rows_without_crashing(
 async def test_apis_events_stream_path_not_captured_by_endpoint_detail(
     monkeypatch,
 ) -> None:
-    class _Settings:
-        api_realtime_enabled = False
+    async def _get_redis() -> None:
+        raise RuntimeError("redis unavailable")
 
-    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
     app = FastAPI()
     app.include_router(v1_router)
@@ -831,16 +817,56 @@ async def test_apis_events_stream_path_not_captured_by_endpoint_detail(
     ) as client:
         response = await client.get("/api/v1/apis/events/stream")
 
-    assert response.status_code == 404
-    assert "disabled" in response.json()["detail"]
+    assert response.status_code == 503
+    assert "redis unavailable" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_workers_stream_path_not_captured_by_worker_detail(
+    monkeypatch,
+) -> None:
+    async def _get_redis() -> None:
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(workers_stream_route, "get_redis", _get_redis)
+
+    app = FastAPI()
+    app.include_router(v1_router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.get("/api/v1/workers/stream")
+
+    assert response.status_code == 503
+    assert "redis unavailable" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_jobs_trends_stream_path_not_captured_by_job_detail(
+    monkeypatch,
+) -> None:
+    async def _get_redis() -> None:
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(jobs_stream_route, "get_redis", _get_redis)
+
+    app = FastAPI()
+    app.include_router(v1_router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.get("/api/v1/jobs/trends/stream")
+
+    assert response.status_code == 503
+    assert "redis unavailable" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
 async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) -> None:
-    class _Settings:
-        api_realtime_enabled = True
-        api_request_events_default_limit = 200
-
     class _RedisStub:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
@@ -896,7 +922,6 @@ async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
             ]
         )
 
-    monkeypatch.setattr(apis_stream_route, "get_settings", lambda: _Settings())
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
     monkeypatch.setattr(apis_stream_route, "get_api_trends", _get_api_trends)
 

@@ -109,7 +109,7 @@ function FunctionDetailPage() {
   }
 
   return (
-    <div className="p-4 flex flex-col gap-3 h-full overflow-auto">
+    <div className="p-4 flex flex-col gap-3 h-full overflow-auto xl:overflow-hidden">
       {/* Back link + header */}
       <div className="shrink-0 flex flex-col gap-2">
         <Link
@@ -138,7 +138,7 @@ function FunctionDetailPage() {
       </div>
 
       {/* Configuration + Metrics row */}
-      <div className="flex gap-3 shrink-0">
+      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-3 shrink-0">
         <Panel title={typeLabels[fn.type] + " Configuration"} className="flex-1" contentClassName="p-4">
           <div className="grid grid-cols-2 gap-x-8 gap-y-3">
             {fn.type === "task" && (
@@ -192,7 +192,7 @@ function FunctionDetailPage() {
         </Panel>
 
         <Panel title="Metrics (24H)" className="flex-1" contentClassName="p-4">
-          <div className="grid grid-cols-3 gap-x-6 gap-y-5">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-4">
             <MetricCard label="Runs" value={formatNumber(fn.runs_24h)} />
             <MetricCard
               label="Success Rate"

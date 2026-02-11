@@ -10,7 +10,6 @@ from shared.schemas import (
 )
 from shared.workers import WORKER_EVENTS_STREAM
 
-from server.config import get_settings
 from server.routes.workers.workers_root import list_workers_route
 from server.routes.workers.workers_utils import (
     WORKER_SIGNAL_TYPES,
@@ -26,9 +25,6 @@ worker_stream_router = APIRouter(tags=["workers"])
 @worker_stream_router.get("/stream")
 async def stream_workers(request: Request) -> StreamingResponse:
     """Stream realtime workers list snapshots via Server-Sent Events (SSE)."""
-    if not get_settings().api_realtime_enabled:
-        raise HTTPException(status_code=404, detail="Workers realtime stream disabled")
-
     try:
         redis_client = await get_redis()
     except RuntimeError as e:

@@ -7,7 +7,7 @@ import { getApi, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { ApiEndpoint, ApiSnapshotEvent } from "@/lib/types";
-import { Panel } from "@/components/shared";
+import { MetricTile, Panel } from "@/components/shared";
 import { cn, formatNumber } from "@/lib/utils";
 
 import { ApiLiveRequestsPanel } from "./-components/api-live-requests-panel";
@@ -127,7 +127,7 @@ function ApiDetailPage() {
   const api = data.api;
 
   return (
-    <div className="p-4 h-full overflow-auto flex flex-col gap-4">
+    <div className="p-4 h-full overflow-auto xl:overflow-hidden flex flex-col gap-4">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-wrap">
           <Link to="/apis" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
@@ -152,36 +152,27 @@ function ApiDetailPage() {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
-        <Panel title="Requests (24h)" className="min-h-[74px]">
-          <div className="text-lg mono text-foreground">{formatNumber(api.requests_24h)}</div>
-        </Panel>
-        <Panel title="Req / Min" className="min-h-[74px]">
-          <div className="text-lg mono text-foreground">{api.requests_per_min.toFixed(1)}</div>
-        </Panel>
-        <Panel title="Avg Latency" className="min-h-[74px]">
-          <div className="text-lg mono text-foreground">{Math.round(api.avg_latency_ms)}ms</div>
-        </Panel>
-        <Panel title="Success Rate" className="min-h-[74px]">
-          <div className="text-lg mono text-emerald-400">{api.success_rate.toFixed(1)}%</div>
-        </Panel>
-        <Panel title="Error Rate" className="min-h-[74px]">
-          <div className="text-lg mono text-red-400">{api.error_rate.toFixed(1)}%</div>
-        </Panel>
-        <Panel title="4xx Rate" className="min-h-[74px]">
-          <div className="text-lg mono text-amber-400">{api.client_error_rate.toFixed(1)}%</div>
-        </Panel>
-        <Panel title="5xx Rate" className="min-h-[74px]">
-          <div className="text-lg mono text-red-400">{api.server_error_rate.toFixed(1)}%</div>
-        </Panel>
-        <Panel title="Endpoints / Instances" className="min-h-[74px]">
-          <div className="text-lg mono text-foreground">{api.endpoint_count} / {api.instance_count}</div>
-        </Panel>
+      <Panel title="API Overview" className="shrink-0" contentClassName="p-3 sm:p-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2.5">
+          <MetricTile label="Requests (24h)" value={formatNumber(api.requests_24h)} />
+          <MetricTile label="Req / Min" value={api.requests_per_min.toFixed(1)} />
+          <MetricTile label="Avg Latency" value={`${Math.round(api.avg_latency_ms)}ms`} />
+          <MetricTile label="Success Rate" value={`${api.success_rate.toFixed(1)}%`} tone="text-emerald-400" />
+          <MetricTile label="Error Rate" value={`${api.error_rate.toFixed(1)}%`} tone="text-red-400" />
+          <MetricTile label="4xx Rate" value={`${api.client_error_rate.toFixed(1)}%`} tone="text-amber-400" />
+          <MetricTile label="5xx Rate" value={`${api.server_error_rate.toFixed(1)}%`} tone="text-red-400" />
+          <MetricTile label="Endpoints / Instances" value={`${api.endpoint_count} / ${api.instance_count}`} />
+        </div>
+      </Panel>
+
+      <div className="flex flex-col gap-3 flex-1 min-h-0">
+        <RouteTreePanel
+          totalEndpoints={data.total_endpoints}
+          routeTree={tree}
+          className="h-[40%] min-h-[260px]"
+        />
+        <ApiLiveRequestsPanel apiName={api.name} className="flex-1 min-h-[260px] flex flex-col overflow-hidden" />
       </div>
-
-      <RouteTreePanel totalEndpoints={data.total_endpoints} routeTree={tree} />
-
-      <ApiLiveRequestsPanel apiName={api.name} />
     </div>
   );
 }

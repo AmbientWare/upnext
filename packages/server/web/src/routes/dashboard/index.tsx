@@ -17,7 +17,7 @@ export const Route = createFileRoute("/dashboard/")({
 });
 
 const SAFETY_RESYNC_MS = 10 * 60 * 1000;
-const WORKERS_SAFETY_RESYNC_MS = 60 * 1000;
+const WORKERS_SAFETY_RESYNC_MS = 10 * 60 * 1000;
 
 function DataMatrixDashboard() {
   const navigate = useNavigate();

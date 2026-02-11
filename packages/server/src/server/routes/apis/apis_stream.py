@@ -29,8 +29,6 @@ async def stream_api_trends(
 ) -> StreamingResponse:
     """Stream realtime API trends snapshots via Server-Sent Events (SSE)."""
     hours_window = hours if isinstance(hours, int) else 24
-    if not get_settings().api_realtime_enabled:
-        raise HTTPException(status_code=404, detail="API realtime stream disabled")
 
     try:
         redis_client = await get_redis()
@@ -137,8 +135,6 @@ async def stream_api_request_events(
 ) -> StreamingResponse:
     """Stream realtime API request events via Server-Sent Events (SSE)."""
     api_name_filter = api_name if isinstance(api_name, str) and api_name else None
-    if not get_settings().api_realtime_enabled:
-        raise HTTPException(status_code=404, detail="API realtime stream disabled")
 
     try:
         redis_client = await get_redis()
@@ -190,8 +186,6 @@ async def stream_api_request_events(
 @api_stream_router.get("/stream")
 async def stream_apis(request: Request) -> StreamingResponse:
     """Stream realtime API list snapshots via Server-Sent Events (SSE)."""
-    if not get_settings().api_realtime_enabled:
-        raise HTTPException(status_code=404, detail="API realtime stream disabled")
     try:
         redis_client = await get_redis()
     except RuntimeError as e:
@@ -255,8 +249,6 @@ async def stream_apis(request: Request) -> StreamingResponse:
 @api_stream_router.get("/{api_name}/stream")
 async def stream_api(api_name: str, request: Request) -> StreamingResponse:
     """Stream realtime snapshot for a single API via SSE."""
-    if not get_settings().api_realtime_enabled:
-        raise HTTPException(status_code=404, detail="API realtime stream disabled")
     try:
         redis_client = await get_redis()
     except RuntimeError as e:

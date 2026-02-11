@@ -73,20 +73,24 @@ function TreeNodeRows({ node, depth }: { node: RouteNode; depth: number }) {
 interface RouteTreePanelProps {
   totalEndpoints: number;
   routeTree: RouteNode[];
+  className?: string;
 }
 
-export function RouteTreePanel({ totalEndpoints, routeTree }: RouteTreePanelProps) {
+export function RouteTreePanel({ totalEndpoints, routeTree, className }: RouteTreePanelProps) {
   return (
     <Panel
       title="Route Tree"
       titleRight={<span className="text-[10px] mono text-muted-foreground">{totalEndpoints} routes</span>}
       noPadding
-      className="overflow-hidden"
+      className={cn("min-h-[260px] flex flex-col overflow-hidden", className)}
+      contentClassName="flex-1 min-h-0"
     >
       {totalEndpoints === 0 ? (
-        <div className="p-6 text-sm text-muted-foreground">No tracked routes for this API yet.</div>
+        <div className="h-full p-6 text-sm text-muted-foreground flex items-center justify-center">
+          No tracked routes for this API yet.
+        </div>
       ) : (
-        <div className="max-h-[420px] overflow-auto">
+        <div className="h-full overflow-auto">
           <div className="min-w-[820px]">
             <div className={cn(routeTreeGridClass, "px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border bg-muted/30")}>
               <span>Route</span>

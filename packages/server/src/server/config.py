@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     port: int = 8080
     debug: bool = False
     api_docs_url_template: str = "http://{host}:{port}/docs"
-    api_realtime_enabled: bool = True
     api_request_events_default_limit: int = 200
 
     # Artifact storage

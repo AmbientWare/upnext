@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Circle } from "lucide-react";
 
-import { Panel, ProgressBar } from "@/components/shared";
+import { MetricTile, Panel, ProgressBar } from "@/components/shared";
 import { getWorkers, queryKeys } from "@/lib/upnext-api";
 import type { WorkerInfo } from "@/lib/types";
 import { cn, formatNumber, formatTimeAgo } from "@/lib/utils";
@@ -12,7 +12,7 @@ export const Route = createFileRoute("/workers/$name/")({
   component: WorkerDetailPage,
 });
 
-const WORKERS_SAFETY_RESYNC_MS = 60 * 1000;
+const WORKERS_LIVE_RESYNC_MS = 10 * 1000;
 
 type WorkerFunction = {
   key: string;
@@ -96,11 +96,21 @@ function CapacityDonut({ active, total }: { active: number; total: number }) {
 function WorkerDetailPage() {
   const { name } = Route.useParams();
   const decodedName = decodeURIComponent(name);
+  const [, setClockMs] = useState(() => Date.now());
+
+  // Keep "x ago" labels ticking even between server updates.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setClockMs(Date.now());
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const { data, isPending, error } = useQuery({
     queryKey: queryKeys.workers,
     queryFn: getWorkers,
-    refetchInterval: WORKERS_SAFETY_RESYNC_MS,
+    refetchInterval: WORKERS_LIVE_RESYNC_MS,
+    staleTime: 0,
   });
 
   const worker = useMemo(
@@ -167,7 +177,7 @@ function WorkerDetailPage() {
   }
 
   return (
-    <div className="p-4 h-full overflow-auto flex flex-col gap-4">
+    <div className="p-4 h-full overflow-auto xl:overflow-hidden flex flex-col gap-4">
       <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-wrap">
         <Link
           to="/workers"
@@ -186,61 +196,72 @@ function WorkerDetailPage() {
         />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <Panel title="Capacity" className="min-h-[172px] col-span-2 md:col-span-1 xl:col-span-1">
+      <Panel title="Worker Overview" className="shrink-0" contentClassName="p-3 sm:p-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[140px_1fr] gap-4 items-center">
           <CapacityDonut active={stats.activeJobs} total={stats.totalConcurrency} />
-        </Panel>
-        <Panel title="Instances" className="min-h-[74px]">
-          <div className="text-lg mono text-foreground">
-            {worker.instances.length}/{Math.max(worker.instance_count, worker.instances.length)}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+            <MetricTile
+              label="Instances"
+              value={`${worker.instances.length}/${Math.max(worker.instance_count, worker.instances.length)}`}
+            />
+            <MetricTile label="Functions" value={`${functions.length}`} />
+            <MetricTile label="Active Jobs" value={`${stats.activeJobs}`} tone="text-cyan-300" />
+            <MetricTile label="Processed Jobs" value={formatNumber(stats.jobsProcessed)} />
+            <MetricTile
+              label="Failed Jobs"
+              value={formatNumber(stats.jobsFailed)}
+              tone={stats.jobsFailed > 0 ? "text-red-400" : "text-muted-foreground"}
+            />
+            <MetricTile
+              label="Last Heartbeat"
+              value={stats.lastHeartbeat ? formatTimeAgo(stats.lastHeartbeat) : "—"}
+            />
           </div>
-        </Panel>
-        <Panel title="Functions" className="min-h-[74px]">
-          <div className="text-lg mono text-foreground">{functions.length}</div>
-        </Panel>
-        <Panel title="Active Jobs" className="min-h-[74px]">
-          <div className="text-lg mono text-cyan-300">{stats.activeJobs}</div>
-        </Panel>
-        <Panel title="Processed Jobs" className="min-h-[74px]">
-          <div className="text-lg mono text-foreground">{formatNumber(stats.jobsProcessed)}</div>
-        </Panel>
-        <Panel title="Failed Jobs" className="min-h-[74px]">
-          <div className={cn("text-lg mono", stats.jobsFailed > 0 ? "text-red-400" : "text-muted-foreground")}>
-            {formatNumber(stats.jobsFailed)}
-          </div>
-        </Panel>
-      </div>
+        </div>
+      </Panel>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-        <Panel title={`Functions (${functions.length})`} className="min-h-[260px]" contentClassName="p-2">
+      <div className="grid grid-cols-1 xl:grid-cols-2 xl:grid-rows-[minmax(0,1fr)] gap-3 flex-1 min-h-0">
+        <Panel
+          title={`Functions (${functions.length})`}
+          className="h-full min-h-0 flex flex-col overflow-hidden"
+          contentClassName="p-2 flex-1 min-h-0 overflow-hidden"
+        >
           {functions.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
               No functions currently assigned
             </div>
           ) : (
-            <div className="space-y-1.5 max-h-[360px] overflow-auto pr-1">
+            <div className="space-y-1.5 h-full overflow-y-auto pr-1 overscroll-contain">
               {functions.map((fn) => (
                 <Link
                   key={fn.key}
                   to="/functions/$name"
                   params={{ name: fn.key }}
-                  className="block rounded border border-input bg-muted/30 px-2.5 py-2 hover:bg-accent transition-colors"
+                  className="block rounded border border-input bg-muted/30 px-2.5 py-2 hover:bg-accent transition-colors overflow-hidden"
                 >
-                  <div className="text-xs text-foreground">{fn.name}</div>
-                  <div className="mono text-[10px] text-muted-foreground">{fn.key}</div>
+                  <div className="text-xs text-foreground truncate" title={fn.name}>
+                    {fn.name}
+                  </div>
+                  <div className="mono text-[10px] text-muted-foreground truncate" title={fn.key}>
+                    {fn.key}
+                  </div>
                 </Link>
               ))}
             </div>
           )}
         </Panel>
 
-        <Panel title={`Instances (${worker.instances.length})`} className="min-h-[260px]" contentClassName="p-2">
+        <Panel
+          title={`Instances (${worker.instances.length})`}
+          className="h-full min-h-0 flex flex-col overflow-hidden"
+          contentClassName="p-2 flex-1 min-h-0 overflow-hidden"
+        >
           {worker.instances.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
               No active instances
             </div>
           ) : (
-            <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
+            <div className="space-y-2 h-full overflow-y-auto pr-1 overscroll-contain">
               {worker.instances.map((instance) => (
                 <div key={instance.id} className="rounded border border-input bg-muted/30 px-2.5 py-2">
                   <div className="flex items-center justify-between gap-2">
@@ -276,10 +297,6 @@ function WorkerDetailPage() {
             </div>
           )}
         </Panel>
-      </div>
-
-      <div className="text-[10px] text-muted-foreground">
-        Last heartbeat: {stats.lastHeartbeat ? formatTimeAgo(stats.lastHeartbeat) : "—"}
       </div>
     </div>
   );
