@@ -15,28 +15,29 @@ interface ApiLiveRequestsPanelProps {
   apiName: string;
 }
 
-const SAFETY_RESYNC_MS = 10 * 60 * 1000;
 const LIVE_RESYNC_MS = 5 * 1000;
 const DISPLAY_LIMIT = 50;
 const WINDOW_QUERY_LIMIT = 500;
 
 export function ApiLiveRequestsPanel({ apiName }: ApiLiveRequestsPanelProps) {
   const [live, setLive] = useState(true);
-  const [windowPreset, setWindowPreset] = useState<TimeWindowPreset>("1h");
+  const [windowPreset, setWindowPreset] = useState<TimeWindowPreset>("custom");
   const [dateRange, setDateRange] = useState<DateRange>();
 
+  const queryParams = {
+    api_name: apiName,
+    limit: live ? DISPLAY_LIMIT : WINDOW_QUERY_LIMIT,
+  } as const;
+
+  const queryKey = live
+    ? queryKeys.apiRequestEvents(queryParams)
+    : (["apis", "events-window", queryParams] as const);
+
   const { data, isPending } = useQuery({
-    queryKey: queryKeys.apiRequestEvents({
-      api_name: apiName,
-      limit: live ? DISPLAY_LIMIT : WINDOW_QUERY_LIMIT,
-    }),
-    queryFn: () =>
-      getApiRequestEvents({
-        api_name: apiName,
-        limit: live ? DISPLAY_LIMIT : WINDOW_QUERY_LIMIT,
-      }),
+    queryKey,
+    queryFn: () => getApiRequestEvents(queryParams),
     refetchInterval: live ? LIVE_RESYNC_MS : false,
-    staleTime: live ? 0 : SAFETY_RESYNC_MS,
+    staleTime: live ? 0 : Number.POSITIVE_INFINITY,
   });
 
   const events = useMemo(() => {
@@ -50,7 +51,7 @@ export function ApiLiveRequestsPanel({ apiName }: ApiLiveRequestsPanelProps) {
 
     const bounds = getTimeWindowBounds(windowPreset, dateRange);
     if (!bounds) {
-      return latest.slice(0, DISPLAY_LIMIT);
+      return latest;
     }
 
     const { from, to } = bounds;
@@ -58,8 +59,7 @@ export function ApiLiveRequestsPanel({ apiName }: ApiLiveRequestsPanelProps) {
       .filter((event) => {
         const at = Date.parse(event.at);
         return Number.isFinite(at) && at >= from.getTime() && at <= to.getTime();
-      })
-      .slice(0, DISPLAY_LIMIT);
+      });
   }, [data?.events, dateRange, live, windowPreset]);
 
   return (

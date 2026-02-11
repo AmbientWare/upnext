@@ -1,5 +1,5 @@
 import { Inbox } from "lucide-react";
-import { cn, formatDuration, formatTimeAgo } from "@/lib/utils";
+import { cn, formatDateTime, formatDuration, formatTimeAgo } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
 import { ProgressBar } from "./progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,6 +35,8 @@ function JobsTableSkeleton({ hideFunction }: { hideFunction?: boolean }) {
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Status</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Duration</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Worker</TableHead>
+          <TableHead className="hidden lg:table-cell text-[10px] text-muted-foreground font-medium h-8">Started</TableHead>
+          <TableHead className="hidden lg:table-cell text-[10px] text-muted-foreground font-medium h-8">Finished</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Age</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Progress</TableHead>
         </TableRow>
@@ -58,6 +60,12 @@ function JobsTableSkeleton({ hideFunction }: { hideFunction?: boolean }) {
             </TableCell>
             <TableCell className="py-1.5">
               <Skeleton className="h-3 w-24" />
+            </TableCell>
+            <TableCell className="hidden lg:table-cell py-1.5">
+              <Skeleton className="h-3 w-28" />
+            </TableCell>
+            <TableCell className="hidden lg:table-cell py-1.5">
+              <Skeleton className="h-3 w-28" />
             </TableCell>
             <TableCell className="py-1.5">
               <Skeleton className="h-3 w-12" />
@@ -107,43 +115,59 @@ export function JobsTable({
                 <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Status</TableHead>
                 <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Duration</TableHead>
                 <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Worker</TableHead>
+                <TableHead className="hidden lg:table-cell text-[10px] text-muted-foreground font-medium h-8">Started</TableHead>
+                <TableHead className="hidden lg:table-cell text-[10px] text-muted-foreground font-medium h-8">Finished</TableHead>
                 <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Age</TableHead>
                 <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Progress</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {jobs.map((job) => (
-                <TableRow
-                  key={job.id}
-                  onClick={onJobClick ? () => onJobClick(job) : undefined}
-                  className={cn(
-                    "border-border hover:bg-accent",
-                    onJobClick && "cursor-pointer"
-                  )}
-                >
-                  <TableCell className="mono text-[11px] text-muted-foreground py-1.5">{job.id.slice(0, 12)}</TableCell>
-                  {!hideFunction && (
-                    <TableCell className="text-[11px] py-1.5">{job.function_name || job.function}</TableCell>
-                  )}
-                  <TableCell className="py-1.5">
-                    <StatusBadge status={job.status} />
-                  </TableCell>
-                  <TableCell className="mono text-[11px] text-muted-foreground py-1.5">
-                    {job.duration_ms ? formatDuration(job.duration_ms) : "\u2014"}
-                  </TableCell>
-                  <TableCell className="mono text-[11px] text-muted-foreground py-1.5">{job.worker_id || "\u2014"}</TableCell>
-                  <TableCell className="text-[11px] text-muted-foreground py-1.5">
-                    {job.scheduled_at ? formatTimeAgo(new Date(job.scheduled_at)) : "\u2014"}
-                  </TableCell>
-                  <TableCell className="py-1.5">
-                    {job.status === "active" && job.progress !== undefined && job.progress > 0 ? (
-                      <ProgressBar value={job.progress * 100} showLabel size="sm" />
-                    ) : (
-                      <span className="text-muted-foreground/40">{"\u2014"}</span>
+              {jobs.map((job) => {
+                const ageSource =
+                  job.created_at ??
+                  job.scheduled_at ??
+                  job.started_at ??
+                  job.completed_at;
+
+                return (
+                  <TableRow
+                    key={job.id}
+                    onClick={onJobClick ? () => onJobClick(job) : undefined}
+                    className={cn(
+                      "border-border hover:bg-accent",
+                      onJobClick && "cursor-pointer"
                     )}
-                  </TableCell>
-                </TableRow>
-              ))}
+                  >
+                    <TableCell className="mono text-[11px] text-muted-foreground py-1.5">{job.id.slice(0, 12)}</TableCell>
+                    {!hideFunction && (
+                      <TableCell className="text-[11px] py-1.5">{job.function_name || job.function}</TableCell>
+                    )}
+                    <TableCell className="py-1.5">
+                      <StatusBadge status={job.status} />
+                    </TableCell>
+                    <TableCell className="mono text-[11px] text-muted-foreground py-1.5">
+                      {job.duration_ms ? formatDuration(job.duration_ms) : "\u2014"}
+                    </TableCell>
+                    <TableCell className="mono text-[11px] text-muted-foreground py-1.5">{job.worker_id || "\u2014"}</TableCell>
+                    <TableCell className="hidden lg:table-cell mono text-[11px] text-muted-foreground py-1.5">
+                      {job.started_at ? formatDateTime(new Date(job.started_at)) : "\u2014"}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell mono text-[11px] text-muted-foreground py-1.5">
+                      {job.completed_at ? formatDateTime(new Date(job.completed_at)) : "\u2014"}
+                    </TableCell>
+                    <TableCell className="text-[11px] text-muted-foreground py-1.5">
+                      {ageSource ? formatTimeAgo(new Date(ageSource)) : "\u2014"}
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      {job.status === "active" && job.progress !== undefined && job.progress > 0 ? (
+                        <ProgressBar value={job.progress * 100} showLabel size="sm" />
+                      ) : (
+                        <span className="text-muted-foreground/40">{"\u2014"}</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

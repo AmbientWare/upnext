@@ -1,7 +1,7 @@
 import { Inbox } from "lucide-react";
 
 import type { ApiRequestEvent } from "@/lib/types";
-import { cn, formatTimeAgo } from "@/lib/utils";
+import { cn, formatDateTime, formatTimeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -43,7 +43,7 @@ function ApiRequestsTableSkeleton({ hideApiName }: { hideApiName?: boolean }) {
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Latency</TableHead>
           <TableHead className="hidden md:table-cell text-[10px] text-muted-foreground font-medium h-8">Instance</TableHead>
           <TableHead className="hidden sm:table-cell text-[10px] text-muted-foreground font-medium h-8">Sampled</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">When</TableHead>
+          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">At</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -122,7 +122,7 @@ export function ApiRequestsTable({
                 <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Latency</TableHead>
                 <TableHead className="hidden md:table-cell text-[10px] text-muted-foreground font-medium h-8">Instance</TableHead>
                 <TableHead className="hidden sm:table-cell text-[10px] text-muted-foreground font-medium h-8">Sampled</TableHead>
-                <TableHead className="text-[10px] text-muted-foreground font-medium h-8">When</TableHead>
+                <TableHead className="text-[10px] text-muted-foreground font-medium h-8">At</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -162,7 +162,14 @@ export function ApiRequestsTable({
                       {event.sampled ? "yes" : "no"}
                     </TableCell>
                     <TableCell className="text-[11px] text-muted-foreground py-1.5">
-                      {formatTimeAgo(new Date(event.at))}
+                      <div className="flex flex-col">
+                        <span className="mono text-[11px] text-muted-foreground">
+                          {formatDateTime(new Date(event.at))}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground/70">
+                          {formatTimeAgo(new Date(event.at))}
+                        </span>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

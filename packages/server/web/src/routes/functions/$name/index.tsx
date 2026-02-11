@@ -33,7 +33,7 @@ export const Route = createFileRoute("/functions/$name/")({
 
 const SAFETY_RESYNC_MS = 10 * 60 * 1000;
 const LIVE_RESYNC_MS = 5 * 1000;
-const JOBS_LIMIT = 50;
+const LIVE_JOBS_LIMIT = 50;
 
 const typeStyles: Record<FunctionType, string> = {
   task: "bg-blue-500/20 text-blue-400",
@@ -52,7 +52,7 @@ function FunctionDetailPage() {
   const { name } = Route.useParams();
   const decodedName = decodeURIComponent(name);
   const [jobsLive, setJobsLive] = useState(true);
-  const [jobsWindowPreset, setJobsWindowPreset] = useState<TimeWindowPreset>("1h");
+  const [jobsWindowPreset, setJobsWindowPreset] = useState<TimeWindowPreset>("custom");
   const [jobsDateRange, setJobsDateRange] = useState<DateRange>();
 
   const jobsWindow = useMemo(() => {
@@ -61,17 +61,24 @@ function FunctionDetailPage() {
   }, [jobsDateRange, jobsLive, jobsWindowPreset]);
 
   const jobsQueryParams = useMemo(() => {
+    if (jobsLive) {
+      return { function: decodedName, limit: LIVE_JOBS_LIMIT };
+    }
+
     if (!jobsWindow) {
-      return { function: decodedName, limit: JOBS_LIMIT };
+      return { function: decodedName };
     }
 
     return {
       function: decodedName,
-      limit: JOBS_LIMIT,
       after: jobsWindow.from.toISOString(),
       before: jobsWindow.to.toISOString(),
     };
-  }, [decodedName, jobsWindow]);
+  }, [decodedName, jobsLive, jobsWindow]);
+
+  const jobsQueryKey = jobsLive
+    ? queryKeys.jobs(jobsQueryParams)
+    : (["jobs", "window", jobsQueryParams] as const);
 
   // Data fetching
   const { data: fn, isPending: isFunctionPending } = useQuery({
@@ -81,13 +88,13 @@ function FunctionDetailPage() {
   });
 
   const { data: jobsData, isPending: isJobsPending } = useQuery({
-    queryKey: queryKeys.jobs(jobsQueryParams),
+    queryKey: jobsQueryKey,
     queryFn: () => getJobs(jobsQueryParams),
     refetchInterval: jobsLive ? LIVE_RESYNC_MS : false,
-    staleTime: jobsLive ? 0 : SAFETY_RESYNC_MS,
+    staleTime: jobsLive ? 0 : Number.POSITIVE_INFINITY,
   });
 
-  const jobs = (jobsData?.jobs ?? []).slice(0, JOBS_LIMIT);
+  const jobs = jobsData?.jobs ?? [];
 
   if (isFunctionPending && !fn) {
     return <FunctionDetailSkeleton />;

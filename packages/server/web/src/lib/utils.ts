@@ -57,6 +57,16 @@ export function formatTimeUntil(date: Date): string {
   return `in ${seconds}s`;
 }
 
+export function formatDateTime(date: Date): string {
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export type { JobStatus };
 
 export const statusConfig: Record<JobStatus, { bg: string; text: string; dot: string; label: string }> = {

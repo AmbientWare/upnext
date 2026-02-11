@@ -61,17 +61,17 @@ export function formatTimeWindowLabel(
   preset: TimeWindowPreset,
   dateRange: DateRange | undefined
 ): string {
-  if (preset === "15m") return "Window: 15m";
-  if (preset === "1h") return "Window: 1h";
-  if (preset === "6h") return "Window: 6h";
-  if (preset === "24h") return "Window: 24h";
-  if (!dateRange?.from) return "Window: Custom";
+  if (preset === "15m") return "15m";
+  if (preset === "1h") return "1h";
+  if (preset === "6h") return "6h";
+  if (preset === "24h") return "24h";
+  if (!dateRange?.from) return "Custom";
 
   if (!dateRange.to) {
-    return `Window: ${formatDateShort(dateRange.from)}`;
+    return formatDateShort(dateRange.from);
   }
 
-  return `Window: ${formatDateShort(dateRange.from)} - ${formatDateShort(dateRange.to)}`;
+  return `${formatDateShort(dateRange.from)} - ${formatDateShort(dateRange.to)}`;
 }
 
 interface LiveWindowControlsProps {
@@ -95,30 +95,36 @@ export function LiveWindowControls({
 }: LiveWindowControlsProps) {
   return (
     <div className={cn("flex items-center gap-1.5", className)}>
-      <Button
-        size="xs"
-        variant={live ? "default" : "outline"}
-        onClick={() => onLiveChange(!live)}
-      >
-        Live
-      </Button>
-
       <Popover>
         <PopoverTrigger asChild>
-          <Button size="xs" variant="outline" className="max-w-[190px] justify-start">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 max-w-[190px] justify-start px-3 text-xs font-normal"
+          >
             <Clock3 className="h-3 w-3 shrink-0" />
-            <span className="truncate">{formatTimeWindowLabel(preset, dateRange)}</span>
+            <span className="truncate">{live ? "Live" : formatTimeWindowLabel(preset, dateRange)}</span>
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-[300px] p-3">
           <div className="space-y-3">
+            <Button
+              type="button"
+              size="xs"
+              variant={live ? "default" : "outline"}
+              className="w-full justify-start"
+              onClick={() => onLiveChange(true)}
+            >
+              Live (auto-refresh)
+            </Button>
+
             <div className="grid grid-cols-2 gap-1">
               {PRESET_OPTIONS.map((option) => (
                 <Button
                   key={option.value}
                   type="button"
                   size="xs"
-                  variant={preset === option.value ? "default" : "outline"}
+                  variant={!live && preset === option.value ? "default" : "outline"}
                   onClick={() => {
                     onPresetChange(option.value);
                     onLiveChange(false);
