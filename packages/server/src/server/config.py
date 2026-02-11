@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     api_realtime_enabled: bool = True
     api_request_events_default_limit: int = 200
 
+    # Artifact storage
+    artifact_storage_backend: Literal["local", "s3"] = "local"
+    artifact_storage_local_root: str = ".upnext/artifacts"
+    artifact_storage_s3_bucket: str | None = None
+    artifact_storage_s3_prefix: str = "upnext/artifacts"
+    artifact_storage_s3_region: str | None = None
+    artifact_storage_s3_endpoint_url: str | None = None
+
     # Stream subscriber tuning (Redis consumer group worker).
     event_subscriber_batch_size: int = 100
     event_subscriber_poll_interval_ms: int = 2000

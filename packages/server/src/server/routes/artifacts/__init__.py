@@ -6,6 +6,7 @@ from server.db.repository import ArtifactRepository
 from server.routes.artifacts.artifacts_root import (
     artifact_root_router,
     delete_artifact,
+    get_artifact_content,
     get_artifact,
 )
 from server.routes.artifacts.artifacts_stream import (
@@ -37,6 +38,7 @@ __all__ = [
     "create_artifact",
     "delete_artifact",
     "get_artifact",
+    "get_artifact_content",
     "job_artifacts_router",
     "list_artifacts",
     "router",

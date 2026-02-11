@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download } from "lucide-react";
-import { getJobArtifacts, queryKeys } from "@/lib/upnext-api";
+import { getArtifactContentUrl, getJobArtifacts, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { Artifact, ArtifactListResponse, ArtifactStreamEvent } from "@/lib/types";
@@ -24,17 +24,6 @@ interface JobArtifactsTabProps {
 }
 
 type ArtifactScope = "all" | "selected";
-
-function artifactDataToText(data: unknown): string {
-  if (typeof data === "string") return data;
-  if (typeof data === "number" || typeof data === "boolean") return String(data);
-  if (data == null) return "null";
-  try {
-    return JSON.stringify(data, null, 2);
-  } catch {
-    return String(data);
-  }
-}
 
 function upsertArtifact(artifacts: Artifact[], nextArtifact: Artifact): Artifact[] {
   const withoutExisting = artifacts.filter((artifact) => artifact.id !== nextArtifact.id);
@@ -86,10 +75,38 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
     ? isSelectedPending
     : allArtifactsQueries.some((result) => result.isPending);
 
-  const selectedArtifactText = useMemo(
-    () => (selectedArtifact ? artifactDataToText(selectedArtifact.data) : ""),
-    [selectedArtifact]
-  );
+  const selectedArtifactContentUrl = selectedArtifact
+    ? getArtifactContentUrl(selectedArtifact.id)
+    : null;
+
+  const selectedArtifactDownloadUrl = selectedArtifact
+    ? getArtifactContentUrl(selectedArtifact.id, { download: true })
+    : null;
+
+  const selectedArtifactContentType = selectedArtifact?.content_type ?? selectedArtifact?.type ?? "";
+  const isImagePreview = selectedArtifactContentType.startsWith("image/");
+  const isPdfPreview = selectedArtifactContentType === "application/pdf" || selectedArtifact?.type === "file/pdf";
+  const isTextPreview =
+    selectedArtifactContentType.startsWith("text/") ||
+    selectedArtifactContentType.includes("json") ||
+    selectedArtifactContentType.includes("xml") ||
+    selectedArtifactContentType.includes("html");
+
+  const {
+    data: selectedArtifactTextPreview,
+    isPending: isTextPreviewLoading,
+  } = useQuery({
+    queryKey: ["artifact", "content-preview", selectedArtifact?.id],
+    queryFn: async () => {
+      if (!selectedArtifactContentUrl) return "";
+      const response = await fetch(selectedArtifactContentUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to load artifact content (${response.status})`);
+      }
+      return response.text();
+    },
+    enabled: Boolean(selectedArtifact && selectedArtifactContentUrl && isTextPreview),
+  });
 
   const streamUrl = `${env.VITE_API_BASE_URL}/jobs/${encodeURIComponent(selectedJobId)}/artifacts/stream`;
   const handleArtifactStreamMessage = useCallback(
@@ -135,19 +152,15 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
   });
 
   const handleDownload = useCallback(() => {
-    if (!selectedArtifact) return;
-
-    const text = artifactDataToText(selectedArtifact.data);
-    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
+    if (!selectedArtifactDownloadUrl || !selectedArtifact) return;
     const link = document.createElement("a");
-    link.href = url;
-    link.download = `${selectedArtifact.name || `artifact-${selectedArtifact.id}`}.json`;
+    link.href = selectedArtifactDownloadUrl;
+    link.rel = "noreferrer";
+    link.download = selectedArtifact.name || `artifact-${selectedArtifact.id}`;
     document.body.appendChild(link);
     link.click();
     link.remove();
-    URL.revokeObjectURL(url);
-  }, [selectedArtifact]);
+  }, [selectedArtifact, selectedArtifactDownloadUrl]);
 
   if (isPending) {
     return (
@@ -235,15 +248,37 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
 
           <div className="rounded border border-input bg-muted/30 p-3">
             <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Preview</div>
-            <ScrollArea className="h-[320px]">
-              <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-all pr-3">
-                {selectedArtifactText || "No artifact data available."}
-              </pre>
-            </ScrollArea>
+            {isImagePreview && selectedArtifactContentUrl ? (
+              <div className="h-[320px] overflow-auto">
+                <img
+                  src={selectedArtifactContentUrl}
+                  alt={selectedArtifact?.name ?? "Artifact preview"}
+                  className="max-h-full max-w-full object-contain"
+                />
+              </div>
+            ) : isPdfPreview && selectedArtifactContentUrl ? (
+              <iframe
+                title={selectedArtifact?.name ?? "Artifact preview"}
+                src={selectedArtifactContentUrl}
+                className="h-[320px] w-full rounded border border-input bg-background"
+              />
+            ) : isTextPreview ? (
+              <ScrollArea className="h-[320px]">
+                <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-all pr-3">
+                  {isTextPreviewLoading
+                    ? "Loading preview..."
+                    : selectedArtifactTextPreview || "No artifact content available."}
+                </pre>
+              </ScrollArea>
+            ) : (
+              <div className="h-[320px] flex items-center justify-center text-xs text-muted-foreground">
+                Preview unavailable for this artifact type.
+              </div>
+            )}
           </div>
 
           <DialogFooter showCloseButton>
-            <Button type="button" onClick={handleDownload} disabled={!selectedArtifact}>
+            <Button type="button" onClick={handleDownload} disabled={!selectedArtifactDownloadUrl}>
               <Download className="h-3.5 w-3.5" />
               Download
             </Button>

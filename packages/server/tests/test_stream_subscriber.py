@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 import server.services.stream_subscriber as stream_subscriber_module
 from server.services.stream_subscriber import StreamSubscriber, StreamSubscriberConfig
+from shared.events import EVENTS_PUBSUB_CHANNEL, EVENTS_STREAM
 
 
 @pytest.mark.asyncio
@@ -13,7 +14,7 @@ async def test_process_batch_acks_only_successful_events(
     fake_redis, monkeypatch
 ) -> None:
     config = StreamSubscriberConfig(
-        stream="upnext:status:events",
+        stream=EVENTS_STREAM,
         group="test-group",
         consumer_id="consumer-1",
         batch_size=10,
@@ -86,7 +87,7 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
     fake_redis, monkeypatch
 ) -> None:
     config = StreamSubscriberConfig(
-        stream="upnext:status:events",
+        stream=EVENTS_STREAM,
         group="test-order",
         consumer_id="consumer-a",
         batch_size=10,
@@ -164,7 +165,7 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
 @pytest.mark.asyncio
 async def test_publish_event_filters_sensitive_fields(fake_redis) -> None:
     config = StreamSubscriberConfig(
-        stream="upnext:status:events",
+        stream=EVENTS_STREAM,
         group="test-sse",
         consumer_id="consumer-sse",
     )
@@ -196,7 +197,7 @@ async def test_publish_event_filters_sensitive_fields(fake_redis) -> None:
         "worker-1",
     )
 
-    assert published["channel"] == "upnext:status:events:pubsub"
+    assert published["channel"] == EVENTS_PUBSUB_CHANNEL
     body = json.loads(published["payload"])
     assert body["job_id"] == "job-safe-1"
     assert "kwargs" not in body
@@ -209,7 +210,7 @@ async def test_reclaim_of_stale_pending_event_processes_once_and_acks(
     fake_redis, monkeypatch
 ) -> None:
     config = StreamSubscriberConfig(
-        stream="upnext:status:events",
+        stream=EVENTS_STREAM,
         group="test-reclaim-race",
         consumer_id="consumer-b",
         batch_size=10,
@@ -310,7 +311,7 @@ async def test_subscribe_loop_retries_then_drains_on_shutdown(monkeypatch) -> No
     subscriber = StreamSubscriber(
         redis_client=object(),
         config=StreamSubscriberConfig(
-            stream="upnext:status:events",
+            stream=EVENTS_STREAM,
             group="test-loop",
             consumer_id="consumer-loop",
             poll_interval=0.01,
@@ -347,7 +348,7 @@ async def test_process_batch_returns_processed_when_ack_fails(
     fake_redis, monkeypatch
 ) -> None:
     config = StreamSubscriberConfig(
-        stream="upnext:status:events",
+        stream=EVENTS_STREAM,
         group="test-ack-failure",
         consumer_id="consumer-ack",
         batch_size=10,
@@ -399,7 +400,7 @@ async def test_process_batch_coalesces_duplicate_progress_events(
     fake_redis, monkeypatch
 ) -> None:
     config = StreamSubscriberConfig(
-        stream="upnext:status:events",
+        stream=EVENTS_STREAM,
         group="test-progress-coalesce",
         consumer_id="consumer-progress",
         batch_size=10,

@@ -6,10 +6,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-EVENTS_STREAM = "upnext:events"
-API_REQUESTS_STREAM = "upnext:events:api:requests"
-ARTIFACT_EVENTS_STREAM = "upnext:events:artifacts"
-EVENTS_PUBSUB_CHANNEL = "upnext:events:pubsub"
+EVENTS_STREAM = "upnext:status:events"
+API_REQUESTS_STREAM = "upnext:api:requests"
+ARTIFACT_EVENTS_STREAM = "upnext:artifacts:events"
+EVENTS_PUBSUB_CHANNEL = "upnext:status:events:pubsub"
 
 
 class EventType(StrEnum):

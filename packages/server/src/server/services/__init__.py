@@ -1,6 +1,11 @@
 """API services layer."""
 
 from server.services.api_instances import list_api_instances
+from server.services.artifact_storage import (
+    BaseStorage,
+    build_artifact_storage_key,
+    get_artifact_storage,
+)
 from server.services.cleanup import CleanupService
 from server.services.queue import get_active_job_count
 from server.services.redis import close_redis, connect_redis, get_redis
@@ -29,6 +34,10 @@ __all__ = [
     "get_function_definitions",
     # API instances
     "list_api_instances",
+    # Artifact storage
+    "BaseStorage",
+    "build_artifact_storage_key",
+    "get_artifact_storage",
     # Queue
     "get_active_job_count",
     # Cleanup

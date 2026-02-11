@@ -104,11 +104,15 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
     listed = await artifacts_route.list_artifacts("artifact-job-1")
     assert listed.total == 1
     assert listed.artifacts[0].id == created.id
-    assert listed.artifacts[0].data == "hello"
+    assert listed.artifacts[0].storage_backend == "local"
+    assert listed.artifacts[0].storage_key
 
     fetched = await artifacts_route.get_artifact(created.id)
     assert fetched.id == created.id
     assert fetched.job_id == "artifact-job-1"
+
+    content = await artifacts_route.get_artifact_content(created.id)
+    assert content.body == b"hello"
 
     deleted = await artifacts_route.delete_artifact(created.id)
     assert deleted == {"status": "deleted", "id": created.id}

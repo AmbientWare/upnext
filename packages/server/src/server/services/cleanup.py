@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from server.db.repository import ArtifactRepository, JobRepository
 from server.db.session import get_database
+from server.services.artifact_storage import get_artifact_storage
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,30 @@ class CleanupService:
         self._pending_promote_max_loops = pending_promote_max_loops
         self._startup_jitter_seconds = max(0.0, startup_jitter_seconds)
         self._task: asyncio.Task[None] | None = None
+
+    async def _delete_storage_objects(
+        self, storage_refs: set[tuple[str, str]]
+    ) -> int:
+        """Best-effort deletion of stored artifact content."""
+        if not storage_refs:
+            return 0
+
+        deleted_count = 0
+        for backend_name, storage_key in storage_refs:
+            if not storage_key:
+                continue
+            try:
+                storage = get_artifact_storage(backend_name)
+                await storage.delete(key=storage_key)
+                deleted_count += 1
+            except Exception as exc:
+                logger.debug(
+                    "Cleanup: failed deleting artifact storage object backend=%s key=%s: %s",
+                    backend_name,
+                    storage_key,
+                    exc,
+                )
+        return deleted_count
 
     async def start(self) -> None:
         """Start the cleanup background task."""
@@ -107,12 +132,16 @@ class CleanupService:
 
         try:
             db = get_database()
+            stale_pending_rows = []
+            old_artifact_rows = []
+            deleted = 0
+            promoted = 0
+            expired_pending = 0
             async with db.session() as session:
                 job_repo = JobRepository(session)
                 artifact_repo = ArtifactRepository(session)
 
                 # Reconcile pending artifacts in bounded batches.
-                promoted = 0
                 for _ in range(self._pending_promote_max_loops):
                     batch = await artifact_repo.promote_ready_pending(
                         limit=self._pending_promote_batch
@@ -121,13 +150,17 @@ class CleanupService:
                     if batch < self._pending_promote_batch:
                         break
 
-                expired_pending = await artifact_repo.cleanup_stale_pending(
+                stale_pending_rows = await artifact_repo.cleanup_stale_pending_with_rows(
                     retention_hours=self._pending_retention_hours
                 )
+                expired_pending = len(stale_pending_rows)
 
-                deleted = await job_repo.cleanup_old_records(
+                old_job_ids = await job_repo.list_old_job_ids(
                     retention_days=self._retention_days
                 )
+                old_artifact_rows = await artifact_repo.list_by_job_ids(old_job_ids)
+                deleted = await job_repo.delete_by_ids(old_job_ids)
+
                 if promoted > 0:
                     logger.info(f"Cleanup: promoted {promoted} pending artifacts")
                 if expired_pending > 0:
@@ -140,6 +173,21 @@ class CleanupService:
                         f"Cleanup: deleted {deleted} job records "
                         f"older than {self._retention_days} days"
                     )
+
+            storage_refs = {
+                (artifact.storage_backend, artifact.storage_key)
+                for artifact in old_artifact_rows
+                if artifact.storage_key
+            } | {
+                (pending.storage_backend, pending.storage_key)
+                for pending in stale_pending_rows
+                if pending.storage_key
+            }
+            storage_deleted = await self._delete_storage_objects(storage_refs)
+            if storage_deleted > 0:
+                logger.info(
+                    "Cleanup: deleted %s artifact storage objects", storage_deleted
+                )
         except Exception as e:
             logger.warning(f"Cleanup error: {e}")
         finally:

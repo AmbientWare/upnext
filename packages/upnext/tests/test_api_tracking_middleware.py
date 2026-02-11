@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from shared.api import API_PREFIX
 from shared.events import API_REQUESTS_STREAM
 from starlette.requests import Request
 from upnext.sdk.middleware import ApiTrackingConfig, ApiTrackingMiddleware
@@ -66,7 +67,7 @@ async def test_metrics_always_recorded_and_event_sampling_respects_error_and_slo
     await middleware._record("GET", path, 500, 25.0)  # noqa: SLF001
     await middleware._record("GET", path, 200, 250.0)  # noqa: SLF001
 
-    minute_pattern = "upnext:api:orders:GET:/orders/{order_id}:m:*"
+    minute_pattern = f"{API_PREFIX}:orders:GET:/orders/{{order_id}}:m:*"
     minute_keys = [key async for key in fake_redis.scan_iter(match=minute_pattern)]
     assert len(minute_keys) == 1
 
@@ -104,13 +105,13 @@ async def test_registry_refresh_only_writes_new_endpoint_without_periodic_refres
     await middleware._record("GET", "/orders", 200, 10.0)  # noqa: SLF001
     await middleware._record("GET", "/orders", 200, 11.0)  # noqa: SLF001
 
-    registry_members = await fake_redis.smembers("upnext:api:registry")
-    endpoints_members = await fake_redis.smembers("upnext:api:orders:endpoints")
+    registry_members = await fake_redis.smembers(f"{API_PREFIX}:registry")
+    endpoints_members = await fake_redis.smembers(f"{API_PREFIX}:orders:endpoints")
 
     assert registry_members == {b"orders"}
     assert endpoints_members == {b"GET:/orders"}
 
-    ttl = await fake_redis.ttl("upnext:api:orders:endpoints")
+    ttl = await fake_redis.ttl(f"{API_PREFIX}:orders:endpoints")
     assert ttl > 0
 
     # Existing endpoint should not trigger extra endpoint set entries.
@@ -118,5 +119,5 @@ async def test_registry_refresh_only_writes_new_endpoint_without_periodic_refres
 
     # New endpoint should still be registered immediately.
     await middleware._record("POST", "/orders", 201, 9.0)  # noqa: SLF001
-    endpoints_members = await fake_redis.smembers("upnext:api:orders:endpoints")
+    endpoints_members = await fake_redis.smembers(f"{API_PREFIX}:orders:endpoints")
     assert endpoints_members == {b"GET:/orders", b"POST:/orders"}

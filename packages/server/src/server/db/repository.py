@@ -405,6 +405,21 @@ class JobRepository:
 
         return stats
 
+    async def list_old_job_ids(self, retention_days: int = 30) -> list[str]:
+        """Return job IDs older than retention cutoff."""
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        query = select(JobHistory.id).where(JobHistory.created_at < cutoff)
+        result = await self._session.execute(query)
+        return list(result.scalars().all())
+
+    async def delete_by_ids(self, job_ids: list[str]) -> int:
+        """Delete jobs by explicit ID set."""
+        if not job_ids:
+            return 0
+        query = delete(JobHistory).where(JobHistory.id.in_(job_ids))
+        result = await self._session.execute(query)
+        return result.rowcount if result.rowcount else 0  # type: ignore[return-value]
+
     async def cleanup_old_records(
         self,
         retention_days: int = 30,
@@ -418,12 +433,8 @@ class JobRepository:
         Returns:
             Number of deleted records
         """
-        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-
-        query = delete(JobHistory).where(JobHistory.created_at < cutoff)
-
-        result = await self._session.execute(query)
-        return result.rowcount if result.rowcount else 0  # type: ignore[return-value]
+        old_job_ids = await self.list_old_job_ids(retention_days=retention_days)
+        return await self.delete_by_ids(old_job_ids)
 
 
 class ArtifactRepository:
@@ -440,15 +451,25 @@ class ArtifactRepository:
         data: Any | None = None,
         size_bytes: int | None = None,
         path: str | None = None,
+        content_type: str | None = None,
+        sha256: str | None = None,
+        storage_backend: str = "local",
+        storage_key: str = "",
+        status: str = "available",
+        error: str | None = None,
     ) -> Artifact:
         """Create an artifact for a job."""
         artifact = Artifact(
             job_id=job_id,
             name=name,
             type=artifact_type,
-            data=data,
             size_bytes=size_bytes,
-            path=path,
+            content_type=content_type,
+            sha256=sha256,
+            storage_backend=storage_backend,
+            storage_key=storage_key,
+            status=status,
+            error=error,
         )
         self._session.add(artifact)
         await self._session.flush()
@@ -462,15 +483,25 @@ class ArtifactRepository:
         data: Any | None = None,
         size_bytes: int | None = None,
         path: str | None = None,
+        content_type: str | None = None,
+        sha256: str | None = None,
+        storage_backend: str = "local",
+        storage_key: str = "",
+        status: str = "queued",
+        error: str | None = None,
     ) -> PendingArtifact:
         """Create a pending artifact when the job row is not yet available."""
         pending = PendingArtifact(
             job_id=job_id,
             name=name,
             type=artifact_type,
-            data=data,
             size_bytes=size_bytes,
-            path=path,
+            content_type=content_type,
+            sha256=sha256,
+            storage_backend=storage_backend,
+            storage_key=storage_key,
+            status=status,
+            error=error,
         )
         self._session.add(pending)
         await self._session.flush()
@@ -544,11 +575,33 @@ class ArtifactRepository:
 
     async def cleanup_stale_pending(self, *, retention_hours: int = 24) -> int:
         """Delete pending artifacts older than retention window."""
-        cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
-        result = await self._session.execute(
-            delete(PendingArtifact).where(PendingArtifact.created_at < cutoff)
+        return len(
+            await self.cleanup_stale_pending_with_rows(
+                retention_hours=retention_hours
+            )
         )
-        return result.rowcount if result.rowcount else 0  # type: ignore[return-value]
+
+    async def cleanup_stale_pending_with_rows(
+        self, *, retention_hours: int = 24
+    ) -> list[PendingArtifact]:
+        """Delete stale pending artifacts and return deleted rows."""
+        cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
+        query = (
+            select(PendingArtifact)
+            .where(PendingArtifact.created_at < cutoff)
+            .order_by(PendingArtifact.id.asc())
+            .with_for_update(skip_locked=True)
+        )
+        result = await self._session.execute(query)
+        rows = list(result.scalars().all())
+        if not rows:
+            return []
+
+        row_ids = [row.id for row in rows]
+        await self._session.execute(
+            delete(PendingArtifact).where(PendingArtifact.id.in_(row_ids))
+        )
+        return rows
 
     async def _promote_pending_rows(
         self, pending_rows: list[PendingArtifact]
@@ -571,8 +624,12 @@ class ArtifactRepository:
                 name=row.name,
                 type=row.type,
                 size_bytes=row.size_bytes,
-                data=row.data,
-                path=row.path,
+                content_type=row.content_type,
+                sha256=row.sha256,
+                storage_backend=row.storage_backend,
+                storage_key=row.storage_key,
+                status="available",
+                error=row.error,
                 created_at=row.created_at,
             )
             self._session.add(artifact)
@@ -595,6 +652,18 @@ class ArtifactRepository:
         query = (
             select(Artifact)
             .where(Artifact.job_id == job_id)
+            .order_by(Artifact.created_at.desc())
+        )
+        result = await self._session.execute(query)
+        return list(result.scalars().all())
+
+    async def list_by_job_ids(self, job_ids: list[str]) -> list[Artifact]:
+        """List artifacts for multiple jobs."""
+        if not job_ids:
+            return []
+        query = (
+            select(Artifact)
+            .where(Artifact.job_id.in_(job_ids))
             .order_by(Artifact.created_at.desc())
         )
         result = await self._session.execute(query)

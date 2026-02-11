@@ -2,8 +2,9 @@
 
 import logging
 from datetime import UTC, datetime
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Response
 from shared.schemas import (
     ArtifactResponse,
     ArtifactStreamEvent,
@@ -13,6 +14,7 @@ from shared.schemas import (
 from server.db.repository import ArtifactRepository
 from server.db.session import get_database
 from server.routes.artifacts.artifacts_utils import publish_artifact_event
+from server.services import get_artifact_storage
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +48,57 @@ async def get_artifact(artifact_id: int) -> ArtifactResponse:
             job_id=artifact.job_id,
             name=artifact.name,
             type=artifact.type,
+            content_type=artifact.content_type,
             size_bytes=artifact.size_bytes,
-            data=artifact.data,
-            path=artifact.path,
+            sha256=artifact.sha256,
+            storage_backend=artifact.storage_backend,
+            storage_key=artifact.storage_key,
+            status=artifact.status,
+            error=artifact.error,
             created_at=artifact.created_at,
         )
+
+
+@artifact_root_router.get(
+    "/{artifact_id}/content",
+    responses={
+        404: {"model": ErrorResponse, "description": "Artifact not found."},
+        503: {"model": ErrorResponse, "description": "Storage or database unavailable."},
+    },
+)
+async def get_artifact_content(
+    artifact_id: int,
+    download: bool = Query(False, description="Force download as attachment"),
+) -> Response:
+    """Get raw artifact content bytes."""
+    try:
+        db = get_database()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    async with db.session() as session:
+        repo = ArtifactRepository(session)
+        artifact = await repo.get_by_id(artifact_id)
+
+        if not artifact:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+
+    try:
+        storage = get_artifact_storage(artifact.storage_backend)
+        content = await storage.get(key=artifact.storage_key)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Artifact storage unavailable: {exc}") from exc
+
+    headers: dict[str, str] = {}
+    if download:
+        filename = quote(artifact.name)
+        headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{filename}"
+
+    return Response(
+        content=content,
+        media_type=artifact.content_type or "application/octet-stream",
+        headers=headers,
+    )
 
 
 @artifact_root_router.delete(
@@ -72,6 +120,14 @@ async def delete_artifact(artifact_id: int) -> dict:
         artifact = await repo.get_by_id(artifact_id)
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
+
+        try:
+            storage = get_artifact_storage(artifact.storage_backend)
+            await storage.delete(key=artifact.storage_key)
+        except Exception:
+            # Best effort: still delete DB row.
+            pass
+
         deleted = await repo.delete(artifact_id)
 
         if not deleted:

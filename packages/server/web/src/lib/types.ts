@@ -70,9 +70,13 @@ export interface Artifact {
   job_id: string;
   name: string;
   type: string;
+  content_type: string | null;
   size_bytes: number | null;
-  data: unknown;
-  path: string | null;
+  sha256: string | null;
+  storage_backend: string;
+  storage_key: string;
+  status: string;
+  error: string | null;
   created_at: string;
 }
 

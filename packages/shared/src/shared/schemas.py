@@ -106,9 +106,13 @@ class ArtifactResponse(BaseModel):
     job_id: str
     name: str
     type: str  # text, json, image/png, image/jpeg, file/pdf, etc.
+    content_type: str | None = None
     size_bytes: int | None = None
-    data: Any = None
-    path: str | None = None
+    sha256: str | None = None
+    storage_backend: str
+    storage_key: str
+    status: str = "available"
+    error: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

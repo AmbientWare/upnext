@@ -123,6 +123,18 @@ export async function getJobArtifacts(jobId: string): Promise<ArtifactListRespon
   return handleResponse<ArtifactListResponse>(response);
 }
 
+export function getArtifactContentUrl(
+  artifactId: number,
+  options: { download?: boolean } = {}
+): string {
+  const searchParams = new URLSearchParams();
+  if (options.download) {
+    searchParams.set("download", "1");
+  }
+  const query = searchParams.toString();
+  return `${API_BASE}/artifacts/${artifactId}/content${query ? `?${query}` : ""}`;
+}
+
 // =============================================================================
 // Workers
 // =============================================================================

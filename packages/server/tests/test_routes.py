@@ -22,7 +22,7 @@ import server.routes.workers.workers_root as workers_root_route
 import server.routes.workers.workers_stream as workers_stream_route
 from fastapi import HTTPException, Response
 from server.db.repository import JobRepository
-from shared.events import BatchEventItem, BatchEventRequest
+from shared.events import ARTIFACT_EVENTS_STREAM, BatchEventItem, BatchEventRequest
 from shared.schemas import (
     ApiInstance,
     ArtifactType,
@@ -591,7 +591,7 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
                 (
-                    "upnext:artifacts:events",
+                    ARTIFACT_EVENTS_STREAM,
                     [
                         (
                             "1000-0",
@@ -608,9 +608,13 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
                                             "job_id": "job-a",
                                             "name": "summary",
                                             "type": "json",
+                                            "content_type": "application/json",
                                             "size_bytes": 11,
-                                            "data": {"ok": True},
-                                            "path": None,
+                                            "sha256": "abc123",
+                                            "storage_backend": "local",
+                                            "storage_key": "jobs/job-a/summary",
+                                            "status": "available",
+                                            "error": None,
                                             "created_at": "2026-02-09T12:00:00Z",
                                         },
                                     }
@@ -632,9 +636,13 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
                                             "job_id": "job-b",
                                             "name": "skip-me",
                                             "type": "json",
+                                            "content_type": "application/json",
                                             "size_bytes": 10,
-                                            "data": {"ok": False},
-                                            "path": None,
+                                            "sha256": "def456",
+                                            "storage_backend": "local",
+                                            "storage_key": "jobs/job-b/skip-me",
+                                            "status": "available",
+                                            "error": None,
                                             "created_at": "2026-02-09T12:00:01Z",
                                         },
                                     }

@@ -110,12 +110,14 @@ class Artifact(Base):
         String(50), nullable=False
     )  # text, json, image/png, file/pdf, etc.
 
-    # Content
+    # Content metadata
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    data: Mapped[Any] = mapped_column(JSON, nullable=True)  # For small JSON/text data
-    path: Mapped[str | None] = mapped_column(
-        String(500), nullable=True
-    )  # For file references
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    storage_backend: Mapped[str] = mapped_column(String(20), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(700), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="available")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(
@@ -131,6 +133,7 @@ class Artifact(Base):
     __table_args__ = (
         Index("ix_artifacts_job_id", "job_id"),
         Index("ix_artifacts_name", "name"),
+        Index("ix_artifacts_storage", "storage_backend", "storage_key"),
     )
 
     def __repr__(self) -> str:
@@ -156,10 +159,14 @@ class PendingArtifact(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     type: Mapped[str] = mapped_column(String(50), nullable=False)
 
-    # Content
+    # Content metadata
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    data: Mapped[Any] = mapped_column(JSON, nullable=True)
-    path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    storage_backend: Mapped[str] = mapped_column(String(20), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(700), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(
