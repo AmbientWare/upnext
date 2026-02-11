@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from datetime import UTC, datetime
 
 import pytest
 from shared.models import Job, JobStatus
@@ -362,3 +364,41 @@ async def test_group_concurrency_cap_limits_shared_routing_group(
     next_job = await queue.dequeue(["fn.group.a", "fn.group.b"], timeout=0.2)
     assert next_job is not None
     assert {first.id, next_job.id} == {a.id, b.id}
+
+
+@pytest.mark.asyncio
+async def test_cron_cursor_persists_next_and_last_completion(queue: RedisQueue) -> None:
+    now = time.time()
+    cron_job = Job(
+        function="cron.fn",
+        function_name="cron_fn",
+        key="cron:cron.fn",
+        schedule="* * * * *",
+        metadata={"cron": True},
+    )
+
+    seeded = await queue.seed_cron(cron_job, next_run_at=now + 60)
+    assert seeded is True
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    seeded_cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.fn")  # noqa: SLF001
+    assert seeded_cursor_raw is not None
+    seeded_cursor = json.loads(
+        seeded_cursor_raw.decode()
+        if isinstance(seeded_cursor_raw, bytes)
+        else seeded_cursor_raw
+    )
+    assert seeded_cursor["function"] == "cron.fn"
+    assert seeded_cursor["next_run_at"] is not None
+    assert seeded_cursor["last_completed_at"] is None
+
+    cron_job.completed_at = datetime.now(UTC)
+    await queue.reschedule_cron(cron_job, next_run_at=now + 120)
+
+    cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.fn")  # noqa: SLF001
+    assert cursor_raw is not None
+    cursor = json.loads(
+        cursor_raw.decode() if isinstance(cursor_raw, bytes) else cursor_raw
+    )
+    assert cursor["next_run_at"] is not None
+    assert cursor["last_completed_at"] is not None

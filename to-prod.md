@@ -40,7 +40,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
 
 ## 3) Scheduling Durability
 
-- [ ] Persist scheduler progress explicitly.
+- [x] Persist scheduler progress explicitly.
   - How: track last successful run cursor per cron/function in durable store.
   - Done: restart does not lose schedule state.
 

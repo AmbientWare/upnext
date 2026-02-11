@@ -1756,6 +1756,27 @@ class RedisQueue(BaseQueue):
     def _cron_registry_key(self) -> str:
         return self._key("cron_registry")
 
+    def _cron_cursor_key(self) -> str:
+        return self._key("cron_cursor")
+
+    async def _write_cron_cursor(
+        self,
+        client: Any,
+        *,
+        function: str,
+        next_run_at: float,
+        last_completed_at: datetime | None = None,
+    ) -> None:
+        payload = {
+            "function": function,
+            "next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat(),
+            "last_completed_at": (
+                last_completed_at.isoformat() if last_completed_at else None
+            ),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        await client.hset(self._cron_cursor_key(), function, json.dumps(payload))
+
     async def seed_cron(self, job: Job, next_run_at: float) -> bool:
         client = await self._ensure_connected()
 
@@ -1773,6 +1794,12 @@ class RedisQueue(BaseQueue):
         scheduled_key = self._scheduled_key(job.function)
         await client.zadd(scheduled_key, {job.id: next_run_at})
 
+        await self._write_cron_cursor(
+            client,
+            function=job.function,
+            next_run_at=next_run_at,
+            last_completed_at=None,
+        )
         await self._update_function_next_run(client, job.function, next_run_at)
 
         return True
@@ -1802,6 +1829,12 @@ class RedisQueue(BaseQueue):
         scheduled_key = self._scheduled_key(new_job.function)
         await client.zadd(scheduled_key, {new_job.id: next_run_at})
 
+        await self._write_cron_cursor(
+            client,
+            function=job.function,
+            next_run_at=next_run_at,
+            last_completed_at=job.completed_at,
+        )
         await self._update_function_next_run(client, job.function, next_run_at)
 
         return new_job.id

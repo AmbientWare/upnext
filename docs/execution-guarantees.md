@@ -35,6 +35,11 @@ This document defines the runtime contract for enqueue/dequeue/retry/cancel beha
 - Dead-letter records can be listed and replayed through queue APIs.
 - Replay enqueues a fresh job payload and removes the replayed dead-letter record only on successful enqueue.
 
+## Scheduler Progress
+
+- Cron scheduling writes durable cursor state per function (last completion + next scheduled run).
+- Cursor state is stored independently of worker process memory so restart retains scheduling progress.
+
 ## Source of Truth Tests
 
 These tests enforce the contract:
