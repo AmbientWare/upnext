@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Inbox } from "lucide-react";
 import { cn, formatDateTime, formatDuration, formatTimeAgo } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
@@ -16,6 +17,7 @@ import {
 export interface JobsTableProps {
   jobs: Job[];
   onJobClick?: (job: Job) => void;
+  renderActions?: (job: Job) => ReactNode;
   hideFunction?: boolean;
   isLoading?: boolean;
   emptyTitle?: string;
@@ -23,7 +25,13 @@ export interface JobsTableProps {
   className?: string;
 }
 
-function JobsTableSkeleton({ hideFunction }: { hideFunction?: boolean }) {
+function JobsTableSkeleton({
+  hideFunction,
+  showActions = false,
+}: {
+  hideFunction?: boolean;
+  showActions?: boolean;
+}) {
   return (
     <Table>
       <TableHeader className="sticky top-0 z-10 bg-card">
@@ -39,6 +47,9 @@ function JobsTableSkeleton({ hideFunction }: { hideFunction?: boolean }) {
           <TableHead className="hidden lg:table-cell text-[10px] text-muted-foreground font-medium h-8">Finished</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Age</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Progress</TableHead>
+          {showActions && (
+            <TableHead className="text-[10px] text-muted-foreground font-medium h-8 text-right">Actions</TableHead>
+          )}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -73,6 +84,13 @@ function JobsTableSkeleton({ hideFunction }: { hideFunction?: boolean }) {
             <TableCell className="py-1.5">
               <Skeleton className="h-2 w-20" />
             </TableCell>
+            {showActions && (
+              <TableCell className="py-1.5">
+                <div className="ml-auto w-20">
+                  <Skeleton className="h-6 w-20" />
+                </div>
+              </TableCell>
+            )}
           </TableRow>
         ))}
       </TableBody>
@@ -83,6 +101,7 @@ function JobsTableSkeleton({ hideFunction }: { hideFunction?: boolean }) {
 export function JobsTable({
   jobs,
   onJobClick,
+  renderActions,
   hideFunction,
   isLoading = false,
   emptyTitle = "No jobs yet",
@@ -93,7 +112,7 @@ export function JobsTable({
     <div className={cn("flex flex-col h-full overflow-hidden", className)}>
       {isLoading ? (
         <div className="flex-1 overflow-auto">
-          <JobsTableSkeleton hideFunction={hideFunction} />
+          <JobsTableSkeleton hideFunction={hideFunction} showActions={Boolean(renderActions)} />
         </div>
       ) : jobs.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
@@ -119,6 +138,9 @@ export function JobsTable({
                 <TableHead className="hidden lg:table-cell text-[10px] text-muted-foreground font-medium h-8">Finished</TableHead>
                 <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Age</TableHead>
                 <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Progress</TableHead>
+                {renderActions && (
+                  <TableHead className="text-[10px] text-muted-foreground font-medium h-8 text-right">Actions</TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -165,6 +187,14 @@ export function JobsTable({
                         <span className="text-muted-foreground/40">{"\u2014"}</span>
                       )}
                     </TableCell>
+                    {renderActions && (
+                      <TableCell
+                        className="py-1.5 text-right"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {renderActions(job)}
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })}

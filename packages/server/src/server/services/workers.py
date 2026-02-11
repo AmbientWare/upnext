@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Any
 
-from shared.schemas import WorkerInstance, WorkerStats
+from shared.schemas import FunctionConfig, WorkerInstance, WorkerStats
 from shared.workers import (
     FUNCTION_KEY_PREFIX,
     WORKER_DEF_PREFIX,
@@ -102,16 +102,22 @@ async def get_worker_stats() -> WorkerStats:
     return WorkerStats(total=total)
 
 
-async def get_function_definitions() -> dict[str, dict[str, Any]]:
+async def get_function_definitions() -> dict[str, FunctionConfig]:
     """Get all function definitions from Redis."""
     r = await get_redis()
-    functions: dict[str, dict[str, Any]] = {}
+    functions: dict[str, FunctionConfig] = {}
 
     async for key in r.scan_iter(match=f"{FUNCTION_KEY_PREFIX}:*", count=100):
         data = await r.get(key)
         if data:
-            func_data = json.loads(data)
-            func_key = func_data.get("key") or func_data.get("name")
+            payload = data.decode() if isinstance(data, bytes) else str(data)
+            try:
+                func_data = FunctionConfig.model_validate_json(payload)
+            except Exception:
+                logger.debug("Skipping malformed function payload for key %s", key)
+                continue
+
+            func_key = func_data.key or func_data.name
             if not func_key:
                 continue
             functions[func_key] = func_data

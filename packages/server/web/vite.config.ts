@@ -15,6 +15,50 @@ export default defineConfig({
   build: {
     outDir: "../static",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("/node_modules/")) return;
+
+          if (
+            id.includes("/node_modules/react/") ||
+            id.includes("/node_modules/react-dom/") ||
+            id.includes("/node_modules/scheduler/")
+          ) {
+            return "vendor-react";
+          }
+
+          if (id.includes("/node_modules/@tanstack/")) {
+            return "vendor-tanstack";
+          }
+
+          if (
+            id.includes("/node_modules/@radix-ui/") ||
+            id.includes("/node_modules/radix-ui/")
+          ) {
+            return "vendor-radix";
+          }
+
+          if (id.includes("/node_modules/recharts/")) {
+            return "vendor-recharts";
+          }
+
+          if (
+            id.includes("/node_modules/react-syntax-highlighter/") ||
+            id.includes("/node_modules/highlight.js/") ||
+            id.includes("/node_modules/prismjs/")
+          ) {
+            return "vendor-syntax";
+          }
+
+          if (id.includes("/node_modules/date-fns/")) {
+            return "vendor-date";
+          }
+
+          return "vendor-misc";
+        },
+      },
+    },
   },
   server: {
     proxy: {

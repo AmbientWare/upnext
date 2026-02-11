@@ -48,14 +48,14 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-async function apiFetch(url: string): Promise<Response> {
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = globalThis.setTimeout(() => {
     controller.abort();
   }, API_REQUEST_TIMEOUT_MS);
 
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, { ...init, signal: controller.signal });
   } catch (error) {
     if (isAbortError(error)) {
       throw new ApiError(
@@ -156,6 +156,31 @@ export async function getJobArtifacts(jobId: string): Promise<ArtifactListRespon
   return handleResponse<ArtifactListResponse>(response);
 }
 
+export interface JobCancelResponse {
+  job_id: string;
+  cancelled: boolean;
+  deleted_stream_entries?: number;
+}
+
+export interface JobRetryResponse {
+  job_id: string;
+  retried: boolean;
+}
+
+export async function cancelJob(jobId: string): Promise<JobCancelResponse> {
+  const response = await apiFetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+  });
+  return handleResponse<JobCancelResponse>(response);
+}
+
+export async function retryJob(jobId: string): Promise<JobRetryResponse> {
+  const response = await apiFetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/retry`, {
+    method: "POST",
+  });
+  return handleResponse<JobRetryResponse>(response);
+}
+
 export function getArtifactContentUrl(
   artifactId: number,
   options: { download?: boolean } = {}
@@ -200,6 +225,25 @@ export async function getFunctions(params: GetFunctionsParams = {}): Promise<Fun
 export async function getFunction(name: string): Promise<FunctionDetailResponse> {
   const response = await apiFetch(`${API_BASE}/functions/${encodeURIComponent(name)}`);
   return handleResponse<FunctionDetailResponse>(response);
+}
+
+export interface FunctionPauseResponse {
+  key: string;
+  paused: boolean;
+}
+
+export async function pauseFunction(name: string): Promise<FunctionPauseResponse> {
+  const response = await apiFetch(`${API_BASE}/functions/${encodeURIComponent(name)}/pause`, {
+    method: "POST",
+  });
+  return handleResponse<FunctionPauseResponse>(response);
+}
+
+export async function resumeFunction(name: string): Promise<FunctionPauseResponse> {
+  const response = await apiFetch(`${API_BASE}/functions/${encodeURIComponent(name)}/resume`, {
+    method: "POST",
+  });
+  return handleResponse<FunctionPauseResponse>(response);
 }
 
 // =============================================================================

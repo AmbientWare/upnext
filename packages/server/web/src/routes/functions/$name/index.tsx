@@ -1,9 +1,18 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import type { DateRange } from "react-day-picker";
+import { toast } from "sonner";
 import { cn, formatNumber, formatDuration, formatTimeAgo, formatTimeUntil } from "@/lib/utils";
-import { getFunction, getJobs, queryKeys } from "@/lib/upnext-api";
+import {
+  cancelJob,
+  getFunction,
+  getJobs,
+  pauseFunction,
+  queryKeys,
+  resumeFunction,
+  retryJob,
+} from "@/lib/upnext-api";
 import type { FunctionType } from "@/lib/types";
 import {
   Panel,
@@ -24,10 +33,15 @@ import {
   Radio,
   CalendarClock,
   Users,
+  Pause,
+  Play,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import { ConfigItem } from "./-components/config-item";
 import { MetricCard } from "./-components/metric-card";
 import { JobTrendsPanel } from "./-components/job-trends-panel";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/functions/$name/")({
   component: FunctionDetailPage,
@@ -47,7 +61,11 @@ const typeLabels: Record<FunctionType, string> = {
   event: "Event Handler",
 };
 
+const RETRYABLE_STATUSES = new Set(["failed", "cancelled"]);
+const CANCELLABLE_STATUSES = new Set(["pending", "queued", "active", "retrying"]);
+
 function FunctionDetailPage() {
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { name } = Route.useParams();
   const decodedName = decodeURIComponent(name);
@@ -96,6 +114,40 @@ function FunctionDetailPage() {
 
   const jobs = jobsData?.jobs ?? [];
 
+  const togglePauseMutation = useMutation({
+    mutationFn: (isPaused: boolean) =>
+      isPaused ? resumeFunction(decodedName) : pauseFunction(decodedName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.function(decodedName) });
+      queryClient.invalidateQueries({ queryKey: ["functions"] });
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to update pause state");
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (jobId: string) => cancelJob(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.function(decodedName) });
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to cancel job");
+    },
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: (jobId: string) => retryJob(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.function(decodedName) });
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to retry job");
+    },
+  });
+
   if (isFunctionPending && !fn) {
     return <FunctionDetailSkeleton />;
   }
@@ -134,6 +186,16 @@ function FunctionDetailPage() {
           <span className="text-xs text-muted-foreground">
             {fn.active ? "Active" : "Inactive"}
           </span>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={togglePauseMutation.isPending}
+            onClick={() => togglePauseMutation.mutate(fn.paused)}
+            className="ml-1"
+          >
+            {fn.paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+            {fn.paused ? "Resume" : "Pause"}
+          </Button>
         </div>
       </div>
 
@@ -222,6 +284,34 @@ function FunctionDetailPage() {
         jobs={jobs}
         hideFunction
         showFilters
+        renderActions={(job) => (
+          <div className="inline-flex items-center gap-1">
+            {RETRYABLE_STATUSES.has(job.status) ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={retryMutation.isPending}
+                onClick={() => retryMutation.mutate(job.id)}
+                aria-label={`Retry ${job.id}`}
+                title="Retry"
+              >
+                <RotateCcw className="h-3 w-3" />
+              </Button>
+            ) : null}
+            {CANCELLABLE_STATUSES.has(job.status) ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={cancelMutation.isPending}
+                onClick={() => cancelMutation.mutate(job.id)}
+                aria-label={`Cancel ${job.id}`}
+                title="Cancel"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            ) : null}
+          </div>
+        )}
         headerControls={
           <LiveWindowControls
             live={jobsLive}

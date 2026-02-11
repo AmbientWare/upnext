@@ -70,8 +70,11 @@ export function formatDateTime(date: Date): string {
 export type { JobStatus };
 
 export const statusConfig: Record<JobStatus, { bg: string; text: string; dot: string; label: string }> = {
+  pending: { bg: "bg-slate-500/10", text: "text-slate-400", dot: "bg-slate-500", label: "Pending" },
+  queued: { bg: "bg-cyan-500/10", text: "text-cyan-400", dot: "bg-cyan-500", label: "Queued" },
   active: { bg: "bg-blue-500/10", text: "text-blue-400", dot: "bg-blue-500", label: "Active" },
   complete: { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-500", label: "Complete" },
   failed: { bg: "bg-red-500/10", text: "text-red-400", dot: "bg-red-500", label: "Failed" },
+  cancelled: { bg: "bg-zinc-500/10", text: "text-zinc-400", dot: "bg-zinc-500", label: "Cancelled" },
   retrying: { bg: "bg-orange-500/10", text: "text-orange-400", dot: "bg-orange-500", label: "Retrying" },
 };

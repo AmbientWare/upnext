@@ -29,6 +29,7 @@ from typing import Any
 
 import redis.asyncio as redis
 from shared import Job, JobStatus
+from shared.schemas import FunctionConfig
 from shared.workers import FUNCTION_KEY_PREFIX
 
 from upnext.engine.queue.base import BaseQueue, DuplicateJobError, QueueStats
@@ -43,6 +44,7 @@ from upnext.engine.queue.redis.constants import (
     DEFAULT_OUTBOX_SIZE,
     DEFAULT_RESULT_TTL_SECONDS,
     DEFAULT_STREAM_MAXLEN,
+    QUEUE_KEY_PREFIX,
     CompletedJob,
 )
 from upnext.engine.queue.redis.fetcher import Fetcher
@@ -116,6 +118,9 @@ class RedisQueue(BaseQueue):
         self._sweep_sha: str | None = None
         self._retry_sha: str | None = None
         self._cancel_sha: str | None = None
+
+        # Function pause state cache (short-lived to avoid frequent Redis GETs).
+        self._function_pause_cache: dict[str, tuple[bool, float]] = {}
 
         # Components (created on start)
         self._fetcher = None
@@ -259,6 +264,49 @@ class RedisQueue(BaseQueue):
     def _cancel_marker_key(self, job_id: str) -> str:
         return self._key("cancelled", job_id)
 
+    def _function_def_key(self, function: str) -> str:
+        return f"{FUNCTION_KEY_PREFIX}:{function}"
+
+    async def _paused_state_map(self, functions: list[str]) -> dict[str, bool]:
+        """Resolve paused state for functions with a small in-memory TTL cache."""
+        now = time.time()
+        states: dict[str, bool] = {}
+        stale: list[str] = []
+        for fn in functions:
+            cached = self._function_pause_cache.get(fn)
+            if cached and cached[1] > now:
+                states[fn] = cached[0]
+            else:
+                stale.append(fn)
+
+        if stale:
+            client = await self._ensure_connected()
+            keys = [self._function_def_key(fn) for fn in stale]
+            rows = await client.mget(keys)
+            for fn, raw in zip(stale, rows, strict=False):
+                paused = False
+                if raw:
+                    payload = raw.decode() if isinstance(raw, bytes) else str(raw)
+                    try:
+                        config = FunctionConfig.model_validate_json(payload)
+                        paused = config.paused
+                    except Exception:
+                        paused = False
+                states[fn] = paused
+                self._function_pause_cache[fn] = (paused, now + 1.0)
+
+        return states
+
+    async def is_function_paused(self, function: str) -> bool:
+        states = await self._paused_state_map([function])
+        return states.get(function, False)
+
+    async def get_runnable_functions(self, functions: list[str]) -> list[str]:
+        if not functions:
+            return []
+        states = await self._paused_state_map(functions)
+        return [fn for fn in functions if not states.get(fn, False)]
+
     async def _xadd_job_payload(
         self,
         stream_key: str,
@@ -306,7 +354,9 @@ class RedisQueue(BaseQueue):
                     msg_job_id.decode() if isinstance(msg_job_id, bytes) else msg_job_id
                 )
                 if msg_job_id_str == job_id:
-                    msg_id_str = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
+                    msg_id_str = (
+                        msg_id.decode() if isinstance(msg_id, bytes) else msg_id
+                    )
                     delete_ids.append(msg_id_str)
 
             if delete_ids:
@@ -414,11 +464,13 @@ class RedisQueue(BaseQueue):
         """Get next job directly from Redis (no batching)."""
         client = await self._ensure_connected()
 
-        if not functions:
+        runnable_functions = await self.get_runnable_functions(functions)
+        if not runnable_functions:
+            await asyncio.sleep(min(timeout, 0.25))
             return None
 
         deadline = time.time() + timeout
-        stream_keys = {self._stream_key(fn): fn for fn in functions}
+        stream_keys = {self._stream_key(fn): fn for fn in runnable_functions}
 
         for stream_key in stream_keys:
             await self._ensure_consumer_group(stream_key)
@@ -470,11 +522,13 @@ class RedisQueue(BaseQueue):
         """Get multiple jobs at once (used by Fetcher)."""
         client = await self._ensure_connected()
 
-        if not functions:
+        runnable_functions = await self.get_runnable_functions(functions)
+        if not runnable_functions:
+            await asyncio.sleep(min(timeout, 0.25))
             return []
 
         deadline = time.time() + timeout
-        stream_keys = {self._stream_key(fn): fn for fn in functions}
+        stream_keys = {self._stream_key(fn): fn for fn in runnable_functions}
 
         for stream_key in stream_keys:
             await self._ensure_consumer_group(stream_key)
@@ -800,7 +854,9 @@ class RedisQueue(BaseQueue):
 
         # Remove queued copies from scheduled and stream storage (best effort).
         await client.zrem(scheduled_key, job.id)
-        deleted_from_stream = await self._delete_stream_entries_for_job(stream_key, job.id)
+        deleted_from_stream = await self._delete_stream_entries_for_job(
+            stream_key, job.id
+        )
         if deleted_from_stream > 0:
             logger.debug(
                 "Deleted %s queued stream entries for cancelled job %s",

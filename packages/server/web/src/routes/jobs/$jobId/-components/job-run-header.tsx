@@ -1,14 +1,21 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, RotateCcw, X } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { formatDuration, formatTimeAgo } from "@/lib/utils";
 import type { Job } from "@/lib/types";
+import { Button } from "@/components/ui/button";
 
 interface JobRunHeaderProps {
   job: Job;
+  onCancel?: () => void;
+  onRetry?: () => void;
+  actionPending?: boolean;
 }
 
-export function JobRunHeader({ job }: JobRunHeaderProps) {
+const RETRYABLE_STATUSES = new Set(["failed", "cancelled"]);
+const CANCELLABLE_STATUSES = new Set(["pending", "queued", "active", "retrying"]);
+
+export function JobRunHeader({ job, onCancel, onRetry, actionPending = false }: JobRunHeaderProps) {
   return (
     <div className="shrink-0 flex flex-col gap-2">
       <Link
@@ -26,6 +33,20 @@ export function JobRunHeader({ job }: JobRunHeaderProps) {
         </h2>
         <StatusBadge status={job.status} />
         <span className="text-xs text-muted-foreground">{job.function_name || job.function}</span>
+        <div className="ml-1 inline-flex items-center gap-1">
+          {RETRYABLE_STATUSES.has(job.status) && onRetry ? (
+            <Button size="xs" variant="outline" disabled={actionPending} onClick={onRetry}>
+              <RotateCcw className="h-3 w-3" />
+              Retry
+            </Button>
+          ) : null}
+          {CANCELLABLE_STATUSES.has(job.status) && onCancel ? (
+            <Button size="xs" variant="outline" disabled={actionPending} onClick={onCancel}>
+              <X className="h-3 w-3" />
+              Cancel
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">

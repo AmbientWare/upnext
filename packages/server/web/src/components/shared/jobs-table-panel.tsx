@@ -8,15 +8,19 @@ import { JobsTable } from "./jobs-table";
 
 const statusFilters = [
   { value: "all", label: "All" },
+  { value: "pending", label: "Pending" },
+  { value: "queued", label: "Queued" },
   { value: "active", label: "Active" },
   { value: "complete", label: "Complete" },
   { value: "failed", label: "Failed" },
+  { value: "cancelled", label: "Cancelled" },
   { value: "retrying", label: "Retrying" },
 ] as const;
 
 interface JobsTablePanelProps {
   jobs: Job[];
   onJobClick?: (job: Job) => void;
+  renderActions?: (job: Job) => ReactNode;
   hideFunction?: boolean;
   showFilters?: boolean;
   headerControls?: ReactNode;
@@ -28,6 +32,7 @@ interface JobsTablePanelProps {
 export function JobsTablePanel({
   jobs,
   onJobClick,
+  renderActions,
   hideFunction,
   showFilters,
   headerControls,
@@ -82,6 +87,7 @@ export function JobsTablePanel({
       <JobsTable
         jobs={filteredJobs}
         onJobClick={onJobClick}
+        renderActions={renderActions}
         hideFunction={hideFunction}
         isLoading={isLoading}
         emptyDescription={emptyDescription}

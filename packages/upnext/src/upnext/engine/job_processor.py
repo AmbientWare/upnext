@@ -324,6 +324,20 @@ class JobProcessor:
                 )
                 return
 
+            # Function may have been paused after enqueue/dequeue.
+            try:
+                is_paused = await self._queue.is_function_paused(job.function)
+            except AttributeError:
+                is_paused = False
+            if is_paused:
+                await self._queue.retry(job, delay=1.0)
+                logger.debug(
+                    "Deferred paused function job %s (%s)",
+                    job.function_name,
+                    job.id,
+                )
+                return
+
             # Mark job as started (records state transition)
             job.mark_started(self._worker_id)
             if not job.root_id:

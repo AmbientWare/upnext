@@ -218,7 +218,7 @@ async def test_workers_service_parses_and_lists_instances_and_definitions(
     assert stats.total == 2
 
     functions = await workers_service_module.get_function_definitions()
-    assert set(functions.keys()) == {"fn.a", "fn.legacy"}
+    assert set(functions.keys()) == {"fn.a"}
 
 
 @pytest.mark.asyncio

@@ -215,6 +215,23 @@ class BaseQueue(ABC):
         """
         return False
 
+    async def is_function_paused(self, function: str) -> bool:
+        """
+        Check whether dispatch is paused for a function key.
+
+        Default: returns False (not paused).
+        """
+        _ = function
+        return False
+
+    async def get_runnable_functions(self, functions: list[str]) -> list[str]:
+        """
+        Filter a function list down to currently runnable functions.
+
+        Default: returns input unchanged.
+        """
+        return list(functions)
+
     async def subscribe_job(
         self,
         job_id: str,

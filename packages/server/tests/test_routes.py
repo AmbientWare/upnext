@@ -14,6 +14,7 @@ import server.routes.dashboard as dashboard_route
 import server.routes.events as events_route
 import server.routes.events.events_root as events_root_route
 import server.routes.functions as functions_route
+import server.routes.functions_utils as functions_utils_route
 import server.routes.jobs as jobs_route
 import server.routes.jobs.jobs_root as jobs_root_route
 import server.routes.jobs.jobs_stream as jobs_stream_route
@@ -28,12 +29,14 @@ from shared.schemas import (
     ApiInstance,
     ArtifactType,
     CreateArtifactRequest,
+    FunctionConfig,
     FunctionType,
     JobTrendHour,
     JobTrendsResponse,
     WorkerInstance,
     WorkerStats,
 )
+from shared.workers import FUNCTION_KEY_PREFIX
 from sqlalchemy.exc import IntegrityError
 
 
@@ -391,16 +394,16 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
             }
         )
 
-    async def fake_defs() -> dict:
+    async def fake_defs() -> dict[str, FunctionConfig]:
         return {
-            "task_key": {
-                "key": "task_key",
-                "name": "my_task",
-                "type": FunctionType.TASK,
-                "timeout": 30,
-                "max_retries": 1,
-                "retry_delay": 1,
-            }
+            "task_key": FunctionConfig(
+                key="task_key",
+                name="my_task",
+                type=FunctionType.TASK,
+                timeout=30,
+                max_retries=1,
+                retry_delay=1,
+            )
         }
 
     async def fake_workers() -> list[WorkerInstance]:
@@ -432,6 +435,53 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
     assert fn.runs_24h == 1
     assert fn.success_rate == 100.0
     assert fn.workers == ["worker-a"]
+
+
+@pytest.mark.asyncio
+async def test_functions_pause_and_resume_routes_persist_pause_state(
+    fake_redis, monkeypatch
+) -> None:
+    function_key = "fn.pause"
+    redis_key = f"{FUNCTION_KEY_PREFIX}:{function_key}"
+    await fake_redis.set(
+        redis_key,
+        json.dumps(
+            {
+                "key": function_key,
+                "name": "Pause Test",
+                "type": "task",
+            }
+        ),
+    )
+
+    async def _get_redis():
+        return fake_redis
+
+    monkeypatch.setattr(functions_utils_route, "get_redis", _get_redis)
+
+    paused = await functions_route.pause_function(function_key)
+    assert paused == {"key": function_key, "paused": True}
+    raw_after_pause = await fake_redis.get(redis_key)
+    assert raw_after_pause is not None
+    assert json.loads(raw_after_pause.decode())["paused"] is True
+
+    resumed = await functions_route.resume_function(function_key)
+    assert resumed == {"key": function_key, "paused": False}
+    raw_after_resume = await fake_redis.get(redis_key)
+    assert raw_after_resume is not None
+    assert json.loads(raw_after_resume.decode())["paused"] is False
+
+    with pytest.raises(HTTPException, match="not found") as missing_exc:
+        await functions_route.pause_function("fn.missing")
+    assert missing_exc.value.status_code == 404
+
+    await fake_redis.set(
+        f"{FUNCTION_KEY_PREFIX}:fn.invalid",
+        json.dumps({"name": "bad-shape"}),
+    )
+    with pytest.raises(HTTPException, match="Invalid function definition") as invalid_exc:
+        await functions_route.pause_function("fn.invalid")
+    assert invalid_exc.value.status_code == 409
 
 
 @pytest.mark.asyncio

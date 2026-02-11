@@ -8,7 +8,14 @@
 // =============================================================================
 
 export type FunctionType = 'task' | 'cron' | 'event';
-export type JobStatus = 'active' | 'complete' | 'failed' | 'retrying';
+export type JobStatus =
+  | 'pending'
+  | 'queued'
+  | 'active'
+  | 'complete'
+  | 'failed'
+  | 'cancelled'
+  | 'retrying';
 
 // =============================================================================
 // Job Schemas
@@ -164,10 +171,12 @@ export interface FunctionInfo {
   name: string;
   type: FunctionType;
   active: boolean;
+  paused: boolean;
   // Task config
   timeout: number | null;
   max_retries: number | null;
   retry_delay: number | null;
+  rate_limit: string | null;
   // Cron config
   schedule: string | null;
   next_run_at: string | null;

@@ -28,6 +28,7 @@ from shared.schemas import (
     ArtifactResponse,
     ArtifactType,
     CreateArtifactRequest,
+    FunctionConfig,
     FunctionType,
     WorkerInstance,
 )
@@ -246,23 +247,23 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             }
         )
 
-    async def _defs() -> dict[str, dict]:
+    async def _defs() -> dict[str, FunctionConfig]:
         return {
-            "fn.task": {
-                "key": "fn.task",
-                "name": "Task Fn",
-                "type": FunctionType.TASK,
-                "timeout": 30,
-                "max_retries": 2,
-                "retry_delay": 3,
-                "rate_limit": "100/m",
-            },
-            "fn.event": {
-                "key": "fn.event",
-                "name": "Event Fn",
-                "type": FunctionType.EVENT,
-                "pattern": "user.*",
-            },
+            "fn.task": FunctionConfig(
+                key="fn.task",
+                name="Task Fn",
+                type=FunctionType.TASK,
+                timeout=30,
+                max_retries=2,
+                retry_delay=3,
+                rate_limit="100/m",
+            ),
+            "fn.event": FunctionConfig(
+                key="fn.event",
+                name="Event Fn",
+                type=FunctionType.EVENT,
+                pattern="user.*",
+            ),
         }
 
     async def _workers() -> list[WorkerInstance]:
@@ -354,14 +355,14 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             }
         )
 
-    async def _defs() -> dict[str, dict]:
+    async def _defs() -> dict[str, FunctionConfig]:
         return {
-            "fn.detail": {
-                "key": "fn.detail",
-                "name": "Detail Fn",
-                "type": FunctionType.CRON,
-                "schedule": "0 * * * *",
-            }
+            "fn.detail": FunctionConfig(
+                key="fn.detail",
+                name="Detail Fn",
+                type=FunctionType.CRON,
+                schedule="0 * * * *",
+            )
         }
 
     async def _workers() -> list[WorkerInstance]:

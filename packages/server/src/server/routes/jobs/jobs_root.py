@@ -292,7 +292,7 @@ async def get_job_trends(
         allowed = [
             key
             for key, config in func_defs.items()
-            if config.get("type") == type
+            if config.type == type
         ]
         if function and function not in allowed:
             return _empty_trends(hours)

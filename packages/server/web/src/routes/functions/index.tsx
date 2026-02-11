@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { getFunctions, queryKeys } from "@/lib/upnext-api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getFunctions, pauseFunction, queryKeys, resumeFunction } from "@/lib/upnext-api";
 import type { FunctionType } from "@/lib/types";
 import { Search, X, FunctionSquare } from "lucide-react";
+import { toast } from "sonner";
 import { FunctionsTableSkeleton } from "./-components/skeletons";
 import { FunctionsTable } from "./-components/functions-table";
 import {
@@ -30,10 +31,12 @@ const typeOptions: { value: string; label: string }[] = [
 const STATUS_DEFAULT = "active";
 
 function FunctionsPage() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedType, setSelectedType] = useState("all");
   const [selectedWorker, setSelectedWorker] = useState("all");
   const [statusFilter, setStatusFilter] = useState(STATUS_DEFAULT);
+  const [pausePendingKey, setPausePendingKey] = useState<string | null>(null);
 
   const typeForQuery = selectedType === "all" ? undefined : (selectedType as FunctionType);
 
@@ -42,6 +45,28 @@ function FunctionsPage() {
     queryKey: queryKeys.functions({ type: typeForQuery }),
     queryFn: () => getFunctions({ type: typeForQuery }),
     refetchInterval: SAFETY_RESYNC_MS,
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: ({ key, paused }: { key: string; paused: boolean }) =>
+      paused ? resumeFunction(key) : pauseFunction(key),
+    onMutate: ({ key }) => {
+      setPausePendingKey(key);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["functions"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to update function pause state"
+      );
+    },
+    onSettled: () => {
+      setPausePendingKey(null);
+    },
   });
 
   const allFunctions = useMemo(() => functionsData?.functions ?? [], [functionsData?.functions]);
@@ -183,7 +208,13 @@ function FunctionsPage() {
             </div>
           </div>
         ) : (
-          <FunctionsTable functions={filteredFunctions} />
+          <FunctionsTable
+            functions={filteredFunctions}
+            pausePendingKey={pausePendingKey}
+            onTogglePause={(fn) => {
+              pauseMutation.mutate({ key: fn.key, paused: fn.paused });
+            }}
+          />
         )}
       </div>
     </div>

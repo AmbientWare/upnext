@@ -417,6 +417,24 @@ class ApiTrendsSnapshotEvent(BaseModel):
 # =============================================================================
 
 
+class FunctionConfig(BaseModel):
+    """Persisted function definition/config written by workers."""
+
+    key: str
+    name: str
+    type: FunctionType = FunctionType.TASK
+    paused: bool = False
+    timeout: float | None = None
+    max_retries: int | None = None
+    retry_delay: float | None = None
+    rate_limit: str | None = None
+    schedule: str | None = None
+    next_run_at: str | None = None
+    pattern: str | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class FunctionInfo(BaseModel):
     """Function info."""
 
@@ -424,10 +442,11 @@ class FunctionInfo(BaseModel):
     name: str
     type: FunctionType
     active: bool = False
+    paused: bool = False
     # Task config
-    timeout: int | None = None
+    timeout: float | None = None
     max_retries: int | None = None
-    retry_delay: int | None = None
+    retry_delay: float | None = None
     rate_limit: str | None = None
     # Cron config
     schedule: str | None = None

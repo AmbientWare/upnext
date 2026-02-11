@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DateRange } from "react-day-picker";
+import { RotateCcw, X } from "lucide-react";
+import { toast } from "sonner";
 
-import { getApiRequestEvents, getJobs, queryKeys } from "@/lib/upnext-api";
+import { cancelJob, getApiRequestEvents, getJobs, queryKeys, retryJob } from "@/lib/upnext-api";
 import type { Job } from "@/lib/types";
 import {
   Panel,
@@ -14,6 +16,7 @@ import {
   LIVE_REFRESH_INTERVAL_MS,
   type TimeWindowPreset,
 } from "@/components/shared";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Select,
@@ -31,11 +34,17 @@ interface LiveActivityPanelProps {
 
 const jobStatusOptions = [
   { value: "all", label: "All Status" },
+  { value: "pending", label: "Pending" },
+  { value: "queued", label: "Queued" },
   { value: "active", label: "Active" },
   { value: "complete", label: "Complete" },
   { value: "failed", label: "Failed" },
+  { value: "cancelled", label: "Cancelled" },
   { value: "retrying", label: "Retrying" },
 ] as const;
+
+const RETRYABLE_STATUSES = new Set(["failed", "cancelled"]);
+const CANCELLABLE_STATUSES = new Set(["pending", "queued", "active", "retrying"]);
 
 function toTimestamp(value?: string | null): number {
   if (!value) return 0;
@@ -57,6 +66,7 @@ export function LiveActivityPanel({
   onApiClick,
   className,
 }: LiveActivityPanelProps) {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("jobs");
   const [live, setLive] = useState(true);
   const [windowPreset, setWindowPreset] = useState<TimeWindowPreset>("custom");
@@ -70,6 +80,28 @@ export function LiveActivityPanel({
   const [apiRouteFilter, setApiRouteFilter] = useState("all");
   const [apiStatusFilter, setApiStatusFilter] = useState("all");
   const [apiInstanceFilter, setApiInstanceFilter] = useState("all");
+
+  const cancelMutation = useMutation({
+    mutationFn: (jobId: string) => cancelJob(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to cancel job");
+    },
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: (jobId: string) => retryJob(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to retry job");
+    },
+  });
 
   const bounds = useMemo(() => {
     if (live) return null;
@@ -346,6 +378,34 @@ export function LiveActivityPanel({
             jobs={filteredJobs}
             isLoading={isJobsLoading}
             onJobClick={onJobClick}
+            renderActions={(job) => (
+              <div className="inline-flex items-center gap-1">
+                {RETRYABLE_STATUSES.has(job.status) ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={retryMutation.isPending}
+                    onClick={() => retryMutation.mutate(job.id)}
+                    aria-label={`Retry ${job.id}`}
+                    title="Retry"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </Button>
+                ) : null}
+                {CANCELLABLE_STATUSES.has(job.status) ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={cancelMutation.isPending}
+                    onClick={() => cancelMutation.mutate(job.id)}
+                    aria-label={`Cancel ${job.id}`}
+                    title="Cancel"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                ) : null}
+              </div>
+            )}
             className="h-full"
             emptyDescription="No jobs match your current filters."
           />

@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, overload
 
 from shared.models import Job
-from shared.schemas import FunctionType
+from shared.schemas import FunctionConfig, FunctionType
 from shared.workers import (
     FUNCTION_DEF_TTL,
     FUNCTION_KEY_PREFIX,
@@ -564,6 +564,17 @@ class Worker:
             if not function_key:
                 continue
             key = f"{FUNCTION_KEY_PREFIX}:{function_key}"
+            existing = await self._redis_client.get(key)
+            if existing:
+                payload = (
+                    existing.decode() if isinstance(existing, bytes) else str(existing)
+                )
+                try:
+                    existing_def = FunctionConfig.model_validate_json(payload)
+                    if "paused" not in func_def:
+                        func_def["paused"] = existing_def.paused
+                except Exception:
+                    pass
             await self._redis_client.setex(key, FUNCTION_DEF_TTL, json.dumps(func_def))
 
     async def _publish_worker_signal(self, signal_type: str) -> None:

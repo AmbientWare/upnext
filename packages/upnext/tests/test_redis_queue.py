@@ -5,6 +5,7 @@ import time
 
 import pytest
 from shared.models import Job, JobStatus
+from shared.workers import FUNCTION_KEY_PREFIX
 from upnext.engine.queue.base import DuplicateJobError
 from upnext.engine.queue.redis.queue import RedisQueue
 
@@ -118,6 +119,31 @@ async def test_cancel_terminal_job_returns_false(queue: RedisQueue) -> None:
     await queue.finish(active, JobStatus.COMPLETE)
 
     assert await queue.cancel(terminal_job.id) is False
+
+
+@pytest.mark.asyncio
+async def test_dequeue_skips_paused_function_until_resumed(queue: RedisQueue) -> None:
+    job = Job(function="task_fn", function_name="task", key="paused-key")
+    await queue.enqueue(job)
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:task_fn",
+        b'{"key":"task_fn","name":"task_fn","paused":true}',
+    )
+
+    paused_pick = await queue.dequeue(["task_fn"], timeout=0.05)
+    assert paused_pick is None
+
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:task_fn",
+        b'{"key":"task_fn","name":"task_fn","paused":false}',
+    )
+    queue._function_pause_cache.clear()  # noqa: SLF001
+
+    resumed_pick = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert resumed_pick is not None
+    assert resumed_pick.id == job.id
 
 
 @pytest.mark.asyncio

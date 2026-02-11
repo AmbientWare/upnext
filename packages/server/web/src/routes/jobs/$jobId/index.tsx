@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { getJobTimeline, queryKeys } from "@/lib/upnext-api";
+import { cancelJob, getJobTimeline, queryKeys, retryJob } from "@/lib/upnext-api";
 import { Panel } from "@/components/shared";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { JobRunHeader } from "./-components/job-run-header";
@@ -13,6 +13,7 @@ import { JobArtifactsTab } from "./-components/job-artifacts-tab";
 import { JobDetailsPanel } from "./-components/job-details-panel";
 import { JobDetailSkeleton } from "./-components/skeletons";
 import { buildJobTree } from "./-components/timeline-model";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/jobs/$jobId/")({
   component: JobDetailPage,
@@ -43,6 +44,30 @@ function JobDetailPage() {
     ?? rootJob;
   const effectiveSelectedJobId = selectedJob?.id ?? jobId;
 
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => cancelJob(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.jobTimeline(jobId) });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to cancel job");
+    },
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: (id: string) => retryJob(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.jobTimeline(jobId) });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to retry job");
+    },
+  });
+
   if (isPending && !rootJob) {
     return <JobDetailSkeleton />;
   }
@@ -57,7 +82,12 @@ function JobDetailPage() {
 
   return (
     <div className="p-4 h-full flex flex-col gap-3 overflow-auto xl:overflow-hidden">
-      <JobRunHeader job={rootJob} />
+      <JobRunHeader
+        job={rootJob}
+        actionPending={cancelMutation.isPending || retryMutation.isPending}
+        onCancel={() => cancelMutation.mutate(rootJob.id)}
+        onRetry={() => retryMutation.mutate(rootJob.id)}
+      />
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(340px,380px)] gap-3 min-h-0 flex-1">
         <div className="min-h-0 flex flex-col gap-3">

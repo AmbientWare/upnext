@@ -5,9 +5,10 @@ import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from shared.schemas import (
     FunctionDetailResponse,
+    FunctionConfig,
     FunctionInfo,
     FunctionsListResponse,
     FunctionType,
@@ -16,6 +17,7 @@ from shared.schemas import (
 
 from server.db.repository import JobRepository
 from server.db.session import get_database
+from server.routes.functions_utils import set_function_pause_state
 from server.services import get_function_definitions
 from server.services.workers import list_worker_instances
 
@@ -26,7 +28,7 @@ router = APIRouter(prefix="/functions", tags=["functions"])
 
 def _build_function_info(
     key: str,
-    config: dict[str, Any],
+    config: FunctionConfig,
     *,
     active: bool = False,
     workers: list[str] | None = None,
@@ -40,16 +42,17 @@ def _build_function_info(
     """Build a FunctionInfo from a config dict and stats."""
     return FunctionInfo(
         key=key,
-        name=str(config.get("name") or key),
-        type=config.get("type", FunctionType.TASK),
+        name=config.name,
+        type=config.type,
         active=active,
-        timeout=config.get("timeout"),
-        max_retries=config.get("max_retries"),
-        retry_delay=config.get("retry_delay"),
-        rate_limit=config.get("rate_limit"),
-        schedule=config.get("schedule"),
-        next_run_at=config.get("next_run_at"),
-        pattern=config.get("pattern"),
+        paused=config.paused,
+        timeout=config.timeout,
+        max_retries=config.max_retries,
+        retry_delay=config.retry_delay,
+        rate_limit=config.rate_limit,
+        schedule=config.schedule,
+        next_run_at=config.next_run_at,
+        pattern=config.pattern,
         workers=workers or [],
         runs_24h=runs_24h,
         success_rate=success_rate,
@@ -113,9 +116,9 @@ async def list_functions(
     for function_key in all_keys:
         config = func_defs.get(
             function_key,
-            {"key": function_key, "name": function_key, "type": FunctionType.TASK},
+            FunctionConfig(key=function_key, name=function_key, type=FunctionType.TASK),
         )
-        func_type = config.get("type", FunctionType.TASK)
+        func_type = config.type
         if type and func_type != type:
             continue
 
@@ -167,9 +170,9 @@ async def get_function(name: str) -> FunctionDetailResponse:
 
     func_config = func_defs.get(
         function_key,
-        {"key": function_key, "name": function_key, "type": FunctionType.TASK},
+        FunctionConfig(key=function_key, name=function_key, type=FunctionType.TASK),
     )
-    func_type = func_config.get("type", FunctionType.TASK)
+    func_type = func_config.type
 
     worker_counts: dict[str, int] = {}
     for worker in active_workers:
@@ -245,17 +248,18 @@ async def get_function(name: str) -> FunctionDetailResponse:
 
     return FunctionDetailResponse(
         key=function_key,
-        name=str(func_config.get("name") or function_key),
+        name=func_config.name,
         type=func_type,
         active=is_active,
+        paused=func_config.paused,
         workers=worker_labels,
-        timeout=func_config.get("timeout"),
-        max_retries=func_config.get("max_retries"),
-        retry_delay=func_config.get("retry_delay"),
-        rate_limit=func_config.get("rate_limit"),
-        schedule=func_config.get("schedule"),
-        next_run_at=func_config.get("next_run_at"),
-        pattern=func_config.get("pattern"),
+        timeout=func_config.timeout,
+        max_retries=func_config.max_retries,
+        retry_delay=func_config.retry_delay,
+        rate_limit=func_config.rate_limit,
+        schedule=func_config.schedule,
+        next_run_at=func_config.next_run_at,
+        pattern=func_config.pattern,
         runs_24h=runs_24h,
         success_rate=success_rate,
         avg_duration_ms=avg_duration_ms,
@@ -264,3 +268,30 @@ async def get_function(name: str) -> FunctionDetailResponse:
         last_run_status=last_run_status,
         recent_runs=recent_runs,
     )
+
+@router.post("/{name}/pause")
+async def pause_function(name: str) -> dict[str, Any]:
+    """Pause dispatch for a function key."""
+    try:
+        payload = await set_function_pause_state(name, paused=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Function '{name}' not found")
+    return payload
+
+
+@router.post("/{name}/resume")
+async def resume_function(name: str) -> dict[str, Any]:
+    """Resume dispatch for a function key."""
+    try:
+        payload = await set_function_pause_state(name, paused=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Function '{name}' not found")
+    return payload

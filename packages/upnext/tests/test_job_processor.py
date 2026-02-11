@@ -370,3 +370,56 @@ async def test_process_one_skips_jobs_marked_cancelled_before_start() -> None:
         ]
     finally:
         processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@dataclass
+class _PausedQueue:
+    job: Job | None
+    retried: list[tuple[str, float]] = field(default_factory=list)
+
+    async def dequeue(
+        self, functions: list[str], *, timeout: float = 5.0  # noqa: ARG002
+    ) -> Job | None:
+        current = self.job
+        self.job = None
+        return current
+
+    async def is_cancelled(self, job_id: str) -> bool:  # noqa: ARG002
+        return False
+
+    async def is_function_paused(self, function: str) -> bool:  # noqa: ARG002
+        return True
+
+    async def retry(self, job: Job, delay: float) -> None:
+        self.retried.append((job.id, delay))
+
+    async def finish(
+        self,
+        job: Job,  # noqa: ARG002
+        status: JobStatus,  # noqa: ARG002
+        result: Any = None,  # noqa: ARG002
+        error: str | None = None,  # noqa: ARG002
+    ) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_process_one_retries_jobs_for_paused_functions() -> None:
+    registry = Registry()
+    executed = {"value": False}
+
+    async def task() -> str:
+        executed["value"] = True
+        return "ok"
+
+    registry.register_task("task_key", task)
+    job = Job(function="task_key", function_name="task")
+    queue = _PausedQueue(job=job)
+    processor = JobProcessor(queue=cast(BaseQueue, queue), registry=registry)
+
+    try:
+        await processor._process_one()  # noqa: SLF001
+        assert queue.retried == [(job.id, 1.0)]
+        assert executed["value"] is False
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001

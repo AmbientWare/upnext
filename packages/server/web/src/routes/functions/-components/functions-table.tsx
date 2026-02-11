@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useAutoAnimate } from "@formkit/auto-animate/react";
-import { Circle } from "lucide-react";
+import { Circle, Pause, Play } from "lucide-react";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
 import type { FunctionInfo, FunctionType } from "@/lib/types";
 import {
@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 
 const typeStyles: Record<FunctionType, string> = {
   task: "bg-blue-500/20 text-blue-400",
@@ -18,7 +19,15 @@ const typeStyles: Record<FunctionType, string> = {
   event: "bg-amber-500/20 text-amber-400",
 };
 
-export function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
+export function FunctionsTable({
+  functions,
+  onTogglePause,
+  pausePendingKey,
+}: {
+  functions: FunctionInfo[];
+  onTogglePause?: (fn: FunctionInfo) => void;
+  pausePendingKey?: string | null;
+}) {
   const navigate = useNavigate();
   const [bodyRef] = useAutoAnimate<HTMLTableSectionElement>({
     duration: 180,
@@ -38,6 +47,7 @@ export function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Timeout</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Retries</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Schedule/Pattern</TableHead>
+          <TableHead className="text-[10px] text-muted-foreground font-medium h-8 text-right">Dispatch</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody ref={bodyRef}>
@@ -51,6 +61,11 @@ export function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
               <div className="flex items-center gap-2">
                 <Circle className={cn("w-2 h-2 shrink-0", fn.active ? "fill-emerald-400 text-emerald-400" : "fill-muted-foreground/60 text-muted-foreground/60")} />
                 <span className="mono text-[11px]">{fn.name}</span>
+                {fn.paused ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-400 uppercase tracking-wider">
+                    Paused
+                  </span>
+                ) : null}
               </div>
             </TableCell>
             <TableCell className="py-2">
@@ -89,6 +104,20 @@ export function FunctionsTable({ functions }: { functions: FunctionInfo[] }) {
             <TableCell className="mono text-[11px] text-muted-foreground py-2">{fn.timeout ?? "\u2014"}s</TableCell>
             <TableCell className="mono text-[11px] text-muted-foreground py-2">{fn.max_retries ?? "\u2014"}</TableCell>
             <TableCell className="mono text-[10px] text-muted-foreground py-2">{fn.schedule || fn.pattern || "\u2014"}</TableCell>
+            <TableCell
+              className="py-2 text-right"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={!onTogglePause || pausePendingKey === fn.key}
+                onClick={() => onTogglePause?.(fn)}
+              >
+                {fn.paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+                {fn.paused ? "Resume" : "Pause"}
+              </Button>
+            </TableCell>
           </TableRow>
         ))}
       </TableBody>
