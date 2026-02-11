@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,6 +24,16 @@ export function JobTaskRunsTab({
   selectedJobId,
   onSelectJob,
 }: JobTaskRunsTabProps) {
+  const rowsRef = useRef<HTMLTableSectionElement | null>(null);
+
+  useEffect(() => {
+    const container = rowsRef.current;
+    if (!container) return;
+
+    const selected = container.querySelector<HTMLElement>(`[data-job-id="${selectedJobId}"]`);
+    selected?.scrollIntoView({ block: "nearest" });
+  }, [selectedJobId]);
+
   return (
     <div className="h-full overflow-hidden">
       <ScrollArea className="h-full">
@@ -36,10 +47,11 @@ export function JobTaskRunsTab({
               <TableHead className="h-8 text-[10px] font-medium text-muted-foreground">Attempts</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody ref={rowsRef}>
             {jobs.map((job) => (
               <TableRow
                 key={job.id}
+                data-job-id={job.id}
                 onClick={() => onSelectJob(job.id)}
                 className={cn(
                   "border-border cursor-pointer hover:bg-accent/60",

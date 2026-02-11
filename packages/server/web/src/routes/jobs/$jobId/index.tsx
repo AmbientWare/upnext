@@ -111,6 +111,7 @@ function JobDetailPage() {
 
               <TabsContent value="artifacts" className="h-full m-0">
                 <JobArtifactsTab
+                  jobs={treeJobs}
                   selectedJobId={effectiveSelectedJobId}
                 />
               </TabsContent>

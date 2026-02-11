@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { Panel } from "@/components/shared";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -26,6 +26,7 @@ export function JobTimelinePanel({
 }: JobTimelinePanelProps) {
   const hasActiveJobs = jobs.some((job) => job.status === "active" || job.status === "retrying");
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const rowsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!hasActiveJobs) return;
@@ -43,6 +44,14 @@ export function JobTimelinePanel({
   );
   const ticks = useMemo(() => buildTimelineTicks(domain, 6), [domain]);
   const nowAtPct = Math.max(0, Math.min(100, ((nowMs - domain.min) / domain.span) * 100));
+
+  useEffect(() => {
+    const container = rowsRef.current;
+    if (!container) return;
+
+    const selected = container.querySelector<HTMLElement>(`[data-job-id="${selectedJobId}"]`);
+    selected?.scrollIntoView({ block: "nearest" });
+  }, [selectedJobId]);
 
   return (
     <Panel
@@ -79,13 +88,14 @@ export function JobTimelinePanel({
       </div>
 
       <ScrollArea className="h-full">
-        <div className="min-w-0">
+        <div ref={rowsRef} className="min-w-0">
           {jobs.map((job) => {
             const bar = getBarPosition(job, domain, nowMs);
             const selected = selectedJobId === job.id;
             return (
               <button
                 key={job.id}
+                data-job-id={job.id}
                 type="button"
                 onClick={() => onSelectJob(job.id)}
                 className={cn(
