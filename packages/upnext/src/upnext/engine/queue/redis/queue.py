@@ -153,6 +153,8 @@ class RedisQueue(BaseQueue):
         # Function pause state cache (short-lived to avoid frequent Redis GETs).
         self._function_pause_cache: dict[str, tuple[bool, float]] = {}
         self._function_rate_limit_cache: dict[str, tuple[RateLimit | None, float]] = {}
+        self._function_max_concurrency_cache: dict[str, tuple[int | None, float]] = {}
+        self._function_active_count_cache: dict[str, tuple[int, float]] = {}
 
         # Components (created on start)
         self._fetcher = None
@@ -364,6 +366,66 @@ class RedisQueue(BaseQueue):
         self._function_rate_limit_cache[function] = (parsed, now + 1.0)
         return parsed
 
+    async def _function_max_concurrency(self, function: str) -> int | None:
+        now = time.time()
+        cached = self._function_max_concurrency_cache.get(function)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        client = await self._ensure_connected()
+        raw = await client.get(self._function_def_key(function))
+
+        parsed: int | None = None
+        if raw:
+            payload = raw.decode() if isinstance(raw, bytes) else str(raw)
+            try:
+                config = FunctionConfig.model_validate_json(payload)
+                parsed = config.max_concurrency
+                if parsed is not None and parsed < 1:
+                    logger.warning(
+                        "Invalid max_concurrency for function '%s': %s",
+                        function,
+                        parsed,
+                    )
+                    parsed = None
+            except Exception:
+                parsed = None
+
+        self._function_max_concurrency_cache[function] = (parsed, now + 1.0)
+        return parsed
+
+    async def _function_active_count(self, function: str) -> int:
+        now = time.time()
+        cached = self._function_active_count_cache.get(function)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        client = await self._ensure_connected()
+        stream_key = self._stream_key(function)
+        active = 0
+        try:
+            groups = await client.xinfo_groups(stream_key)
+            for group in groups:
+                if isinstance(group, dict):
+                    name = group.get("name", group.get(b"name", b""))
+                    if isinstance(name, bytes):
+                        name = name.decode()
+                    if name != self._consumer_group:
+                        continue
+                    pending = group.get("pending", group.get(b"pending", 0))
+                    if isinstance(pending, bytes):
+                        pending = int(pending)
+                    active = int(pending)
+                    break
+        except redis.ResponseError:
+            active = 0
+
+        self._function_active_count_cache[function] = (active, now + 0.25)
+        return active
+
+    def _invalidate_function_active_count(self, function: str) -> None:
+        self._function_active_count_cache.pop(function, None)
+
     async def _acquire_rate_limit_token(
         self,
         function: str,
@@ -412,7 +474,19 @@ class RedisQueue(BaseQueue):
         if not functions:
             return []
         states = await self._paused_state_map(functions)
-        return [fn for fn in functions if not states.get(fn, False)]
+        runnable: list[str] = []
+        for function in functions:
+            if states.get(function, False):
+                continue
+            max_concurrency = await self._function_max_concurrency(function)
+            if max_concurrency is None:
+                runnable.append(function)
+                continue
+
+            active = await self._function_active_count(function)
+            if active < max_concurrency:
+                runnable.append(function)
+        return runnable
 
     async def _xadd_job_payload(
         self,
@@ -804,6 +878,17 @@ class RedisQueue(BaseQueue):
             job = Job.from_json(job_str)
 
         rate_limit = await self._function_rate_limit(job.function)
+        max_concurrency = await self._function_max_concurrency(job.function)
+        if max_concurrency is not None:
+            active_count = await self._function_active_count(job.function)
+            if active_count > max_concurrency:
+                job.metadata = job.metadata or {}
+                job.metadata["_stream_msg_id"] = msg_id_str
+                job.metadata["_stream_key"] = stream_key
+                await self.retry(job, delay=0.1)
+                self._invalidate_function_active_count(job.function)
+                return None
+
         if rate_limit is not None:
             allowed = await self._acquire_rate_limit_token(job.function, rate_limit)
             if not allowed:
@@ -811,6 +896,7 @@ class RedisQueue(BaseQueue):
                 job.metadata["_stream_msg_id"] = msg_id_str
                 job.metadata["_stream_key"] = stream_key
                 await self.retry(job, delay=rate_limit.token_interval_seconds)
+                self._invalidate_function_active_count(job.function)
                 return None
 
         # Store stream info for later ACK
@@ -820,6 +906,7 @@ class RedisQueue(BaseQueue):
 
         job.status = JobStatus.ACTIVE
         job.started_at = datetime.now(UTC)
+        self._invalidate_function_active_count(job.function)
 
         return job
 
@@ -903,6 +990,7 @@ class RedisQueue(BaseQueue):
 
         # Job has terminally finished; clear cancellation marker if present.
         await client.delete(self._cancel_marker_key(job.id))
+        self._invalidate_function_active_count(job.function)
 
     # =========================================================================
     # CORE - retry, cancel, get_job
@@ -969,6 +1057,7 @@ class RedisQueue(BaseQueue):
                     function=job.function,
                     data=job.to_json(),
                 )
+        self._invalidate_function_active_count(job.function)
 
     async def cancel(self, job_id: str) -> bool:
         """Cancel a job."""
@@ -1045,6 +1134,7 @@ class RedisQueue(BaseQueue):
                 await client.srem(dedup_key, job.key)
             await client.publish(pubsub_channel, JobStatus.CANCELLED.value)
 
+        self._invalidate_function_active_count(job.function)
         return True
 
     async def get_job(self, job_id: str) -> Job | None:

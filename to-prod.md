@@ -26,7 +26,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: parse and validate configured limits, then enforce with Redis token-bucket/leaky-bucket logic during dispatch.
   - Done: throughput respects configured limits under load tests.
 
-- [ ] Add per-function concurrency caps.
+- [x] Add per-function concurrency caps.
   - How: maintain active-count guards per function key; dequeue only when under cap.
   - Done: hot functions cannot exceed configured concurrent runs.
 

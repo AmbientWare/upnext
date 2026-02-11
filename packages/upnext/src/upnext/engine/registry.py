@@ -33,6 +33,7 @@ class TaskDefinition:
     cache_key: str | None = None
     cache_ttl: int | None = None
     rate_limit: str | None = None
+    max_concurrency: int | None = None
 
     # Hooks
     on_start: Callable[..., Any] | None = None
@@ -59,6 +60,8 @@ class TaskDefinition:
                 raise ValueError("rate_limit must be a non-empty string")
             parse_rate_limit(normalized)
             self.rate_limit = normalized
+        if self.max_concurrency is not None and self.max_concurrency < 1:
+            raise ValueError("max_concurrency must be >= 1")
 
 
 @dataclass
@@ -76,6 +79,7 @@ class EventDefinition:
     retry_backoff: float = 2.0
     timeout: float = 30 * 60  # 30 minutes
     rate_limit: str | None = None
+    max_concurrency: int | None = None
 
 
 @dataclass
@@ -164,6 +168,7 @@ class Registry:
         cache_key: str | None = None,
         cache_ttl: int | None = None,
         rate_limit: str | None = None,
+        max_concurrency: int | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -183,6 +188,7 @@ class Registry:
             cache_key: Template for cache key (e.g., "user:{user_id}")
             cache_ttl: Cache TTL in seconds
             rate_limit: Rate limit string (e.g., "100/m")
+            max_concurrency: Max number of concurrent active jobs for this function
             on_start: Hook called before execution
             on_success: Hook called on success
             on_failure: Hook called on failure
@@ -207,6 +213,7 @@ class Registry:
             cache_key=cache_key,
             cache_ttl=cache_ttl,
             rate_limit=rate_limit,
+            max_concurrency=max_concurrency,
             on_start=on_start,
             on_success=on_success,
             on_failure=on_failure,
@@ -229,6 +236,7 @@ class Registry:
         retry_backoff: float = 2.0,
         timeout: float = 30 * 60,  # 30 minutes
         rate_limit: str | None = None,
+        max_concurrency: int | None = None,
     ) -> EventDefinition:
         """Register an event."""
         definition = EventDefinition(
@@ -242,6 +250,7 @@ class Registry:
             retry_backoff=retry_backoff,
             timeout=timeout,
             rate_limit=rate_limit,
+            max_concurrency=max_concurrency,
         )
 
         # Register by key for worker lookup (with retry/timeout config)
@@ -255,6 +264,7 @@ class Registry:
             retry_backoff=retry_backoff,
             timeout=timeout,
             rate_limit=rate_limit,
+            max_concurrency=max_concurrency,
         )
 
         # Register by event pattern for routing

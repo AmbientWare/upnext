@@ -166,4 +166,7 @@ class Finisher:
 
             await pipe.execute()
 
+        for completed in batch:
+            self._queue._invalidate_function_active_count(completed.job.function)
+
         logger.debug(f"Flushed {len(batch)} completed jobs")

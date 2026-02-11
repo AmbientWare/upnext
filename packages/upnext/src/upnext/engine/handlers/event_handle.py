@@ -41,6 +41,7 @@ class _Handler:
     retry_backoff: float = 2.0
     timeout: float = 30 * 60  # 30 minutes
     rate_limit: str | None = None
+    max_concurrency: int | None = None
 
 
 class HandlerConfig(TypedDict):
@@ -52,6 +53,7 @@ class HandlerConfig(TypedDict):
     max_retries: int
     retry_delay: float
     rate_limit: str | None
+    max_concurrency: int | None
 
 
 class TypedEvent(Generic[P]):
@@ -167,6 +169,7 @@ class EventHandle:
         retry_backoff: float = 2.0,
         timeout: float = 30 * 60,  # 30 minutes
         rate_limit: str | None = None,
+        max_concurrency: int | None = None,
     ) -> Callable[[Callable[P, Any]], TypedEvent[P]]: ...
 
     def on(
@@ -179,6 +182,7 @@ class EventHandle:
         retry_backoff: float = 2.0,
         timeout: float = 30 * 60,  # 30 minutes
         rate_limit: str | None = None,
+        max_concurrency: int | None = None,
     ) -> Any:
         """
         Subscribe a handler to this event.
@@ -217,6 +221,7 @@ class EventHandle:
                 retry_backoff=retry_backoff,
                 timeout=timeout,
                 rate_limit=rate_limit,
+                max_concurrency=max_concurrency,
             )
             self._handlers.append(handler)
 
@@ -230,6 +235,7 @@ class EventHandle:
                 retry_backoff=handler.retry_backoff,
                 timeout=handler.timeout,
                 rate_limit=handler.rate_limit,
+                max_concurrency=handler.max_concurrency,
             )
 
             # Return typed event for this handler
@@ -311,6 +317,7 @@ class EventHandle:
                 "max_retries": h.retries,
                 "retry_delay": h.retry_delay,
                 "rate_limit": h.rate_limit,
+                "max_concurrency": h.max_concurrency,
             }
             for h in self._handlers
         ]

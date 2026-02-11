@@ -193,6 +193,7 @@ class Worker:
         cache_key: str | None = None,
         cache_ttl: int | None = None,
         rate_limit: str | None = None,
+        max_concurrency: int | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -212,6 +213,7 @@ class Worker:
         cache_key: str | None = None,
         cache_ttl: int | None = None,
         rate_limit: str | None = None,
+        max_concurrency: int | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -265,6 +267,7 @@ class Worker:
                 cache_key=cache_key,
                 cache_ttl=cache_ttl,
                 rate_limit=rate_limit,
+                max_concurrency=max_concurrency,
                 on_start=on_start,
                 on_success=on_success,
                 on_failure=on_failure,
@@ -391,6 +394,7 @@ class Worker:
                     "max_retries": handle.definition.retries,
                     "retry_delay": handle.definition.retry_delay,
                     "rate_limit": handle.definition.rate_limit,
+                    "max_concurrency": handle.definition.max_concurrency,
                 }
             )
 
@@ -427,6 +431,7 @@ class Worker:
                         "max_retries": handler["max_retries"],
                         "retry_delay": handler["retry_delay"],
                         "rate_limit": handler["rate_limit"],
+                        "max_concurrency": handler["max_concurrency"],
                     }
                 )
 

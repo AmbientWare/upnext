@@ -285,3 +285,32 @@ async def test_rate_limit_blocks_dispatch_and_requeues_for_later(queue: RedisQue
 
     scheduled_at = await client.zscore(queue._scheduled_key("task_fn"), second.id)  # noqa: SLF001
     assert scheduled_at is not None
+
+
+@pytest.mark.asyncio
+async def test_max_concurrency_blocks_excess_dispatch(queue: RedisQueue) -> None:
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:task_fn",
+        b'{"key":"task_fn","name":"task_fn","paused":false,"max_concurrency":1}',
+    )
+
+    first = Job(function="task_fn", function_name="task", key="max-concurrency-1")
+    second = Job(function="task_fn", function_name="task", key="max-concurrency-2")
+    await queue.enqueue(first)
+    await queue.enqueue(second)
+
+    run_first = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert run_first is not None
+    assert run_first.id == first.id
+
+    run_second = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert run_second is None
+
+    scheduled_at = await client.zscore(queue._scheduled_key("task_fn"), second.id)  # noqa: SLF001
+    assert scheduled_at is None
+
+    await queue.finish(run_first, JobStatus.COMPLETE)
+    unblocked = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert unblocked is not None
+    assert unblocked.id == second.id

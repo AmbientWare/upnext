@@ -50,6 +50,7 @@ def _build_function_info(
         max_retries=config.max_retries,
         retry_delay=config.retry_delay,
         rate_limit=config.rate_limit,
+        max_concurrency=config.max_concurrency,
         schedule=config.schedule,
         next_run_at=config.next_run_at,
         pattern=config.pattern,

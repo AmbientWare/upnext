@@ -37,6 +37,7 @@ async def test_worker_writes_worker_and_function_definitions(
         retry_delay=3,
         timeout=45,
         rate_limit="25/m",
+        max_concurrency=3,
     )
     async def health_check() -> str:
         return "ok"
@@ -61,6 +62,7 @@ async def test_worker_writes_worker_and_function_definitions(
         assert function_def["name"] == "health_check"
         assert function_def["timeout"] == 45
         assert function_def["rate_limit"] == "25/m"
+        assert function_def["max_concurrency"] == 3
     finally:
         await worker.stop(timeout=0.1)
 

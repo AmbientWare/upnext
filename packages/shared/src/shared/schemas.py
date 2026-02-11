@@ -428,6 +428,7 @@ class FunctionConfig(BaseModel):
     max_retries: int | None = None
     retry_delay: float | None = None
     rate_limit: str | None = None
+    max_concurrency: int | None = None
     schedule: str | None = None
     next_run_at: str | None = None
     pattern: str | None = None
@@ -448,6 +449,7 @@ class FunctionInfo(BaseModel):
     max_retries: int | None = None
     retry_delay: float | None = None
     rate_limit: str | None = None
+    max_concurrency: int | None = None
     # Cron config
     schedule: str | None = None
     next_run_at: str | None = None
