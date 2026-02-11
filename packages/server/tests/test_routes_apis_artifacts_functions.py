@@ -314,6 +314,12 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             "fn.event": DispatchReasonMetrics(paused=0),
         }
 
+    emitted_counts: list[int] = []
+
+    async def _emit_alerts(functions):  # type: ignore[no-untyped-def]
+        emitted_counts.append(len(functions))
+        return 0
+
     monkeypatch.setattr(functions_route, "get_function_definitions", _defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", _workers)
     monkeypatch.setattr(functions_route, "get_function_queue_depth_stats", _queue_depth)
@@ -322,6 +328,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
+    monkeypatch.setattr(functions_route, "emit_function_alerts", _emit_alerts)
     monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
 
     all_functions = await functions_route.list_functions(type=None)
@@ -349,6 +356,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
     assert event.queue_backlog == 1
     assert set(event.workers) == {"host-1", "workerid"}
     assert event.active is True
+    assert emitted_counts == [2]
 
     event_only = await functions_route.list_functions(type=FunctionType.EVENT)
     assert event_only.total == 1

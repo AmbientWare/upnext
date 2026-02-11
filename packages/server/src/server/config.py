@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     event_progress_min_delta: float = 0.02
     event_progress_force_interval_ms: int = 2000
 
+    # Operational alert hook settings.
+    alert_webhook_url: str | None = None
+    alert_webhook_timeout_seconds: float = 3.0
+    alert_cooldown_seconds: int = 300
+    alert_failure_min_runs_24h: int = 10
+    alert_failure_rate_threshold: float = 20.0
+    alert_p95_duration_ms_threshold: float = 30_000.0
+    alert_p95_wait_ms_threshold: float = 10_000.0
+    alert_queue_backlog_threshold: int = 100
+
     version: str = __version__
 
     @property

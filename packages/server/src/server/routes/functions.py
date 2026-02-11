@@ -20,6 +20,7 @@ from server.db.repository import FunctionJobStats, FunctionWaitStats, JobReposit
 from server.db.session import get_database
 from server.routes.functions_utils import set_function_pause_state
 from server.services import (
+    emit_function_alerts,
     get_function_definitions,
     get_function_dispatch_reason_stats,
     get_function_queue_depth_stats,
@@ -194,6 +195,10 @@ async def list_functions(
         )
 
     functions.sort(key=lambda f: (-f.queue_backlog, -f.runs_24h, f.name, f.key))
+    try:
+        await emit_function_alerts(functions)
+    except Exception as exc:
+        logger.debug("Failed to emit function alerts: %s", exc)
     return FunctionsListResponse(functions=functions, total=len(functions))
 
 

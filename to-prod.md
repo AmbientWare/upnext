@@ -66,7 +66,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: emit structured reasons (`paused`, `rate_limited`, `no_capacity`, `cancelled`, `retrying`) in events/metrics.
   - Done: operators can explain why jobs are not running.
 
-- [ ] Add failure/latency alert hooks.
+- [x] Add failure/latency alert hooks.
   - How: configurable thresholds + webhook/notification integration points.
   - Done: alert fires on sustained error rate/latency/lag violations.
 
