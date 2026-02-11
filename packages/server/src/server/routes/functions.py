@@ -55,6 +55,8 @@ def _build_function_info(
         group_max_concurrency=config.group_max_concurrency,
         schedule=config.schedule,
         next_run_at=config.next_run_at,
+        missed_run_policy=config.missed_run_policy,
+        max_catch_up_seconds=config.max_catch_up_seconds,
         pattern=config.pattern,
         workers=workers or [],
         runs_24h=runs_24h,

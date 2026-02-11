@@ -4,6 +4,7 @@ import json
 
 import pytest
 from shared.workers import FUNCTION_KEY_PREFIX, WORKER_DEF_PREFIX
+from shared.schemas import MissedRunPolicy
 from upnext.sdk.worker import Worker
 
 
@@ -95,3 +96,36 @@ async def test_execute_helper_accepts_display_name_and_function_key(
     event_types = [row[1][b"type"].decode() for row in events]
     assert event_types.count("job.started") == 2
     assert event_types.count("job.completed") == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_writes_cron_policy_fields(fake_redis, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis
+    )
+    monkeypatch.setattr("upnext.sdk.worker.JobProcessor", _NoopJobProcessor)
+
+    worker = Worker(name="cron-policy-worker")
+
+    @worker.cron(
+        "* * * * *",
+        name="tick",
+        missed_run_policy=MissedRunPolicy.SKIP,
+        max_catch_up_seconds=120,
+    )
+    async def tick() -> None:
+        return None
+
+    worker.initialize(redis_url="redis://ignored")
+    await worker.start()
+    try:
+        cron_key = worker.crons[0].key
+        function_def_raw = await fake_redis.get(f"{FUNCTION_KEY_PREFIX}:{cron_key}")
+        assert function_def_raw is not None
+        cron_def = json.loads(function_def_raw)
+
+        assert cron_def["type"] == "cron"
+        assert cron_def["missed_run_policy"] == "skip"
+        assert cron_def["max_catch_up_seconds"] == 120
+    finally:
+        await worker.stop(timeout=0.1)

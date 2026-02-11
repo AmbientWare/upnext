@@ -27,9 +27,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
 import redis.asyncio as redis
 from shared import Job, JobStatus
-from shared.schemas import FunctionConfig
+from shared.schemas import FunctionConfig, MissedRunPolicy
 from shared.workers import FUNCTION_KEY_PREFIX
 
 from upnext.config import get_settings
@@ -59,6 +60,13 @@ from upnext.engine.queue.redis.sweeper import Sweeper
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
 
 logger = logging.getLogger(__name__)
+
+
+class _CronCursorRecord(BaseModel):
+    function: str
+    next_run_at: datetime
+    last_completed_at: datetime | None = None
+    updated_at: datetime
 
 
 class RedisQueue(BaseQueue):
@@ -152,6 +160,7 @@ class RedisQueue(BaseQueue):
         self._rate_limit_sha: str | None = None
 
         # Function pause state cache (short-lived to avoid frequent Redis GETs).
+        self._function_config_cache: dict[str, tuple[FunctionConfig | None, float]] = {}
         self._function_pause_cache: dict[str, tuple[bool, float]] = {}
         self._function_rate_limit_cache: dict[str, tuple[RateLimit | None, float]] = {}
         self._function_max_concurrency_cache: dict[str, tuple[int | None, float]] = {}
@@ -316,6 +325,35 @@ class RedisQueue(BaseQueue):
     def _rate_limit_key(self, function: str) -> str:
         return self._key("fn", function, "rate_limit")
 
+    def _parse_function_config(
+        self,
+        raw: Any,
+        *,
+        key_hint: str | None = None,
+    ) -> FunctionConfig | None:
+        if not raw:
+            return None
+        try:
+            config = FunctionConfig.model_validate_json(self._decode_text(raw))
+        except Exception:
+            if key_hint:
+                logger.debug("Skipping malformed function payload for key %s", key_hint)
+            return None
+        return config
+
+    async def _read_function_config(self, function: str) -> FunctionConfig | None:
+        now = time.time()
+        cached = self._function_config_cache.get(function)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        client = await self._ensure_connected()
+        key = self._function_def_key(function)
+        raw = await client.get(key)
+        config = self._parse_function_config(raw, key_hint=key)
+        self._function_config_cache[function] = (config, now + 1.0)
+        return config
+
     async def _paused_state_map(self, functions: list[str]) -> dict[str, bool]:
         """Resolve paused state for functions with a small in-memory TTL cache."""
         now = time.time()
@@ -332,15 +370,12 @@ class RedisQueue(BaseQueue):
             client = await self._ensure_connected()
             keys = [self._function_def_key(fn) for fn in stale]
             rows = await client.mget(keys)
-            for fn, raw in zip(stale, rows, strict=False):
+            for fn, key, raw in zip(stale, keys, rows, strict=False):
                 paused = False
-                if raw:
-                    payload = raw.decode() if isinstance(raw, bytes) else str(raw)
-                    try:
-                        config = FunctionConfig.model_validate_json(payload)
-                        paused = config.paused
-                    except Exception:
-                        paused = False
+                config = self._parse_function_config(raw, key_hint=key)
+                if config is not None:
+                    paused = config.paused
+                self._function_config_cache[fn] = (config, now + 1.0)
                 states[fn] = paused
                 self._function_pause_cache[fn] = (paused, now + 1.0)
 
@@ -352,21 +387,13 @@ class RedisQueue(BaseQueue):
         if cached and cached[1] > now:
             return cached[0]
 
-        client = await self._ensure_connected()
-        raw = await client.get(self._function_def_key(function))
-
         parsed: RateLimit | None = None
-        if raw:
-            payload = raw.decode() if isinstance(raw, bytes) else str(raw)
+        config = await self._read_function_config(function)
+        if config and config.rate_limit:
             try:
-                config = FunctionConfig.model_validate_json(payload)
-                if config.rate_limit:
-                    parsed = parse_rate_limit(config.rate_limit)
+                parsed = parse_rate_limit(config.rate_limit)
             except ValueError as exc:
-                logger.warning(
-                    "Invalid rate_limit for function '%s': %s", function, exc
-                )
-            except Exception:
+                logger.warning("Invalid rate_limit for function '%s': %s", function, exc)
                 parsed = None
 
         self._function_rate_limit_cache[function] = (parsed, now + 1.0)
@@ -378,23 +405,16 @@ class RedisQueue(BaseQueue):
         if cached and cached[1] > now:
             return cached[0]
 
-        client = await self._ensure_connected()
-        raw = await client.get(self._function_def_key(function))
-
         parsed: int | None = None
-        if raw:
-            payload = raw.decode() if isinstance(raw, bytes) else str(raw)
-            try:
-                config = FunctionConfig.model_validate_json(payload)
-                parsed = config.max_concurrency
-                if parsed is not None and parsed < 1:
-                    logger.warning(
-                        "Invalid max_concurrency for function '%s': %s",
-                        function,
-                        parsed,
-                    )
-                    parsed = None
-            except Exception:
+        config = await self._read_function_config(function)
+        if config:
+            parsed = config.max_concurrency
+            if parsed is not None and parsed < 1:
+                logger.warning(
+                    "Invalid max_concurrency for function '%s': %s",
+                    function,
+                    parsed,
+                )
                 parsed = None
 
         self._function_max_concurrency_cache[function] = (parsed, now + 1.0)
@@ -438,30 +458,22 @@ class RedisQueue(BaseQueue):
         if cached and cached[1] > now:
             return cached[0]
 
-        client = await self._ensure_connected()
-        raw = await client.get(self._function_def_key(function))
-
         group: str | None = None
         limit: int | None = None
-        if raw:
-            payload = raw.decode() if isinstance(raw, bytes) else str(raw)
-            try:
-                config = FunctionConfig.model_validate_json(payload)
-                group = config.routing_group
-                limit = config.group_max_concurrency
-                if group is not None:
-                    group = group.strip()
-                    if not group:
-                        group = None
-                if limit is not None and limit < 1:
-                    logger.warning(
-                        "Invalid group_max_concurrency for function '%s': %s",
-                        function,
-                        limit,
-                    )
-                    limit = None
-            except Exception:
-                group = None
+        config = await self._read_function_config(function)
+        if config:
+            group = config.routing_group
+            limit = config.group_max_concurrency
+            if group is not None:
+                group = group.strip()
+                if not group:
+                    group = None
+            if limit is not None and limit < 1:
+                logger.warning(
+                    "Invalid group_max_concurrency for function '%s': %s",
+                    function,
+                    limit,
+                )
                 limit = None
 
         result = (group, limit)
@@ -485,12 +497,8 @@ class RedisQueue(BaseQueue):
             )
             for key in keys:
                 raw = await client.get(key)
-                if not raw:
-                    continue
-                payload = raw.decode() if isinstance(raw, bytes) else str(raw)
-                try:
-                    config = FunctionConfig.model_validate_json(payload)
-                except Exception:
+                config = self._parse_function_config(raw)
+                if config is None:
                     continue
                 if config.routing_group == group:
                     members.append(config.key)
@@ -1768,33 +1776,84 @@ class RedisQueue(BaseQueue):
         next_run_at: float,
         last_completed_at: datetime | None = None,
     ) -> None:
-        payload = {
-            "function": function,
-            "next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat(),
-            "last_completed_at": (
-                last_completed_at.isoformat() if last_completed_at else None
-            ),
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
-        await client.hset(self._cron_cursor_key(), function, json.dumps(payload))
+        payload = _CronCursorRecord(
+            function=function,
+            next_run_at=datetime.fromtimestamp(next_run_at, UTC),
+            last_completed_at=last_completed_at,
+            updated_at=datetime.now(UTC),
+        )
+        await client.hset(self._cron_cursor_key(), function, payload.model_dump_json())
 
     async def _read_cron_cursor(
         self,
         client: Any,
         *,
         function: str,
-    ) -> dict[str, Any] | None:
+    ) -> _CronCursorRecord | None:
         raw = await client.hget(self._cron_cursor_key(), function)
         if not raw:
             return None
-        payload = raw.decode() if isinstance(raw, bytes) else str(raw)
         try:
-            parsed = json.loads(payload)
-        except json.JSONDecodeError:
+            return _CronCursorRecord.model_validate_json(self._decode_text(raw))
+        except Exception:
             return None
-        if not isinstance(parsed, dict):
-            return None
-        return parsed
+
+    async def _cron_reconcile_policy(
+        self,
+        function: str,
+    ) -> tuple[MissedRunPolicy, float | None]:
+        config = await self._read_function_config(function)
+        if config is None:
+            return (MissedRunPolicy.CATCH_UP, None)
+        max_window = config.max_catch_up_seconds
+        if max_window is not None and max_window <= 0:
+            logger.warning(
+                "Invalid max_catch_up_seconds for function '%s': %s",
+                function,
+                max_window,
+            )
+            max_window = None
+        return (
+            config.missed_run_policy or MissedRunPolicy.CATCH_UP,
+            max_window,
+        )
+
+    def _cron_missed_windows(
+        self,
+        *,
+        schedule: str,
+        next_run_at: float,
+        now_ts: float,
+        max_catch_up_seconds: float | None,
+    ) -> list[float]:
+        if next_run_at > now_ts:
+            return []
+
+        cutoff = (
+            now_ts - max_catch_up_seconds
+            if max_catch_up_seconds is not None
+            else None
+        )
+        windows: list[float] = []
+        cursor_ts = next_run_at
+
+        # Hard guard against pathological schedules with huge backlog.
+        for _ in range(10_000):
+            if cursor_ts > now_ts:
+                break
+            if cutoff is None or cursor_ts >= cutoff:
+                windows.append(cursor_ts)
+
+            next_dt = calculate_next_cron_run(
+                schedule,
+                datetime.fromtimestamp(cursor_ts, UTC),
+            )
+            next_ts = next_dt.timestamp()
+            if next_ts <= cursor_ts:
+                break
+            cursor_ts = next_ts
+
+        return windows
 
     async def seed_cron(self, job: Job, next_run_at: float) -> bool:
         client = await self._ensure_connected()
@@ -1807,6 +1866,8 @@ class RedisQueue(BaseQueue):
             return False
 
         job.mark_queued("Cron job scheduled")
+        job.metadata = job.metadata or {}
+        job.metadata["cron_window_at"] = next_run_at
         job_key = self._job_key(job)
         await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
 
@@ -1836,6 +1897,7 @@ class RedisQueue(BaseQueue):
             metadata=dict(job.metadata or {}),
         )
         new_job.metadata.setdefault("cron", True)
+        new_job.metadata["cron_window_at"] = next_run_at
         new_job.mark_queued("Cron job rescheduled")
 
         cron_registry = self._cron_registry_key()
@@ -1871,13 +1933,7 @@ class RedisQueue(BaseQueue):
         if not cursor:
             return False
 
-        next_run_at_raw = cursor.get("next_run_at")
-        if not isinstance(next_run_at_raw, str):
-            return False
-        try:
-            next_run_at = datetime.fromisoformat(next_run_at_raw).timestamp()
-        except ValueError:
-            return False
+        next_run_at = cursor.next_run_at.timestamp()
 
         if next_run_at > current_ts:
             return False
@@ -1896,6 +1952,40 @@ class RedisQueue(BaseQueue):
                 # A cron run is already present; no extra catch-up enqueue needed.
                 return False
 
+        schedule = job.schedule or "* * * * *"
+        policy, max_window = await self._cron_reconcile_policy(job.function)
+        missed_windows = self._cron_missed_windows(
+            schedule=schedule,
+            next_run_at=next_run_at,
+            now_ts=current_ts,
+            max_catch_up_seconds=max_window,
+        )
+
+        if policy == MissedRunPolicy.SKIP or not missed_windows:
+            base_ts = missed_windows[-1] if missed_windows else current_ts
+            next_future = calculate_next_cron_run(
+                schedule,
+                datetime.fromtimestamp(base_ts, UTC),
+            )
+            await self._write_cron_cursor(
+                client,
+                function=job.function,
+                next_run_at=next_future.timestamp(),
+                last_completed_at=cursor.last_completed_at,
+            )
+            await self._update_function_next_run(
+                client,
+                job.function,
+                next_future.timestamp(),
+            )
+            return False
+
+        selected_window = (
+            missed_windows[-1]
+            if policy == MissedRunPolicy.LATEST_ONLY
+            else missed_windows[0]
+        )
+
         catchup_job = Job(
             function=job.function,
             function_name=job.function_name,
@@ -1906,8 +1996,14 @@ class RedisQueue(BaseQueue):
             metadata=dict(job.metadata or {}),
         )
         catchup_job.metadata.setdefault("cron", True)
+        catchup_job.metadata["cron_window_at"] = selected_window
         catchup_job.metadata["startup_reconciled"] = True
-        catchup_job.mark_queued("Cron startup reconciliation catch-up")
+        if policy == MissedRunPolicy.LATEST_ONLY:
+            catchup_job.metadata["startup_policy"] = MissedRunPolicy.LATEST_ONLY
+            catchup_job.mark_queued("Cron startup reconciliation latest-only run")
+        else:
+            catchup_job.metadata["startup_policy"] = MissedRunPolicy.CATCH_UP
+            catchup_job.mark_queued("Cron startup reconciliation catch-up")
 
         try:
             await self.enqueue(catchup_job, delay=0)
@@ -1916,21 +2012,16 @@ class RedisQueue(BaseQueue):
 
         await client.hset(cron_registry, cron_key, catchup_job.id)
 
-        base_time = datetime.fromtimestamp(current_ts, UTC)
-        next_future = calculate_next_cron_run(job.schedule or "* * * * *", base_time)
-        last_completed_at: datetime | None = None
-        raw_last_completed = cursor.get("last_completed_at")
-        if isinstance(raw_last_completed, str):
-            try:
-                last_completed_at = datetime.fromisoformat(raw_last_completed)
-            except ValueError:
-                last_completed_at = None
+        next_future = calculate_next_cron_run(
+            schedule,
+            datetime.fromtimestamp(selected_window, UTC),
+        )
 
         await self._write_cron_cursor(
             client,
             function=job.function,
             next_run_at=next_future.timestamp(),
-            last_completed_at=last_completed_at,
+            last_completed_at=cursor.last_completed_at,
         )
         await self._update_function_next_run(
             client,
@@ -1945,12 +2036,16 @@ class RedisQueue(BaseQueue):
         """Update the function definition in Redis with the next scheduled run time."""
         func_key = f"{FUNCTION_KEY_PREFIX}:{function_name}"
         data = await client.get(func_key)
-        if not data:
+        config = self._parse_function_config(data, key_hint=func_key)
+        if config is None:
             return
-        func_def = json.loads(data)
-        func_def["next_run_at"] = datetime.fromtimestamp(next_run_at, UTC).isoformat()
+        updated = config.model_copy(
+            update={"next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat()}
+        )
+        serialized = updated.model_dump_json()
+        self._function_config_cache[function_name] = (updated, time.time() + 1.0)
         ttl = await client.ttl(func_key)
         if ttl > 0:
-            await client.setex(func_key, ttl, json.dumps(func_def))
+            await client.setex(func_key, ttl, serialized)
         else:
-            await client.set(func_key, json.dumps(func_def))
+            await client.set(func_key, serialized)

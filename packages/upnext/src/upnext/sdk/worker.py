@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, overload
 
 from shared.models import Job
-from shared.schemas import FunctionConfig, FunctionType
+from shared.schemas import FunctionConfig, FunctionType, MissedRunPolicy
 from shared.workers import (
     FUNCTION_DEF_TTL,
     FUNCTION_KEY_PREFIX,
@@ -106,9 +106,7 @@ class Worker:
     _started_at: datetime | None = field(default=None, init=False)
     _registered_functions: list[str] = field(default_factory=list, init=False)
     _function_name_map: dict[str, str] = field(default_factory=dict, init=False)
-    _function_definitions: list[dict[str, Any]] = field(
-        default_factory=list, init=False
-    )
+    _function_definitions: list[FunctionConfig] = field(default_factory=list, init=False)
     _worker_id: str | None = field(default=None, init=False)
     _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
     _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
@@ -304,6 +302,8 @@ class Worker:
         *,
         name: str | None = None,
         timeout: float = 30 * 60,  # 30 minutes
+        missed_run_policy: MissedRunPolicy = MissedRunPolicy.CATCH_UP,
+        max_catch_up_seconds: float | None = None,
     ) -> Callable[[F], F]:
         """
         Decorator to register a cron job with this worker.
@@ -334,6 +334,8 @@ class Worker:
                 schedule=schedule,
                 func=func,
                 timeout=timeout,
+                missed_run_policy=missed_run_policy,
+                max_catch_up_seconds=max_catch_up_seconds,
             )
 
             # Also register as a task so worker can execute it
@@ -384,7 +386,7 @@ class Worker:
         # Build registered function keys and definitions
         registered_functions: list[str] = []
         function_name_map: dict[str, str] = {}
-        function_definitions: list[dict[str, Any]] = []
+        function_definitions: list[FunctionConfig] = []
 
         # Add tasks
         for display_name, handle in self._task_handles.items():
@@ -392,18 +394,18 @@ class Worker:
             registered_functions.append(function_key)
             function_name_map[function_key] = display_name
             function_definitions.append(
-                {
-                    "key": function_key,
-                    "name": display_name,
-                    "type": FunctionType.TASK,
-                    "timeout": handle.definition.timeout,
-                    "max_retries": handle.definition.retries,
-                    "retry_delay": handle.definition.retry_delay,
-                    "rate_limit": handle.definition.rate_limit,
-                    "max_concurrency": handle.definition.max_concurrency,
-                    "routing_group": handle.definition.routing_group,
-                    "group_max_concurrency": handle.definition.group_max_concurrency,
-                }
+                FunctionConfig(
+                    key=function_key,
+                    name=display_name,
+                    type=FunctionType.TASK,
+                    timeout=handle.definition.timeout,
+                    max_retries=handle.definition.retries,
+                    retry_delay=handle.definition.retry_delay,
+                    rate_limit=handle.definition.rate_limit,
+                    max_concurrency=handle.definition.max_concurrency,
+                    routing_group=handle.definition.routing_group,
+                    group_max_concurrency=handle.definition.group_max_concurrency,
+                )
             )
 
         # Add crons
@@ -412,13 +414,15 @@ class Worker:
                 registered_functions.append(cron_def.key)
             function_name_map[cron_def.key] = cron_def.display_name
             function_definitions.append(
-                {
-                    "key": cron_def.key,
-                    "name": cron_def.display_name,
-                    "type": FunctionType.CRON,
-                    "schedule": cron_def.schedule,
-                    "timeout": cron_def.timeout,
-                }
+                FunctionConfig(
+                    key=cron_def.key,
+                    name=cron_def.display_name,
+                    type=FunctionType.CRON,
+                    schedule=cron_def.schedule,
+                    timeout=cron_def.timeout,
+                    missed_run_policy=cron_def.missed_run_policy,
+                    max_catch_up_seconds=cron_def.max_catch_up_seconds,
+                )
             )
 
         # Add event handlers (one definition per handler key)
@@ -430,19 +434,19 @@ class Worker:
                     registered_functions.append(handler_key)
                 function_name_map[handler_key] = handler_name
                 function_definitions.append(
-                    {
-                        "key": handler_key,
-                        "name": handler_name,
-                        "type": FunctionType.EVENT,
-                        "pattern": handle.pattern,
-                        "timeout": handler["timeout"],
-                        "max_retries": handler["max_retries"],
-                        "retry_delay": handler["retry_delay"],
-                        "rate_limit": handler["rate_limit"],
-                        "max_concurrency": handler["max_concurrency"],
-                        "routing_group": handler["routing_group"],
-                        "group_max_concurrency": handler["group_max_concurrency"],
-                    }
+                    FunctionConfig(
+                        key=handler_key,
+                        name=handler_name,
+                        type=FunctionType.EVENT,
+                        pattern=handle.pattern,
+                        timeout=handler["timeout"],
+                        max_retries=handler["max_retries"],
+                        retry_delay=handler["retry_delay"],
+                        rate_limit=handler["rate_limit"],
+                        max_concurrency=handler["max_concurrency"],
+                        routing_group=handler["routing_group"],
+                        group_max_concurrency=handler["group_max_concurrency"],
+                    )
                 )
 
         # Register worker instance and definitions in Redis
@@ -587,22 +591,26 @@ class Worker:
         if not self._redis_client:
             return
         for func_def in self._function_definitions:
-            function_key = func_def.get("key")
-            if not function_key:
-                continue
+            function_key = func_def.key
             key = f"{FUNCTION_KEY_PREFIX}:{function_key}"
             existing = await self._redis_client.get(key)
+            updated_def = func_def
             if existing:
                 payload = (
                     existing.decode() if isinstance(existing, bytes) else str(existing)
                 )
                 try:
                     existing_def = FunctionConfig.model_validate_json(payload)
-                    if "paused" not in func_def:
-                        func_def["paused"] = existing_def.paused
+                    updated_def = func_def.model_copy(
+                        update={"paused": existing_def.paused}
+                    )
                 except Exception:
                     pass
-            await self._redis_client.setex(key, FUNCTION_DEF_TTL, json.dumps(func_def))
+            await self._redis_client.setex(
+                key,
+                FUNCTION_DEF_TTL,
+                updated_def.model_dump_json(),
+            )
 
     async def _publish_worker_signal(self, signal_type: str) -> None:
         """Publish worker heartbeat/lifecycle signal for realtime dashboards."""

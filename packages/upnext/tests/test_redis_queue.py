@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 from shared.models import Job, JobStatus
+from shared.schemas import FunctionConfig, FunctionType, MissedRunPolicy
 from shared.workers import FUNCTION_KEY_PREFIX
 from upnext.engine.queue.base import DuplicateJobError
 from upnext.engine.queue.redis.queue import RedisQueue
@@ -410,6 +411,7 @@ async def test_cron_startup_reconciliation_enqueues_catchup_when_cursor_is_stale
 ) -> None:
     now = time.time()
     client = await queue._ensure_connected()  # noqa: SLF001
+    stale_next_run = now - 120
 
     await client.hset(
         queue._cron_cursor_key(),  # noqa: SLF001
@@ -417,7 +419,7 @@ async def test_cron_startup_reconciliation_enqueues_catchup_when_cursor_is_stale
         json.dumps(
             {
                 "function": "cron.reconcile",
-                "next_run_at": datetime.fromtimestamp(now - 120, UTC).isoformat(),
+                "next_run_at": datetime.fromtimestamp(stale_next_run, UTC).isoformat(),
                 "last_completed_at": None,
                 "updated_at": datetime.now(UTC).isoformat(),
             }
@@ -456,10 +458,180 @@ async def test_cron_startup_reconciliation_enqueues_catchup_when_cursor_is_stale
         else reconciled_job_raw
     )
     assert reconciled_job.metadata.get("startup_reconciled") is True
+    assert reconciled_job.metadata.get("startup_policy") == "catch_up"
+    reconciled_window = float(reconciled_job.metadata["cron_window_at"])
+    assert reconciled_window <= now
+    assert reconciled_window >= stale_next_run
 
     cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.reconcile")  # noqa: SLF001
     assert cursor_raw is not None
     cursor = json.loads(
         cursor_raw.decode() if isinstance(cursor_raw, bytes) else cursor_raw
     )
+    assert datetime.fromisoformat(cursor["next_run_at"]).timestamp() > reconciled_window
+
+
+@pytest.mark.asyncio
+async def test_cron_startup_reconciliation_latest_only_uses_latest_window(
+    queue: RedisQueue,
+) -> None:
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:cron.latest",
+        FunctionConfig(
+            key="cron.latest",
+            name="cron_latest",
+            type=FunctionType.CRON,
+            missed_run_policy=MissedRunPolicy.LATEST_ONLY,
+        ).model_dump_json(),
+    )
+    stale_next_run = now - 360
+    await client.hset(
+        queue._cron_cursor_key(),  # noqa: SLF001
+        "cron.latest",
+        json.dumps(
+            {
+                "function": "cron.latest",
+                "next_run_at": datetime.fromtimestamp(stale_next_run, UTC).isoformat(),
+                "last_completed_at": None,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        ),
+    )
+
+    cron_job = Job(
+        function="cron.latest",
+        function_name="cron_latest",
+        key="cron:cron.latest",
+        schedule="* * * * *",
+        metadata={"cron": True},
+    )
+    reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
+    assert reconciled is True
+
+    cron_job_id_raw = await client.hget(queue._cron_registry_key(), "cron:cron.latest")  # noqa: SLF001
+    assert cron_job_id_raw is not None
+    cron_job_id = (
+        cron_job_id_raw.decode()
+        if isinstance(cron_job_id_raw, bytes)
+        else str(cron_job_id_raw)
+    )
+    reconciled_job_raw = await client.get(queue._key("job", "cron.latest", cron_job_id))  # noqa: SLF001
+    assert reconciled_job_raw is not None
+    reconciled_job = Job.from_json(
+        reconciled_job_raw.decode()
+        if isinstance(reconciled_job_raw, bytes)
+        else reconciled_job_raw
+    )
+    assert reconciled_job.metadata.get("startup_policy") == "latest_only"
+    assert float(reconciled_job.metadata["cron_window_at"]) > stale_next_run + 60
+
+
+@pytest.mark.asyncio
+async def test_cron_startup_reconciliation_skip_policy_advances_cursor_without_enqueue(
+    queue: RedisQueue,
+) -> None:
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:cron.skip",
+        FunctionConfig(
+            key="cron.skip",
+            name="cron_skip",
+            type=FunctionType.CRON,
+            missed_run_policy=MissedRunPolicy.SKIP,
+        ).model_dump_json(),
+    )
+    await client.hset(
+        queue._cron_cursor_key(),  # noqa: SLF001
+        "cron.skip",
+        json.dumps(
+            {
+                "function": "cron.skip",
+                "next_run_at": datetime.fromtimestamp(now - 300, UTC).isoformat(),
+                "last_completed_at": None,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        ),
+    )
+
+    cron_job = Job(
+        function="cron.skip",
+        function_name="cron_skip",
+        key="cron:cron.skip",
+        schedule="* * * * *",
+        metadata={"cron": True},
+    )
+
+    reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
+    assert reconciled is False
+
+    cron_job_id = await client.hget(queue._cron_registry_key(), "cron:cron.skip")  # noqa: SLF001
+    assert cron_job_id is None
+    cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.skip")  # noqa: SLF001
+    assert cursor_raw is not None
+    cursor = json.loads(
+        cursor_raw.decode() if isinstance(cursor_raw, bytes) else cursor_raw
+    )
     assert datetime.fromisoformat(cursor["next_run_at"]).timestamp() > now
+
+
+@pytest.mark.asyncio
+async def test_cron_startup_reconciliation_catch_up_window_respects_max_seconds(
+    queue: RedisQueue,
+) -> None:
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:cron.windowed",
+        FunctionConfig(
+            key="cron.windowed",
+            name="cron_windowed",
+            type=FunctionType.CRON,
+            missed_run_policy=MissedRunPolicy.CATCH_UP,
+            max_catch_up_seconds=90,
+        ).model_dump_json(),
+    )
+    stale_next_run = now - 600
+    await client.hset(
+        queue._cron_cursor_key(),  # noqa: SLF001
+        "cron.windowed",
+        json.dumps(
+            {
+                "function": "cron.windowed",
+                "next_run_at": datetime.fromtimestamp(stale_next_run, UTC).isoformat(),
+                "last_completed_at": None,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        ),
+    )
+
+    cron_job = Job(
+        function="cron.windowed",
+        function_name="cron_windowed",
+        key="cron:cron.windowed",
+        schedule="* * * * *",
+        metadata={"cron": True},
+    )
+    reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
+    assert reconciled is True
+
+    cron_job_id_raw = await client.hget(queue._cron_registry_key(), "cron:cron.windowed")  # noqa: SLF001
+    assert cron_job_id_raw is not None
+    cron_job_id = (
+        cron_job_id_raw.decode()
+        if isinstance(cron_job_id_raw, bytes)
+        else str(cron_job_id_raw)
+    )
+    reconciled_job_raw = await client.get(
+        queue._key("job", "cron.windowed", cron_job_id)  # noqa: SLF001
+    )
+    assert reconciled_job_raw is not None
+    reconciled_job = Job.from_json(
+        reconciled_job_raw.decode()
+        if isinstance(reconciled_job_raw, bytes)
+        else reconciled_job_raw
+    )
+    assert reconciled_job.metadata.get("startup_policy") == "catch_up"
+    assert float(reconciled_job.metadata["cron_window_at"]) >= now - 90

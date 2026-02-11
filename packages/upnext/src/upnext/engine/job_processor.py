@@ -554,7 +554,8 @@ class JobProcessor:
 
         # Reschedule cron jobs for next execution
         if job.is_cron:
-            next_run_at = self._calculate_next_cron_run(job.schedule)
+            cron_base_ts = self._cron_reschedule_base(job)
+            next_run_at = self._calculate_next_cron_run(job.schedule, base_ts=cron_base_ts)
             await self._queue.reschedule_cron(job, next_run_at)
             logger.debug(
                 "Rescheduled cron %s (%s) → %s",
@@ -651,7 +652,11 @@ class JobProcessor:
             # IMPORTANT: Reschedule cron jobs even on failure
             # The execution failed, but the schedule must continue
             if job.is_cron:
-                next_run_at = self._calculate_next_cron_run(job.schedule)
+                cron_base_ts = self._cron_reschedule_base(job)
+                next_run_at = self._calculate_next_cron_run(
+                    job.schedule,
+                    base_ts=cron_base_ts,
+                )
                 await self._queue.reschedule_cron(job, next_run_at)
                 logger.debug(
                     "Rescheduled cron %s (%s) → %s",
@@ -673,7 +678,23 @@ class JobProcessor:
             self._status_buffer,
         )
 
-    def _calculate_next_cron_run(self, schedule: str | None) -> float:
+    def _cron_reschedule_base(self, job: Job) -> float | None:
+        """Resolve optional cron scheduling base timestamp from job metadata."""
+        metadata = job.metadata or {}
+        raw = metadata.get("cron_window_at")
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _calculate_next_cron_run(
+        self,
+        schedule: str | None,
+        *,
+        base_ts: float | None = None,
+    ) -> float:
         """
         Calculate the next run time for a cron schedule.
 
@@ -688,7 +709,12 @@ class JobProcessor:
         if not schedule:
             return time.time()
 
-        return calculate_next_cron_timestamp(schedule)
+        if base_ts is None:
+            return calculate_next_cron_timestamp(schedule)
+        return calculate_next_cron_timestamp(
+            schedule,
+            datetime.fromtimestamp(base_ts, UTC),
+        )
 
 
 class JobContextBackend:

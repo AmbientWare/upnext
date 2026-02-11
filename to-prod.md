@@ -48,7 +48,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: on boot, compare expected schedule windows with persisted cursor and backfill per policy.
   - Done: missed windows are either replayed or intentionally skipped with reason.
 
-- [ ] Add missed-run policy controls.
+- [x] Add missed-run policy controls.
   - How: per-cron policy (`catch_up`, `latest_only`, `skip`) and max catch-up window.
   - Done: behavior is configurable and test-covered.
 

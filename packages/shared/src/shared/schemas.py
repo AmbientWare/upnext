@@ -19,6 +19,12 @@ class FunctionType(StrEnum):
     EVENT = "event"
 
 
+class MissedRunPolicy(StrEnum):
+    CATCH_UP = "catch_up"
+    LATEST_ONLY = "latest_only"
+    SKIP = "skip"
+
+
 # =============================================================================
 # Job History Schemas
 # =============================================================================
@@ -433,6 +439,8 @@ class FunctionConfig(BaseModel):
     group_max_concurrency: int | None = None
     schedule: str | None = None
     next_run_at: str | None = None
+    missed_run_policy: MissedRunPolicy | None = None
+    max_catch_up_seconds: float | None = None
     pattern: str | None = None
 
     model_config = ConfigDict(extra="ignore")
@@ -457,6 +465,8 @@ class FunctionInfo(BaseModel):
     # Cron config
     schedule: str | None = None
     next_run_at: str | None = None
+    missed_run_policy: MissedRunPolicy | None = None
+    max_catch_up_seconds: float | None = None
     # Event config
     pattern: str | None = None
     # Workers currently handling this function

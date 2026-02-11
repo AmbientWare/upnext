@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 from shared.models import Job
+from shared.schemas import MissedRunPolicy
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.registry import Registry
 from upnext.sdk.worker import Worker
@@ -97,6 +98,8 @@ def test_registry_cron_and_app_constraints() -> None:
         display_name="hourly",
         schedule="0 * * * *",
         func=cron_job,
+        missed_run_policy=MissedRunPolicy.LATEST_ONLY,
+        max_catch_up_seconds=300,
     )
     with pytest.raises(ValueError, match="already registered"):
         registry.register_cron(
@@ -104,6 +107,14 @@ def test_registry_cron_and_app_constraints() -> None:
             display_name="hourly",
             schedule="0 * * * *",
             func=cron_job,
+        )
+    with pytest.raises(ValueError, match="max_catch_up_seconds must be > 0"):
+        registry.register_cron(
+            key="cron-bad-window",
+            display_name="bad-window",
+            schedule="0 * * * *",
+            func=cron_job,
+            max_catch_up_seconds=0,
         )
 
     with pytest.raises(ValueError, match="port must be 0-65535"):

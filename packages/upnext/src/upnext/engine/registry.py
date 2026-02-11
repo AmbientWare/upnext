@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from shared.patterns import matches_event_pattern
+from shared.schemas import MissedRunPolicy
 
 from upnext.engine.queue.redis.rate_limit import parse_rate_limit
 
@@ -103,6 +104,15 @@ class CronDefinition:
     func: Callable[..., Any]
     is_async: bool
     timeout: float = 30 * 60  # 30 minutes
+    missed_run_policy: MissedRunPolicy = MissedRunPolicy.CATCH_UP
+    max_catch_up_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        """Validate cron scheduling controls."""
+        if self.timeout <= 0:
+            raise ValueError(f"timeout must be > 0, got {self.timeout}")
+        if self.max_catch_up_seconds is not None and self.max_catch_up_seconds <= 0:
+            raise ValueError("max_catch_up_seconds must be > 0")
 
 
 @dataclass
@@ -305,6 +315,8 @@ class Registry:
         schedule: str,
         func: Callable[..., Any],
         timeout: float = 30 * 60,  # 30 minutes
+        missed_run_policy: MissedRunPolicy = MissedRunPolicy.CATCH_UP,
+        max_catch_up_seconds: float | None = None,
     ) -> CronDefinition:
         """Register a cron job."""
         if key in self._crons:
@@ -317,6 +329,8 @@ class Registry:
             func=func,
             is_async=asyncio.iscoroutinefunction(func),
             timeout=timeout,
+            missed_run_policy=missed_run_policy,
+            max_catch_up_seconds=max_catch_up_seconds,
         )
 
         self._crons[key] = definition
