@@ -12,7 +12,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: require stable idempotency key support for externally-triggered jobs and preserve dedupe state across retries/restarts.
   - Done: duplicate submissions with same key are rejected or coalesced predictably.
 
-- [ ] Add crash-recovery scenarios for active jobs.
+- [x] Add crash-recovery scenarios for active jobs.
   - How: integration tests that kill workers mid-run and verify reclaim/retry/cancel behavior.
   - Done: no lost jobs; behavior is deterministic and asserted in CI.
 
