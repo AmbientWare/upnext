@@ -27,6 +27,7 @@ from functools import partial
 from typing import Any
 
 from shared.models import Job, JobStatus
+from shared.schemas import DispatchReason
 
 from upnext.engine.cron import calculate_next_cron_timestamp
 from upnext.engine.queue.base import BaseQueue
@@ -312,6 +313,11 @@ class JobProcessor:
             except AttributeError:
                 is_cancelled = False
             if is_cancelled:
+                await self._queue.record_dispatch_reason(
+                    job.function,
+                    DispatchReason.CANCELLED,
+                    job_id=job.id,
+                )
                 await self._queue.finish(
                     job,
                     JobStatus.CANCELLED,
@@ -330,6 +336,11 @@ class JobProcessor:
             except AttributeError:
                 is_paused = False
             if is_paused:
+                await self._queue.record_dispatch_reason(
+                    job.function,
+                    DispatchReason.PAUSED,
+                    job_id=job.id,
+                )
                 await self._queue.retry(job, delay=1.0)
                 logger.debug(
                     "Deferred paused function job %s (%s)",
@@ -629,6 +640,11 @@ class JobProcessor:
                 )
 
             # Reschedule job
+            await self._queue.record_dispatch_reason(
+                job.function,
+                DispatchReason.RETRYING,
+                job_id=job.id,
+            )
             await self._queue.retry(job, delay)
             self._jobs_retried += 1
         else:

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from shared.models import Job, JobStatus
+from shared.schemas import DispatchReason
 
 
 class BaseQueue(ABC):
@@ -233,6 +234,20 @@ class BaseQueue(ABC):
         Default: returns input unchanged.
         """
         return list(functions)
+
+    async def record_dispatch_reason(
+        self,
+        function: str,
+        reason: DispatchReason,
+        *,
+        job_id: str | None = None,
+    ) -> None:
+        """
+        Record why a job was deferred or not dispatched.
+
+        Default: no-op. Override for queue backends that track dispatch diagnostics.
+        """
+        _ = (function, reason, job_id)
 
     async def subscribe_job(
         self,

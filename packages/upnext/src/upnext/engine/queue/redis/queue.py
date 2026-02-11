@@ -30,7 +30,7 @@ from typing import Any
 from pydantic import BaseModel
 import redis.asyncio as redis
 from shared import Job, JobStatus
-from shared.schemas import FunctionConfig, MissedRunPolicy
+from shared.schemas import DispatchReason, FunctionConfig, MissedRunPolicy
 from shared.workers import FUNCTION_KEY_PREFIX
 
 from upnext.config import get_settings
@@ -145,6 +145,10 @@ class RedisQueue(BaseQueue):
                 if dlq_stream_maxlen is None
                 else int(dlq_stream_maxlen)
             ),
+        )
+        self._dispatch_events_stream_maxlen = max(
+            0,
+            int(settings.queue_dispatch_events_stream_maxlen),
         )
 
         self._consumer_id = f"consumer_{uuid.uuid4().hex[:8]}"
@@ -308,6 +312,12 @@ class RedisQueue(BaseQueue):
     def _dlq_stream_key(self, function: str) -> str:
         return self._key("fn", function, "dlq")
 
+    def _dispatch_reasons_key(self, function: str) -> str:
+        return self._key("dispatch_reasons", function)
+
+    def _dispatch_events_stream_key(self) -> str:
+        return self._key("dispatch_events")
+
     def _job_key(self, job: Job) -> str:
         return self._key("job", job.function, job.id)
 
@@ -394,6 +404,42 @@ class RedisQueue(BaseQueue):
         config = self._parse_function_config(raw, key_hint=key)
         self._function_config_cache[function] = (config, now + 1.0)
         return config
+
+    async def record_dispatch_reason(
+        self,
+        function: str,
+        reason: DispatchReason,
+        *,
+        job_id: str | None = None,
+    ) -> None:
+        """Persist structured dispatch diagnostics."""
+        client = await self._ensure_connected()
+        counts_key = self._dispatch_reasons_key(function)
+        stream_key = self._dispatch_events_stream_key()
+        try:
+            await client.hincrby(counts_key, reason.value, 1)
+            await client.expire(counts_key, max(1, self._job_ttl_seconds))
+            payload = {
+                "function": function,
+                "reason": reason.value,
+                "job_id": job_id or "",
+                "at": datetime.now(UTC).isoformat(),
+            }
+            if self._dispatch_events_stream_maxlen > 0:
+                await client.xadd(
+                    stream_key,
+                    payload,
+                    maxlen=self._dispatch_events_stream_maxlen,
+                    approximate=True,
+                )
+            else:
+                await client.xadd(stream_key, payload)
+        except Exception:
+            logger.debug(
+                "Failed to record dispatch reason function=%s reason=%s",
+                function,
+                reason.value,
+            )
 
     async def _paused_state_map(self, functions: list[str]) -> dict[str, bool]:
         """Resolve paused state for functions with a small in-memory TTL cache."""
@@ -608,6 +654,7 @@ class RedisQueue(BaseQueue):
         runnable: list[str] = []
         for function in functions:
             if states.get(function, False):
+                await self.record_dispatch_reason(function, DispatchReason.PAUSED)
                 continue
             max_concurrency = await self._function_max_concurrency(function)
             if max_concurrency is None:
@@ -619,6 +666,7 @@ class RedisQueue(BaseQueue):
                 runnable.append(function)
                 continue
 
+            await self.record_dispatch_reason(function, DispatchReason.NO_CAPACITY)
             continue
 
         filtered: list[str] = []
@@ -631,6 +679,8 @@ class RedisQueue(BaseQueue):
             group_active = await self._group_active_count(group)
             if group_active < group_limit:
                 filtered.append(function)
+            else:
+                await self.record_dispatch_reason(function, DispatchReason.NO_CAPACITY)
         return filtered
 
     def _fair_order_functions(self, functions: list[str]) -> list[str]:
@@ -1041,6 +1091,11 @@ class RedisQueue(BaseQueue):
         if max_concurrency is not None:
             active_count = await self._function_active_count(job.function)
             if active_count > max_concurrency:
+                await self.record_dispatch_reason(
+                    job.function,
+                    DispatchReason.NO_CAPACITY,
+                    job_id=job.id,
+                )
                 job.metadata = job.metadata or {}
                 job.metadata["_stream_msg_id"] = msg_id_str
                 job.metadata["_stream_key"] = stream_key
@@ -1052,6 +1107,11 @@ class RedisQueue(BaseQueue):
         if group is not None and group_limit is not None:
             group_active = await self._group_active_count(group)
             if group_active > group_limit:
+                await self.record_dispatch_reason(
+                    job.function,
+                    DispatchReason.NO_CAPACITY,
+                    job_id=job.id,
+                )
                 job.metadata = job.metadata or {}
                 job.metadata["_stream_msg_id"] = msg_id_str
                 job.metadata["_stream_key"] = stream_key
@@ -1062,6 +1122,11 @@ class RedisQueue(BaseQueue):
         if rate_limit is not None:
             allowed = await self._acquire_rate_limit_token(job.function, rate_limit)
             if not allowed:
+                await self.record_dispatch_reason(
+                    job.function,
+                    DispatchReason.RATE_LIMITED,
+                    job_id=job.id,
+                )
                 job.metadata = job.metadata or {}
                 job.metadata["_stream_msg_id"] = msg_id_str
                 job.metadata["_stream_key"] = stream_key

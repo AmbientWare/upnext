@@ -10,6 +10,7 @@ from server.services.cleanup import CleanupService
 from server.services.queue import (
     FunctionQueueDepthStats,
     QueueDepthStats,
+    get_function_dispatch_reason_stats,
     get_function_queue_depth_stats,
     get_queue_depth_stats,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "get_artifact_storage",
     # Queue
     "FunctionQueueDepthStats",
+    "get_function_dispatch_reason_stats",
     "QueueDepthStats",
     "get_function_queue_depth_stats",
     "get_queue_depth_stats",

@@ -9,6 +9,13 @@
 
 export type FunctionType = 'task' | 'cron' | 'event';
 export type MissedRunPolicy = 'catch_up' | 'latest_only' | 'skip';
+export interface DispatchReasonMetrics {
+  paused: number;
+  rate_limited: number;
+  no_capacity: number;
+  cancelled: number;
+  retrying: number;
+}
 export type JobStatus =
   | 'pending'
   | 'queued'
@@ -198,6 +205,7 @@ export interface FunctionInfo {
   avg_wait_ms: number | null;
   p95_wait_ms: number | null;
   queue_backlog: number;
+  dispatch_reasons: DispatchReasonMetrics;
   last_run_at: string | null;
   last_run_status: string | null;
 }

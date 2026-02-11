@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 from shared.models import Job, JobStatus
+from shared.schemas import DispatchReason
 from upnext.engine.job_processor import JobProcessor
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.registry import Registry
@@ -20,6 +21,9 @@ class _QueueRecorder:
     rescheduled: list[str] = field(default_factory=list)
     progresses: list[tuple[str, float]] = field(default_factory=list)
     metadata_updates: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    dispatch_reasons: list[tuple[str, DispatchReason, str | None]] = field(
+        default_factory=list
+    )
 
     async def finish(
         self,
@@ -45,6 +49,15 @@ class _QueueRecorder:
 
     async def get_job(self, job_id: str) -> Job | None:
         return None
+
+    async def record_dispatch_reason(
+        self,
+        function: str,
+        reason: DispatchReason,
+        *,
+        job_id: str | None = None,
+    ) -> None:
+        self.dispatch_reasons.append((function, reason, job_id))
 
 
 @dataclass
@@ -233,6 +246,9 @@ async def test_retry_path_uses_exponential_backoff() -> None:
 
         assert queue.retried == [(job.id, 4)]
         assert status.retrying == [(job.id, 4)]
+        assert queue.dispatch_reasons == [
+            ("task_key", DispatchReason.RETRYING, job.id)
+        ]
     finally:
         processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
 
@@ -348,6 +364,9 @@ async def test_cron_jobs_reschedule_on_success_and_terminal_failure() -> None:
 class _CancelledQueue:
     job: Job | None
     finishes: list[tuple[str, JobStatus, Any, str | None]] = field(default_factory=list)
+    dispatch_reasons: list[tuple[str, DispatchReason, str | None]] = field(
+        default_factory=list
+    )
 
     async def dequeue(self, functions: list[str], *, timeout: float = 5.0) -> Job | None:  # noqa: ARG002
         current = self.job
@@ -365,6 +384,15 @@ class _CancelledQueue:
         error: str | None = None,
     ) -> None:
         self.finishes.append((job.id, status, result, error))
+
+    async def record_dispatch_reason(
+        self,
+        function: str,
+        reason: DispatchReason,
+        *,
+        job_id: str | None = None,
+    ) -> None:
+        self.dispatch_reasons.append((function, reason, job_id))
 
 
 @pytest.mark.asyncio
@@ -384,6 +412,9 @@ async def test_process_one_skips_jobs_marked_cancelled_before_start() -> None:
         assert queue.finishes == [
             (job.id, JobStatus.CANCELLED, None, "Cancelled before execution")
         ]
+        assert queue.dispatch_reasons == [
+            ("task_key", DispatchReason.CANCELLED, job.id)
+        ]
     finally:
         processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
 
@@ -392,6 +423,9 @@ async def test_process_one_skips_jobs_marked_cancelled_before_start() -> None:
 class _PausedQueue:
     job: Job | None
     retried: list[tuple[str, float]] = field(default_factory=list)
+    dispatch_reasons: list[tuple[str, DispatchReason, str | None]] = field(
+        default_factory=list
+    )
 
     async def dequeue(
         self, functions: list[str], *, timeout: float = 5.0  # noqa: ARG002
@@ -417,6 +451,15 @@ class _PausedQueue:
         error: str | None = None,  # noqa: ARG002
     ) -> None:
         return None
+
+    async def record_dispatch_reason(
+        self,
+        function: str,
+        reason: DispatchReason,
+        *,
+        job_id: str | None = None,
+    ) -> None:
+        self.dispatch_reasons.append((function, reason, job_id))
 
 
 @dataclass
@@ -444,6 +487,15 @@ class _SingleJobQueue:
     ) -> None:
         self.finished.append((job.id, status, result, error))
 
+    async def record_dispatch_reason(
+        self,
+        function: str,  # noqa: ARG002
+        reason: DispatchReason,  # noqa: ARG002
+        *,
+        job_id: str | None = None,  # noqa: ARG002
+    ) -> None:
+        return None
+
 
 @pytest.mark.asyncio
 async def test_process_one_retries_jobs_for_paused_functions() -> None:
@@ -462,6 +514,9 @@ async def test_process_one_retries_jobs_for_paused_functions() -> None:
     try:
         await processor._process_one()  # noqa: SLF001
         assert queue.retried == [(job.id, 1.0)]
+        assert queue.dispatch_reasons == [
+            ("task_key", DispatchReason.PAUSED, job.id)
+        ]
         assert executed["value"] is False
     finally:
         processor._sync_pool.shutdown(wait=False)  # noqa: SLF001

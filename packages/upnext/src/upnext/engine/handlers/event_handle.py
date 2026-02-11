@@ -277,6 +277,11 @@ class EventHandle:
                 function_name=handler.display_name,
                 kwargs=data,
                 key=normalized_key,
+                metadata={
+                    "event_pattern": self.pattern,
+                    "event_handler_key": handler.key,
+                    "event_handler_name": handler.display_name,
+                },
             )
             try:
                 await queue.enqueue(job)

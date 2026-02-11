@@ -276,11 +276,28 @@ function FunctionDetailPage() {
             />
             <MetricCard label="Queue Backlog" value={formatNumber(fn.queue_backlog)} />
             <MetricCard
+              label="Dispatch Blocks"
+              value={formatNumber(
+                fn.dispatch_reasons.paused +
+                  fn.dispatch_reasons.rate_limited +
+                  fn.dispatch_reasons.no_capacity +
+                  fn.dispatch_reasons.cancelled +
+                  fn.dispatch_reasons.retrying
+              )}
+            />
+            <MetricCard
               label="Last Run"
               value={fn.last_run_at ? formatTimeAgo(new Date(fn.last_run_at)) : "\u2014"}
               sub={fn.last_run_status ?? undefined}
               animate={false}
             />
+          </div>
+          <div className="mt-4 grid grid-cols-2 lg:grid-cols-5 gap-2">
+            <ConfigItem icon={Pause} label="Paused" value={String(fn.dispatch_reasons.paused)} />
+            <ConfigItem icon={Clock} label="Rate Limited" value={String(fn.dispatch_reasons.rate_limited)} />
+            <ConfigItem icon={Users} label="No Capacity" value={String(fn.dispatch_reasons.no_capacity)} />
+            <ConfigItem icon={X} label="Cancelled" value={String(fn.dispatch_reasons.cancelled)} />
+            <ConfigItem icon={RotateCcw} label="Retrying" value={String(fn.dispatch_reasons.retrying)} />
           </div>
         </Panel>
       </div>

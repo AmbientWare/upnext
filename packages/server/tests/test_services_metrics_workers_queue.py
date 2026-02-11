@@ -279,6 +279,23 @@ async def test_queue_service_reads_depth_from_stream_groups(
     assert function_stats["fn.b"].claimed == 2
     assert function_stats["fn.b"].backlog == 3
 
+    await redis_text_client.hset(
+        "upnext:dispatch_reasons:fn.a",
+        mapping={
+            "paused": 2,
+            "rate_limited": 3,
+            "no_capacity": 4,
+            "cancelled": 1,
+            "retrying": 5,
+        },
+    )
+    reason_stats = await queue_service_module.get_function_dispatch_reason_stats()
+    assert reason_stats["fn.a"].paused == 2
+    assert reason_stats["fn.a"].rate_limited == 3
+    assert reason_stats["fn.a"].no_capacity == 4
+    assert reason_stats["fn.a"].cancelled == 1
+    assert reason_stats["fn.a"].retrying == 5
+
 
 @pytest.mark.asyncio
 async def test_queue_service_returns_zero_stats_when_redis_unavailable(
@@ -298,3 +315,6 @@ async def test_queue_service_returns_zero_stats_when_redis_unavailable(
 
     function_stats = await queue_service_module.get_function_queue_depth_stats()
     assert function_stats == {}
+
+    reason_stats = await queue_service_module.get_function_dispatch_reason_stats()
+    assert reason_stats == {}

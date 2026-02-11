@@ -158,6 +158,9 @@ async def test_event_handle_enqueues_handlers_and_exposes_configs() -> None:
     assert queue.jobs[0].function_name == "notify"
     assert queue.jobs[1].function_name == "audit"
     assert all(job.kwargs == {"order_id": "ord-1"} for job in queue.jobs)
+    assert all(job.metadata.get("event_pattern") == "order.created" for job in queue.jobs)
+    assert queue.jobs[0].metadata.get("event_handler_name") == "notify"
+    assert queue.jobs[1].metadata.get("event_handler_name") == "audit"
 
     assert order_created.handler_names == ["notify", "audit"]
     assert len(order_created.handler_keys) == 2

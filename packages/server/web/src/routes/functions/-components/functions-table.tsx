@@ -43,6 +43,7 @@ export function FunctionsTable({
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Workers</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">24H Runs</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Backlog</TableHead>
+          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Dispatch Blocks</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Success</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Avg Duration</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">P95 Wait</TableHead>
@@ -90,6 +91,15 @@ export function FunctionsTable({
             </TableCell>
             <TableCell className="mono text-[11px] py-2">{formatNumber(fn.runs_24h)}</TableCell>
             <TableCell className="mono text-[11px] py-2">{formatNumber(fn.queue_backlog)}</TableCell>
+            <TableCell className="mono text-[11px] py-2">
+              {formatNumber(
+                fn.dispatch_reasons.paused +
+                  fn.dispatch_reasons.rate_limited +
+                  fn.dispatch_reasons.no_capacity +
+                  fn.dispatch_reasons.cancelled +
+                  fn.dispatch_reasons.retrying
+              )}
+            </TableCell>
             <TableCell className="mono text-[11px] py-2">
               <span
                 className={cn(

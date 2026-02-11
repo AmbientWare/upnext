@@ -7,7 +7,12 @@ from datetime import UTC, datetime
 
 import pytest
 from shared.models import Job, JobStatus
-from shared.schemas import FunctionConfig, FunctionType, MissedRunPolicy
+from shared.schemas import (
+    DispatchReason,
+    FunctionConfig,
+    FunctionType,
+    MissedRunPolicy,
+)
 from shared.workers import FUNCTION_KEY_PREFIX
 from upnext.engine.queue.base import DuplicateJobError
 from upnext.engine.queue.redis.queue import RedisQueue
@@ -107,6 +112,42 @@ async def test_cancel_non_terminal_job_returns_true(queue: RedisQueue) -> None:
 
 
 @pytest.mark.asyncio
+async def test_record_dispatch_reason_updates_hash_and_stream(queue: RedisQueue) -> None:
+    client = await queue._ensure_connected()  # noqa: SLF001
+
+    await queue.record_dispatch_reason(
+        "fn.dispatch",
+        DispatchReason.PAUSED,
+        job_id="job-1",
+    )
+    await queue.record_dispatch_reason(
+        "fn.dispatch",
+        DispatchReason.RATE_LIMITED,
+        job_id="job-2",
+    )
+
+    raw = await client.hgetall(queue._dispatch_reasons_key("fn.dispatch"))  # noqa: SLF001
+    paused = raw.get(b"paused") or raw.get("paused")
+    rate_limited = raw.get(b"rate_limited") or raw.get("rate_limited")
+    assert int(paused) == 1
+    assert int(rate_limited) == 1
+
+    events = await client.xrevrange(queue._dispatch_events_stream_key(), count=2)  # noqa: SLF001
+    assert len(events) == 2
+    latest_payload = events[0][1]
+    latest_reason = latest_payload.get(b"reason") or latest_payload.get("reason")
+    latest_function = latest_payload.get(b"function") or latest_payload.get("function")
+    assert (
+        latest_reason.decode() if isinstance(latest_reason, bytes) else latest_reason
+    ) == "rate_limited"
+    assert (
+        latest_function.decode()
+        if isinstance(latest_function, bytes)
+        else latest_function
+    ) == "fn.dispatch"
+
+
+@pytest.mark.asyncio
 async def test_cancel_terminal_job_returns_false(queue: RedisQueue) -> None:
     terminal_job = Job(function="task_fn", function_name="task", key="terminal-key")
     await queue.enqueue(terminal_job)
@@ -137,6 +178,11 @@ async def test_dequeue_skips_paused_function_until_resumed(queue: RedisQueue) ->
 
     paused_pick = await queue.dequeue(["task_fn"], timeout=0.05)
     assert paused_pick is None
+    client = await queue._ensure_connected()  # noqa: SLF001
+    paused_counts = await client.hgetall(queue._dispatch_reasons_key("task_fn"))  # noqa: SLF001
+    paused_value = paused_counts.get(b"paused") or paused_counts.get("paused")
+    assert paused_value is not None
+    assert int(paused_value) >= 1
 
     await client.set(
         f"{FUNCTION_KEY_PREFIX}:task_fn",
@@ -147,6 +193,37 @@ async def test_dequeue_skips_paused_function_until_resumed(queue: RedisQueue) ->
     resumed_pick = await queue.dequeue(["task_fn"], timeout=0.2)
     assert resumed_pick is not None
     assert resumed_pick.id == job.id
+
+
+@pytest.mark.asyncio
+async def test_dequeue_records_no_capacity_when_function_saturated(
+    queue: RedisQueue,
+) -> None:
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:task_fn",
+        FunctionConfig(
+            key="task_fn",
+            name="task_fn",
+            type=FunctionType.TASK,
+            max_concurrency=1,
+        ).model_dump_json(),
+    )
+
+    first = Job(function="task_fn", function_name="task", key="cap-1")
+    second = Job(function="task_fn", function_name="task", key="cap-2")
+    await queue.enqueue(first)
+    await queue.enqueue(second)
+
+    active = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert active is not None
+    blocked = await queue.dequeue(["task_fn"], timeout=0.05)
+    assert blocked is None
+
+    counts = await client.hgetall(queue._dispatch_reasons_key("task_fn"))  # noqa: SLF001
+    no_capacity = counts.get(b"no_capacity") or counts.get("no_capacity")
+    assert no_capacity is not None
+    assert int(no_capacity) >= 1
 
 
 @pytest.mark.asyncio

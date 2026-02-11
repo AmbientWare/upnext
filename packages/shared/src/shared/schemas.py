@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from shared.artifacts import ArtifactType
 
@@ -23,6 +23,14 @@ class MissedRunPolicy(StrEnum):
     CATCH_UP = "catch_up"
     LATEST_ONLY = "latest_only"
     SKIP = "skip"
+
+
+class DispatchReason(StrEnum):
+    PAUSED = "paused"
+    RATE_LIMITED = "rate_limited"
+    NO_CAPACITY = "no_capacity"
+    CANCELLED = "cancelled"
+    RETRYING = "retrying"
 
 
 # =============================================================================
@@ -446,6 +454,16 @@ class FunctionConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class DispatchReasonMetrics(BaseModel):
+    """Per-function dispatch deferral/skip counters."""
+
+    paused: int = 0
+    rate_limited: int = 0
+    no_capacity: int = 0
+    cancelled: int = 0
+    retrying: int = 0
+
+
 class FunctionInfo(BaseModel):
     """Function info."""
 
@@ -479,6 +497,9 @@ class FunctionInfo(BaseModel):
     avg_wait_ms: float | None = None
     p95_wait_ms: float | None = None
     queue_backlog: int = 0
+    dispatch_reasons: DispatchReasonMetrics = Field(
+        default_factory=DispatchReasonMetrics
+    )
     last_run_at: str | None = None
     last_run_status: str | None = None
 

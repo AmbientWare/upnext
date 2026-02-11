@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     queue_result_ttl_seconds: int = 3_600
     queue_stream_maxlen: int = 0
     queue_dlq_stream_maxlen: int = 10_000
+    queue_dispatch_events_stream_maxlen: int = 10_000
 
     # API tracking controls
     api_tracking_normalize_paths: bool = True

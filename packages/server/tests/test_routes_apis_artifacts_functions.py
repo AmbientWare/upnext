@@ -22,6 +22,7 @@ from server.db.repository import JobRepository
 from server.routes import v1_router
 from server.services.queue import FunctionQueueDepthStats
 from shared.schemas import (
+    DispatchReasonMetrics,
     ApiInstance,
     ApiPageResponse,
     ApisListResponse,
@@ -301,9 +302,26 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             ),
         }
 
+    async def _dispatch_reasons() -> dict[str, DispatchReasonMetrics]:
+        return {
+            "fn.task": DispatchReasonMetrics(
+                paused=1,
+                rate_limited=2,
+                no_capacity=3,
+                cancelled=0,
+                retrying=4,
+            ),
+            "fn.event": DispatchReasonMetrics(paused=0),
+        }
+
     monkeypatch.setattr(functions_route, "get_function_definitions", _defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", _workers)
     monkeypatch.setattr(functions_route, "get_function_queue_depth_stats", _queue_depth)
+    monkeypatch.setattr(
+        functions_route,
+        "get_function_dispatch_reason_stats",
+        _dispatch_reasons,
+    )
     monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
 
     all_functions = await functions_route.list_functions(type=None)
@@ -319,6 +337,10 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
     assert task.avg_wait_ms == pytest.approx(200.0)
     assert task.p95_wait_ms == pytest.approx(300.0)
     assert task.queue_backlog == 6
+    assert task.dispatch_reasons.paused == 1
+    assert task.dispatch_reasons.rate_limited == 2
+    assert task.dispatch_reasons.no_capacity == 3
+    assert task.dispatch_reasons.retrying == 4
     assert set(task.workers) == {"alpha (2)", "host-1"}
     assert task.active is True
 
@@ -413,9 +435,25 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             )
         }
 
+    async def _dispatch_reasons() -> dict[str, DispatchReasonMetrics]:
+        return {
+            "fn.detail": DispatchReasonMetrics(
+                paused=0,
+                rate_limited=1,
+                no_capacity=2,
+                cancelled=0,
+                retrying=3,
+            )
+        }
+
     monkeypatch.setattr(functions_route, "get_function_definitions", _defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", _workers)
     monkeypatch.setattr(functions_route, "get_function_queue_depth_stats", _queue_depth)
+    monkeypatch.setattr(
+        functions_route,
+        "get_function_dispatch_reason_stats",
+        _dispatch_reasons,
+    )
     monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
 
     detail = await functions_route.get_function("fn.detail")
@@ -427,6 +465,9 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
     assert detail.avg_wait_ms == pytest.approx(80.0, abs=0.1)
     assert detail.p95_wait_ms == pytest.approx(120.0, abs=0.1)
     assert detail.queue_backlog == 3
+    assert detail.dispatch_reasons.rate_limited == 1
+    assert detail.dispatch_reasons.no_capacity == 2
+    assert detail.dispatch_reasons.retrying == 3
     assert detail.last_run_status == "active"
     assert detail.workers == ["worker-a (2)"]
     assert [run.id for run in detail.recent_runs] == [

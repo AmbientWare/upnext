@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from shared.schemas import (
+    DispatchReasonMetrics,
     FunctionDetailResponse,
     FunctionConfig,
     FunctionInfo,
@@ -18,7 +19,11 @@ from shared.schemas import (
 from server.db.repository import FunctionJobStats, FunctionWaitStats, JobRepository
 from server.db.session import get_database
 from server.routes.functions_utils import set_function_pause_state
-from server.services import get_function_definitions, get_function_queue_depth_stats
+from server.services import (
+    get_function_definitions,
+    get_function_dispatch_reason_stats,
+    get_function_queue_depth_stats,
+)
 from server.services.workers import list_worker_instances
 
 logger = logging.getLogger(__name__)
@@ -39,6 +44,7 @@ def _build_function_info(
     avg_wait_ms: float | None = None,
     p95_wait_ms: float | None = None,
     queue_backlog: int = 0,
+    dispatch_reasons: DispatchReasonMetrics | None = None,
     last_run_at: str | None = None,
     last_run_status: str | None = None,
 ) -> FunctionInfo:
@@ -69,6 +75,7 @@ def _build_function_info(
         avg_wait_ms=avg_wait_ms,
         p95_wait_ms=p95_wait_ms,
         queue_backlog=queue_backlog,
+        dispatch_reasons=dispatch_reasons or DispatchReasonMetrics(),
         last_run_at=last_run_at,
         last_run_status=last_run_status,
     )
@@ -97,6 +104,10 @@ async def list_functions(
         queue_depth_by_function = await get_function_queue_depth_stats()
     except RuntimeError:
         queue_depth_by_function = {}
+    try:
+        dispatch_reasons_by_function = await get_function_dispatch_reason_stats()
+    except RuntimeError:
+        dispatch_reasons_by_function = {}
 
     # Build function-key -> worker labels (deduplicated by worker name).
     func_worker_counts: dict[str, dict[str, int]] = {}
@@ -142,6 +153,10 @@ async def list_functions(
         stats = func_stats.get(function_key)
         queue_depth = queue_depth_by_function.get(function_key)
         queue_backlog = queue_depth.backlog if queue_depth else 0
+        dispatch_reasons = dispatch_reasons_by_function.get(
+            function_key,
+            DispatchReasonMetrics(),
+        )
         wait = wait_stats.get(function_key)
         if stats is None:
             functions.append(
@@ -151,6 +166,7 @@ async def list_functions(
                     active=is_func_active(function_key),
                     workers=func_worker_labels.get(function_key, []),
                     queue_backlog=queue_backlog,
+                    dispatch_reasons=dispatch_reasons,
                     avg_wait_ms=wait.avg_wait_ms if wait else None,
                     p95_wait_ms=wait.p95_wait_ms if wait else None,
                 )
@@ -171,6 +187,7 @@ async def list_functions(
                 avg_wait_ms=wait.avg_wait_ms if wait else None,
                 p95_wait_ms=wait.p95_wait_ms if wait else None,
                 queue_backlog=queue_backlog,
+                dispatch_reasons=dispatch_reasons,
                 last_run_at=stats.last_run_at,
                 last_run_status=stats.last_run_status,
             )
@@ -197,6 +214,10 @@ async def get_function(name: str) -> FunctionDetailResponse:
         queue_depth_by_function = await get_function_queue_depth_stats()
     except RuntimeError:
         queue_depth_by_function = {}
+    try:
+        dispatch_reasons_by_function = await get_function_dispatch_reason_stats()
+    except RuntimeError:
+        dispatch_reasons_by_function = {}
 
     func_config = func_defs.get(
         function_key,
@@ -288,6 +309,10 @@ async def get_function(name: str) -> FunctionDetailResponse:
 
     queue_depth = queue_depth_by_function.get(function_key)
     queue_backlog = queue_depth.backlog if queue_depth else 0
+    dispatch_reasons = dispatch_reasons_by_function.get(
+        function_key,
+        DispatchReasonMetrics(),
+    )
 
     return FunctionDetailResponse(
         key=function_key,
@@ -315,6 +340,7 @@ async def get_function(name: str) -> FunctionDetailResponse:
         avg_wait_ms=avg_wait_ms,
         p95_wait_ms=p95_wait_ms,
         queue_backlog=queue_backlog,
+        dispatch_reasons=dispatch_reasons,
         last_run_at=last_run_at,
         last_run_status=last_run_status,
         recent_runs=recent_runs,
