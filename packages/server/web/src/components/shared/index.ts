@@ -5,3 +5,8 @@ export { ProgressBar } from "./progress-bar";
 export { JobsTable } from "./jobs-table";
 export { JobsTablePanel } from "./jobs-table-panel";
 export { ApiRequestsTable } from "./api-requests-table";
+export {
+  LiveWindowControls,
+  getTimeWindowBounds,
+  type TimeWindowPreset,
+} from "./live-window-controls";

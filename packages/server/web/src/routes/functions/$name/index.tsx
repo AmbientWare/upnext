@@ -1,9 +1,17 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import type { DateRange } from "react-day-picker";
 import { cn, formatNumber, formatDuration, formatTimeAgo, formatTimeUntil } from "@/lib/utils";
 import { getFunction, getJobs, queryKeys } from "@/lib/upnext-api";
 import type { FunctionType } from "@/lib/types";
-import { Panel, JobsTablePanel } from "@/components/shared";
+import {
+  Panel,
+  JobsTablePanel,
+  LiveWindowControls,
+  getTimeWindowBounds,
+  type TimeWindowPreset,
+} from "@/components/shared";
 import { FunctionDetailSkeleton } from "./-components/skeletons";
 import {
   ArrowLeft,
@@ -24,6 +32,8 @@ export const Route = createFileRoute("/functions/$name/")({
 });
 
 const SAFETY_RESYNC_MS = 10 * 60 * 1000;
+const LIVE_RESYNC_MS = 5 * 1000;
+const JOBS_LIMIT = 50;
 
 const typeStyles: Record<FunctionType, string> = {
   task: "bg-blue-500/20 text-blue-400",
@@ -41,6 +51,27 @@ function FunctionDetailPage() {
   const navigate = useNavigate();
   const { name } = Route.useParams();
   const decodedName = decodeURIComponent(name);
+  const [jobsLive, setJobsLive] = useState(true);
+  const [jobsWindowPreset, setJobsWindowPreset] = useState<TimeWindowPreset>("1h");
+  const [jobsDateRange, setJobsDateRange] = useState<DateRange>();
+
+  const jobsWindow = useMemo(() => {
+    if (jobsLive) return null;
+    return getTimeWindowBounds(jobsWindowPreset, jobsDateRange);
+  }, [jobsDateRange, jobsLive, jobsWindowPreset]);
+
+  const jobsQueryParams = useMemo(() => {
+    if (!jobsWindow) {
+      return { function: decodedName, limit: JOBS_LIMIT };
+    }
+
+    return {
+      function: decodedName,
+      limit: JOBS_LIMIT,
+      after: jobsWindow.from.toISOString(),
+      before: jobsWindow.to.toISOString(),
+    };
+  }, [decodedName, jobsWindow]);
 
   // Data fetching
   const { data: fn, isPending: isFunctionPending } = useQuery({
@@ -50,12 +81,13 @@ function FunctionDetailPage() {
   });
 
   const { data: jobsData, isPending: isJobsPending } = useQuery({
-    queryKey: queryKeys.jobs({ function: decodedName, limit: 50 }),
-    queryFn: () => getJobs({ function: decodedName, limit: 50 }),
-    refetchInterval: SAFETY_RESYNC_MS,
+    queryKey: queryKeys.jobs(jobsQueryParams),
+    queryFn: () => getJobs(jobsQueryParams),
+    refetchInterval: jobsLive ? LIVE_RESYNC_MS : false,
+    staleTime: jobsLive ? 0 : SAFETY_RESYNC_MS,
   });
 
-  const jobs = jobsData?.jobs ?? [];
+  const jobs = (jobsData?.jobs ?? []).slice(0, JOBS_LIMIT);
 
   if (isFunctionPending && !fn) {
     return <FunctionDetailSkeleton />;
@@ -183,6 +215,16 @@ function FunctionDetailPage() {
         jobs={jobs}
         hideFunction
         showFilters
+        headerControls={
+          <LiveWindowControls
+            live={jobsLive}
+            onLiveChange={setJobsLive}
+            preset={jobsWindowPreset}
+            onPresetChange={setJobsWindowPreset}
+            dateRange={jobsDateRange}
+            onDateRangeChange={setJobsDateRange}
+          />
+        }
         isLoading={isJobsPending}
         onJobClick={(job) => navigate({ to: "/jobs/$jobId", params: { jobId: job.id } })}
       />

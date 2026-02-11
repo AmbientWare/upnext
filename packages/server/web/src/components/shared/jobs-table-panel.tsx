@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import type { Job } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,7 @@ interface JobsTablePanelProps {
   onJobClick?: (job: Job) => void;
   hideFunction?: boolean;
   showFilters?: boolean;
+  headerControls?: ReactNode;
   isLoading?: boolean;
   className?: string;
   title?: string;
@@ -29,6 +30,7 @@ export function JobsTablePanel({
   onJobClick,
   hideFunction,
   showFilters,
+  headerControls,
   isLoading = false,
   className,
   title = "Recent Jobs",
@@ -51,23 +53,28 @@ export function JobsTablePanel({
       className={className ?? "flex-1 min-h-64 flex flex-col overflow-hidden"}
       contentClassName="flex-1 overflow-hidden"
       titleRight={
-        showFilters ? (
-          <div className="flex items-center gap-1">
-            {statusFilters.map((statusFilter) => (
-              <button
-                key={statusFilter.value}
-                type="button"
-                onClick={() => setFilter(statusFilter.value)}
-                className={cn(
-                  "px-2 py-0.5 text-[10px] rounded transition-colors",
-                  filter === statusFilter.value
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {statusFilter.label}
-              </button>
-            ))}
+        showFilters || headerControls ? (
+          <div className="flex items-center gap-2">
+            {showFilters ? (
+              <div className="flex items-center gap-1">
+                {statusFilters.map((statusFilter) => (
+                  <button
+                    key={statusFilter.value}
+                    type="button"
+                    onClick={() => setFilter(statusFilter.value)}
+                    className={cn(
+                      "px-2 py-0.5 text-[10px] rounded transition-colors",
+                      filter === statusFilter.value
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {statusFilter.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {headerControls}
           </div>
         ) : undefined
       }
