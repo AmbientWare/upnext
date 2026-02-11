@@ -109,6 +109,12 @@ The dashboard and API views use a stream-first model:
 
 This keeps UI updates near-realtime while reducing avoidable polling load.
 
+## Runtime Contract
+
+Queue and worker execution semantics are documented in:
+
+- `docs/execution-guarantees.md`
+
 ## Testing and Verification
 
 Package-level:
