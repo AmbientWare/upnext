@@ -209,3 +209,53 @@ async def test_default_stream_maxlen_does_not_trim_unconsumed_jobs(queue: RedisQ
         seen.append(job.id)
 
     assert seen == submitted
+
+
+@pytest.mark.asyncio
+async def test_failed_job_moves_to_dead_letter_and_can_be_replayed(
+    queue: RedisQueue,
+) -> None:
+    job = Job(function="task_fn", function_name="task", key="dlq-key-1")
+    await queue.enqueue(job)
+
+    active = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert active is not None
+    await queue.finish(active, JobStatus.FAILED, error="poison payload")
+
+    dead_letters = await queue.get_dead_letters("task_fn", limit=10)
+    assert len(dead_letters) == 1
+    entry = dead_letters[0]
+    assert entry.job.id == job.id
+    assert entry.reason == "poison payload"
+
+    replayed_job_id = await queue.replay_dead_letter("task_fn", entry.entry_id)
+    assert replayed_job_id is not None
+    assert replayed_job_id != job.id
+
+    replayed = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert replayed is not None
+    assert replayed.id == replayed_job_id
+    assert replayed.metadata.get("dlq_replayed_from") == entry.entry_id
+
+    assert await queue.get_dead_letters("task_fn", limit=10) == []
+
+
+@pytest.mark.asyncio
+async def test_replay_dead_letter_rejects_duplicate_active_key(queue: RedisQueue) -> None:
+    first = Job(function="task_fn", function_name="task", key="dlq-dup-key")
+    await queue.enqueue(first)
+    active = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert active is not None
+    await queue.finish(active, JobStatus.FAILED, error="failed")
+
+    entry = (await queue.get_dead_letters("task_fn", limit=1))[0]
+
+    blocking = Job(function="task_fn", function_name="task", key="dlq-dup-key")
+    await queue.enqueue(blocking)
+
+    with pytest.raises(DuplicateJobError):
+        await queue.replay_dead_letter("task_fn", entry.entry_id)
+
+    # Replay failed and entry should remain for future manual handling.
+    remaining = await queue.get_dead_letters("task_fn", limit=10)
+    assert len(remaining) == 1

@@ -16,7 +16,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: integration tests that kill workers mid-run and verify reclaim/retry/cancel behavior.
   - Done: no lost jobs; behavior is deterministic and asserted in CI.
 
-- [ ] Add dead-letter strategy for poison jobs.
+- [x] Add dead-letter strategy for poison jobs.
   - How: after max retries, move failed payloads to DLQ stream/set with reason and timestamps.
   - Done: operators can inspect and replay DLQ jobs safely.
 

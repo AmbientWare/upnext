@@ -32,18 +32,21 @@ from shared import Job, JobStatus
 from shared.schemas import FunctionConfig
 from shared.workers import FUNCTION_KEY_PREFIX
 
-from upnext.engine.queue.base import BaseQueue, DuplicateJobError, QueueStats
+from upnext.config import get_settings
+from upnext.engine.queue.base import (
+    BaseQueue,
+    DeadLetterEntry,
+    DuplicateJobError,
+    QueueStats,
+)
 from upnext.engine.queue.redis.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CLAIM_TIMEOUT_MS,
     DEFAULT_CONSUMER_GROUP,
     DEFAULT_FLUSH_INTERVAL,
     DEFAULT_INBOX_SIZE,
-    DEFAULT_JOB_TTL_SECONDS,
     DEFAULT_KEY_PREFIX,
     DEFAULT_OUTBOX_SIZE,
-    DEFAULT_RESULT_TTL_SECONDS,
-    DEFAULT_STREAM_MAXLEN,
     QUEUE_KEY_PREFIX,
     CompletedJob,
 )
@@ -81,8 +84,8 @@ class RedisQueue(BaseQueue):
         key_prefix: str = DEFAULT_KEY_PREFIX,
         consumer_group: str = DEFAULT_CONSUMER_GROUP,
         claim_timeout_ms: int = DEFAULT_CLAIM_TIMEOUT_MS,
-        job_ttl_seconds: int = DEFAULT_JOB_TTL_SECONDS,
-        result_ttl_seconds: int = DEFAULT_RESULT_TTL_SECONDS,
+        job_ttl_seconds: int | None = None,
+        result_ttl_seconds: int | None = None,
         sweep_interval: float = 5.0,
         *,
         client: Any | None = None,
@@ -90,14 +93,25 @@ class RedisQueue(BaseQueue):
         inbox_size: int = DEFAULT_INBOX_SIZE,
         outbox_size: int = DEFAULT_OUTBOX_SIZE,
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
-        stream_maxlen: int = DEFAULT_STREAM_MAXLEN,
+        stream_maxlen: int | None = None,
+        dlq_stream_maxlen: int | None = None,
     ) -> None:
+        settings = get_settings()
+
         self._redis_url = redis_url
         self._key_prefix = key_prefix
         self._consumer_group = consumer_group
         self._claim_timeout_ms = claim_timeout_ms
-        self._job_ttl_seconds = job_ttl_seconds
-        self._result_ttl_seconds = result_ttl_seconds
+        self._job_ttl_seconds = (
+            settings.queue_job_ttl_seconds
+            if job_ttl_seconds is None
+            else int(job_ttl_seconds)
+        )
+        self._result_ttl_seconds = (
+            settings.queue_result_ttl_seconds
+            if result_ttl_seconds is None
+            else int(result_ttl_seconds)
+        )
         self._sweep_interval = sweep_interval
 
         # Batching config (stored for component creation)
@@ -105,7 +119,22 @@ class RedisQueue(BaseQueue):
         self._inbox_size = inbox_size
         self._outbox_size = outbox_size
         self._flush_interval = flush_interval
-        self._stream_maxlen = max(0, int(stream_maxlen))
+        self._stream_maxlen = max(
+            0,
+            (
+                settings.queue_stream_maxlen
+                if stream_maxlen is None
+                else int(stream_maxlen)
+            ),
+        )
+        self._dlq_stream_maxlen = max(
+            0,
+            (
+                settings.queue_dlq_stream_maxlen
+                if dlq_stream_maxlen is None
+                else int(dlq_stream_maxlen)
+            ),
+        )
 
         self._consumer_id = f"consumer_{uuid.uuid4().hex[:8]}"
         self._client: Any = client
@@ -252,6 +281,9 @@ class RedisQueue(BaseQueue):
     def _dedup_key(self, function: str) -> str:
         return self._key("fn", function, "dedup")
 
+    def _dlq_stream_key(self, function: str) -> str:
+        return self._key("fn", function, "dlq")
+
     def _job_key(self, job: Job) -> str:
         return self._key("job", job.function, job.id)
 
@@ -324,6 +356,37 @@ class RedisQueue(BaseQueue):
                 maxlen=self._stream_maxlen,
                 approximate=True,
             )
+        else:
+            await client.xadd(stream_key, payload)
+
+    @staticmethod
+    def _decode_text(value: Any) -> str:
+        if isinstance(value, bytes):
+            return value.decode()
+        return str(value)
+
+    def _dlq_payload(self, job: Job, reason: str | None) -> dict[str, Any]:
+        failed_at = (job.completed_at or datetime.now(UTC)).isoformat()
+        return {
+            "job_id": job.id,
+            "function": job.function,
+            "failed_at": failed_at,
+            "reason": reason or "",
+            "attempts": job.attempts,
+            "max_retries": job.max_retries,
+            "data": job.to_json(),
+        }
+
+    async def _write_dead_letter(
+        self,
+        client: Any,
+        job: Job,
+        reason: str | None,
+    ) -> None:
+        stream_key = self._dlq_stream_key(job.function)
+        payload = self._dlq_payload(job, reason)
+        if self._dlq_stream_maxlen > 0:
+            await client.xadd(stream_key, payload, maxlen=self._dlq_stream_maxlen)
         else:
             await client.xadd(stream_key, payload)
 
@@ -749,6 +812,9 @@ class RedisQueue(BaseQueue):
             if job.key:
                 await client.srem(dedup_key, job.key)
             await client.publish(pubsub_channel, status.value)
+
+        if status == JobStatus.FAILED:
+            await self._write_dead_letter(client, job, error)
 
         # Job has terminally finished; clear cancellation marker if present.
         await client.delete(self._cancel_marker_key(job.id))
@@ -1191,6 +1257,97 @@ class RedisQueue(BaseQueue):
                     jobs.append(job)
 
         return jobs
+
+    async def get_dead_letters(
+        self,
+        function: str,
+        *,
+        limit: int = 100,
+    ) -> list[DeadLetterEntry]:
+        client = await self._ensure_connected()
+        dlq_stream = self._dlq_stream_key(function)
+
+        try:
+            rows = await client.xrevrange(dlq_stream, count=max(1, limit))
+        except redis.ResponseError:
+            return []
+
+        entries: list[DeadLetterEntry] = []
+        for msg_id, msg_data in rows:
+            data_raw = msg_data.get(b"data") or msg_data.get("data")
+            if not data_raw:
+                continue
+
+            try:
+                job = Job.from_json(self._decode_text(data_raw))
+            except Exception:
+                continue
+
+            failed_at_raw = msg_data.get(b"failed_at") or msg_data.get("failed_at")
+            failed_at = None
+            if failed_at_raw:
+                try:
+                    failed_at = datetime.fromisoformat(self._decode_text(failed_at_raw))
+                except ValueError:
+                    failed_at = None
+
+            reason_raw = msg_data.get(b"reason") or msg_data.get("reason")
+            reason = self._decode_text(reason_raw) if reason_raw else None
+            if reason == "":
+                reason = None
+
+            entries.append(
+                DeadLetterEntry(
+                    entry_id=self._decode_text(msg_id),
+                    function=function,
+                    job=job,
+                    failed_at=failed_at,
+                    reason=reason,
+                )
+            )
+
+        return entries
+
+    async def replay_dead_letter(self, function: str, entry_id: str) -> str | None:
+        client = await self._ensure_connected()
+        dlq_stream = self._dlq_stream_key(function)
+        rows = await client.xrange(dlq_stream, min=entry_id, max=entry_id, count=1)
+        if not rows:
+            return None
+
+        _msg_id, msg_data = rows[0]
+        data_raw = msg_data.get(b"data") or msg_data.get("data")
+        if not data_raw:
+            return None
+
+        dead_job = Job.from_json(self._decode_text(data_raw))
+        if dead_job.function != function:
+            raise ValueError(
+                f"Dead-letter function mismatch: expected '{function}', got '{dead_job.function}'"
+            )
+
+        replayed = Job(
+            function=dead_job.function,
+            function_name=dead_job.function_name,
+            kwargs=dict(dead_job.kwargs),
+            key=dead_job.key,
+            timeout=dead_job.timeout,
+            max_retries=dead_job.max_retries,
+            retry_delay=dead_job.retry_delay,
+            retry_backoff=dead_job.retry_backoff,
+            parent_id=dead_job.parent_id,
+            root_id=dead_job.root_id if dead_job.parent_id else "",
+            metadata=dict(dead_job.metadata or {}),
+            schedule=dead_job.schedule,
+        )
+        replayed.metadata["dlq_replayed_from"] = entry_id
+        failed_at_raw = msg_data.get(b"failed_at") or msg_data.get("failed_at")
+        if failed_at_raw:
+            replayed.metadata["dlq_failed_at"] = self._decode_text(failed_at_raw)
+
+        new_job_id = await self.enqueue(replayed)
+        await client.xdel(dlq_stream, entry_id)
+        return new_job_id
 
     # =========================================================================
     # STREAM OPERATIONS (for user-facing stream processing)

@@ -150,6 +150,7 @@ class Worker:
             job_ttl_seconds=settings.queue_job_ttl_seconds,
             result_ttl_seconds=settings.queue_result_ttl_seconds,
             stream_maxlen=settings.queue_stream_maxlen,
+            dlq_stream_maxlen=settings.queue_dlq_stream_maxlen,
         )
 
         # Connect task handles to queue

@@ -8,6 +8,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from shared.models import JobStatus
 from upnext.engine.queue.redis.constants import CompletedJob
 
 if TYPE_CHECKING:
@@ -150,6 +151,17 @@ class Finisher:
                     if job.key:
                         pipe.srem(self._queue._dedup_key(job.function), job.key)
                     pipe.publish(f"upnext:job:{job.id}", completed.status.value)
+                if completed.status == JobStatus.FAILED:
+                    dlq_stream_key = self._queue._dlq_stream_key(job.function)
+                    dlq_payload = self._queue._dlq_payload(job, completed.error)
+                    if self._queue._dlq_stream_maxlen > 0:
+                        pipe.xadd(
+                            dlq_stream_key,
+                            dlq_payload,
+                            maxlen=self._queue._dlq_stream_maxlen,
+                        )
+                    else:
+                        pipe.xadd(dlq_stream_key, dlq_payload)
                 pipe.delete(self._queue._cancel_marker_key(job.id))
 
             await pipe.execute()

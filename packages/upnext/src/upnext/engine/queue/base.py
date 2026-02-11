@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from shared.models import Job, JobStatus
@@ -319,6 +321,34 @@ class BaseQueue(ABC):
         _ = (function, limit)
         return []
 
+    async def get_dead_letters(
+        self,
+        function: str,
+        *,
+        limit: int = 100,
+    ) -> list["DeadLetterEntry"]:
+        """
+        List dead-letter records for a function.
+
+        Default: returns empty list.
+        """
+        _ = (function, limit)
+        return []
+
+    async def replay_dead_letter(
+        self,
+        function: str,
+        entry_id: str,
+    ) -> str | None:
+        """
+        Replay a dead-letter record by ID.
+
+        Returns the new job ID if replayed, else None when the record is missing.
+        Default: no-op.
+        """
+        _ = (function, entry_id)
+        return None
+
     # =========================================================================
     # CRON - Defaults use enqueue with delay
     # =========================================================================
@@ -484,6 +514,17 @@ class QueueStats:
             f"scheduled={self.scheduled}, completed={self.completed}, "
             f"failed={self.failed})"
         )
+
+
+@dataclass
+class DeadLetterEntry:
+    """Dead-letter queue entry."""
+
+    entry_id: str
+    function: str
+    job: Job
+    failed_at: datetime | None = None
+    reason: str | None = None
 
 
 class QueueError(Exception):

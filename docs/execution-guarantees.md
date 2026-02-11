@@ -29,6 +29,12 @@ This document defines the runtime contract for enqueue/dequeue/retry/cancel beha
 - Jobs queued while paused remain durable in queue storage.
 - On resume, queued jobs continue processing normally.
 
+## Dead-Letter Behavior
+
+- Terminal failed jobs are appended to a per-function dead-letter stream (`...:fn:{function}:dlq`) with failure reason and timestamp.
+- Dead-letter records can be listed and replayed through queue APIs.
+- Replay enqueues a fresh job payload and removes the replayed dead-letter record only on successful enqueue.
+
 ## Source of Truth Tests
 
 These tests enforce the contract:
