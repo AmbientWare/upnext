@@ -209,6 +209,7 @@ async def list_jobs(
                 progress=job.progress,
                 kwargs=job.kwargs,
                 metadata=job.metadata_,
+                queue_wait_ms=job.queue_wait_ms,
                 result=job.result,
                 error=job.error,
                 duration_ms=calculate_duration_ms(job.started_at, job.completed_at),
@@ -399,6 +400,7 @@ async def get_job_timeline(job_id: str) -> JobListResponse:
                     progress=job.progress,
                     kwargs=job.kwargs,
                     metadata=job.metadata_,
+                    queue_wait_ms=job.queue_wait_ms,
                     result=job.result,
                     error=job.error,
                     duration_ms=calculate_duration_ms(
@@ -449,6 +451,7 @@ async def get_job(job_id: str) -> JobHistoryResponse:
             progress=job.progress,
             kwargs=job.kwargs,
             metadata=job.metadata_,
+            queue_wait_ms=job.queue_wait_ms,
             result=job.result,
             error=job.error,
             duration_ms=calculate_duration_ms(job.started_at, job.completed_at),

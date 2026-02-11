@@ -27,7 +27,15 @@ async def test_job_started_duplicate_is_ignored(sqlite_db) -> None:
         "attempt": 1,
         "max_retries": 2,
         "started_at": started_at,
-        "metadata": {"a": 1},
+        "scheduled_at": started_at - timedelta(seconds=2),
+        "queue_wait_ms": 250.5,
+        "metadata": {
+            "a": 1,
+            "_stream_key": "upnext:queue:stream:task_key",
+            "_stream_msg_id": "123-0",
+            "queued_at": started_at.isoformat(),
+            "queue_wait_ms": 999,
+        },
         "kwargs": {"x": 1},
     }
 
@@ -45,6 +53,8 @@ async def test_job_started_duplicate_is_ignored(sqlite_db) -> None:
         assert row.status == "active"
         assert row.attempts == 1
         assert _as_utc_aware(row.started_at) == started_at
+        assert row.queue_wait_ms == pytest.approx(250.5)
+        assert row.metadata_ == {"a": 1}
 
 
 @pytest.mark.asyncio

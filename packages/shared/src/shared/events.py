@@ -33,6 +33,8 @@ class JobStartedEvent(BaseModel):
     root_id: str
     kwargs: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    scheduled_at: datetime | None = None
+    queue_wait_ms: float | None = None
     attempt: int = 1
     max_retries: int = 0
     worker_id: str | None = None

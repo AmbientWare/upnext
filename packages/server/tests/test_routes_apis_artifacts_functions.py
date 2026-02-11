@@ -234,7 +234,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
                 "created_at": now - timedelta(hours=2),
                 "started_at": now - timedelta(hours=2),
                 "completed_at": now - timedelta(hours=2) + timedelta(seconds=1),
-                "metadata": {"queue_wait_ms": 100},
+                "queue_wait_ms": 100,
             }
         )
         await repo.record_job(
@@ -247,7 +247,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
                 "created_at": now - timedelta(hours=1),
                 "started_at": now - timedelta(hours=1),
                 "completed_at": now - timedelta(hours=1) + timedelta(seconds=3),
-                "metadata": {"queue_wait_ms": 300},
+                "queue_wait_ms": 300,
             }
         )
 
@@ -380,7 +380,7 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
                 "created_at": now - timedelta(minutes=5),
                 "started_at": now - timedelta(minutes=5),
                 "completed_at": now - timedelta(minutes=5) + timedelta(seconds=1),
-                "metadata": {"queue_wait_ms": 40},
+                "queue_wait_ms": 40,
             }
         )
         await repo.record_job(
@@ -394,7 +394,7 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
                 "started_at": now - timedelta(minutes=4),
                 "completed_at": now - timedelta(minutes=4) + timedelta(seconds=3),
                 "error": "boom",
-                "metadata": {"queue_wait_ms": 120},
+                "queue_wait_ms": 120,
             }
         )
         await repo.record_job(
@@ -406,7 +406,7 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
                 "root_id": "fn-detail-3",
                 "created_at": now - timedelta(minutes=3),
                 "started_at": now - timedelta(minutes=3),
-                "metadata": {"queue_wait_ms": 80},
+                "queue_wait_ms": 80,
             }
         )
 

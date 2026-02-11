@@ -30,6 +30,7 @@ def upgrade() -> None:
     sa.Column('scheduled_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('queue_wait_ms', sa.Float(), nullable=True),
     sa.Column('attempts', sa.Integer(), nullable=False),
     sa.Column('max_retries', sa.Integer(), nullable=False),
     sa.Column('timeout', sa.Float(), nullable=True),

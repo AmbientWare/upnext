@@ -48,6 +48,7 @@ class JobHistory(Base):
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    queue_wait_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Execution
     attempts: Mapped[int] = mapped_column(Integer, default=1)

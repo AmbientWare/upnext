@@ -58,6 +58,7 @@ class JobHistoryResponse(BaseModel):
     progress: float = 0.0
     kwargs: dict[str, Any] = {}
     metadata: dict[str, Any] = {}
+    queue_wait_ms: float | None = None
     result: Any = None
     error: str | None = None
     duration_ms: float | None = None
@@ -547,6 +548,39 @@ class ApiStats(BaseModel):
     error_rate: float
 
 
+class TopFailingFunction(BaseModel):
+    """Runbook row for top failing functions."""
+
+    key: str
+    name: str
+    runs_24h: int
+    failures_24h: int
+    failure_rate: float
+    last_run_at: str | None = None
+
+
+class OldestQueuedJob(BaseModel):
+    """Runbook row for oldest queued jobs from Redis queues."""
+
+    id: str
+    function: str
+    function_name: str
+    queued_at: str
+    age_seconds: float
+    source: str
+
+
+class StuckActiveJob(BaseModel):
+    """Runbook row for active jobs exceeding stuck threshold."""
+
+    id: str
+    function: str
+    function_name: str
+    worker_id: str | None = None
+    started_at: str
+    age_seconds: float
+
+
 class DashboardStats(BaseModel):
     """Dashboard stats response."""
 
@@ -556,3 +590,6 @@ class DashboardStats(BaseModel):
     apis: ApiStats
     recent_runs: list[Run]
     recent_failures: list[Run]
+    top_failing_functions: list[TopFailingFunction] = []
+    oldest_queued_jobs: list[OldestQueuedJob] = []
+    stuck_active_jobs: list[StuckActiveJob] = []

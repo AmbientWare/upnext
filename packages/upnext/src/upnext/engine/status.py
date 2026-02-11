@@ -139,6 +139,8 @@ class StatusPublisher:
         root_id: str,
         parent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        scheduled_at: datetime | None = None,
+        queue_wait_ms: float | None = None,
     ) -> None:
         """Record job started event."""
         await self.record(
@@ -149,6 +151,8 @@ class StatusPublisher:
             parent_id=parent_id,
             root_id=root_id,
             metadata=metadata or {},
+            scheduled_at=scheduled_at.isoformat() if scheduled_at else None,
+            queue_wait_ms=queue_wait_ms,
             attempt=attempt,
             max_retries=max_retries,
             started_at=datetime.now(UTC).isoformat(),

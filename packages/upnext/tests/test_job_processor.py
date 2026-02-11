@@ -62,7 +62,7 @@ class _QueueRecorder:
 
 @dataclass
 class _StatusRecorder:
-    started: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    started: list[dict[str, Any]] = field(default_factory=list)
     completed: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     retrying: list[tuple[str, float]] = field(default_factory=list)
@@ -80,9 +80,18 @@ class _StatusRecorder:
         root_id: str,
         parent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        scheduled_at: datetime | None = None,
+        queue_wait_ms: float | None = None,
     ) -> None:
         _ = (function, function_name, attempt, max_retries, root_id, parent_id)
-        self.started.append((job_id, dict(metadata or {})))
+        self.started.append(
+            {
+                "job_id": job_id,
+                "metadata": dict(metadata or {}),
+                "scheduled_at": scheduled_at,
+                "queue_wait_ms": queue_wait_ms,
+            }
+        )
 
     async def record_job_completed(
         self, job_id: str, *args: Any, **kwargs: Any
@@ -549,11 +558,15 @@ async def test_process_one_records_queue_wait_metadata_on_started_event() -> Non
         await processor._process_one()  # noqa: SLF001
 
         assert len(status.started) == 1
-        started_job_id, started_metadata = status.started[0]
-        assert started_job_id == job.id
+        started = status.started[0]
+        assert started["job_id"] == job.id
+        started_metadata = started["metadata"]
         assert started_metadata["source"] == "test"
-        assert started_metadata.get("queued_at") == job.scheduled_at.isoformat()
-        assert float(started_metadata.get("queue_wait_ms", 0.0)) >= 1500.0
+        assert started["scheduled_at"] == job.scheduled_at
+        assert started["queue_wait_ms"] is not None
+        assert float(started["queue_wait_ms"]) >= 1500.0
+        assert "queued_at" not in started_metadata
+        assert "queue_wait_ms" not in started_metadata
         assert queue.finished == [(job.id, JobStatus.COMPLETE, "ok", None)]
     finally:
         processor._sync_pool.shutdown(wait=False)  # noqa: SLF001

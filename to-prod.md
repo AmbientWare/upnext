@@ -62,6 +62,10 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: record enqueue->start delay histograms and queued depth per function.
   - Done: dashboard shows lag, p95 wait, and backlog hotspots.
 
+- [x] Persist queue wait as typed storage (not metadata parsing).
+  - How: carry `scheduled_at` + `queue_wait_ms` in `job.started`, store `queue_wait_ms` in DB column, sanitize transient metadata keys.
+  - Done: wait metrics query typed columns directly; metadata is context-only.
+
 - [x] Expose dispatch reason codes.
   - How: emit structured reasons (`paused`, `rate_limited`, `no_capacity`, `cancelled`, `retrying`) in events/metrics.
   - Done: operators can explain why jobs are not running.

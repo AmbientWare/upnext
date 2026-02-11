@@ -725,6 +725,11 @@ class Worker:
                     parent_id=job.parent_id,
                     root_id=job.root_id,
                     metadata=job.metadata,
+                    scheduled_at=job.scheduled_at,
+                    queue_wait_ms=round(
+                        max(0.0, (time_module.time() - job.scheduled_at.timestamp()) * 1000),
+                        3,
+                    ),
                 )
 
             # Execute the function

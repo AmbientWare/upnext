@@ -36,6 +36,18 @@ from upnext.sdk.context import Context, set_current_context
 from upnext.types import SyncExecutor
 
 logger = logging.getLogger(__name__)
+_METADATA_NON_PERSISTED_KEYS = frozenset({"_stream_key", "_stream_msg_id"})
+
+
+def _sanitize_started_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Strip queue transport keys before emitting job.started metadata."""
+    if not metadata:
+        return {}
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in _METADATA_NON_PERSISTED_KEYS
+    }
 
 
 def _run_sync_task_with_context(
@@ -379,17 +391,13 @@ class JobProcessor:
                 attempt_info,
             )
 
-            started_metadata = dict(job.metadata or {})
+            started_metadata = _sanitize_started_metadata(job.metadata)
+            queue_wait_ms: float | None = None
             if job.scheduled_at is not None:
-                started_metadata.setdefault(
-                    "queued_at",
-                    job.scheduled_at.isoformat(),
+                queue_wait_ms = round(
+                    max(0.0, (time.time() - job.scheduled_at.timestamp()) * 1000),
+                    3,
                 )
-                queue_wait_ms = max(
-                    0.0,
-                    (time.time() - job.scheduled_at.timestamp()) * 1000,
-                )
-                started_metadata["queue_wait_ms"] = round(queue_wait_ms, 3)
 
             if self._status_buffer:
                 await self._status_buffer.record_job_started(
@@ -401,6 +409,8 @@ class JobProcessor:
                     parent_id=job.parent_id,
                     root_id=job.root_id,
                     metadata=started_metadata,
+                    scheduled_at=job.scheduled_at,
+                    queue_wait_ms=queue_wait_ms,
                 )
 
             # Execute job (track for auto-heartbeating)

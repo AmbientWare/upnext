@@ -37,6 +37,35 @@ class FunctionWaitStats:
     p95_wait_ms: float
 
 
+_NON_PERSISTED_JOB_METADATA_KEYS = frozenset(
+    {"_stream_key", "_stream_msg_id", "queued_at", "queue_wait_ms"}
+)
+
+
+def _coerce_non_negative_float(value: Any) -> float | None:
+    """Parse numeric values used for persisted metrics."""
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
+def _sanitize_job_metadata(value: Any) -> dict[str, Any]:
+    """Drop transient/system keys from job metadata before DB persistence."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in _NON_PERSISTED_JOB_METADATA_KEYS
+    }
+
+
 def _infer_artifact_metadata(
     *,
     data: Any | None,
@@ -110,6 +139,7 @@ class JobRepository:
         Returns:
             Created JobHistory record
         """
+        queue_wait_ms = _coerce_non_negative_float(data.get("queue_wait_ms"))
         history = JobHistory(
             id=data["job_id"],
             function=data["function"],
@@ -127,7 +157,8 @@ class JobRepository:
             root_id=data.get("root_id", data["job_id"]),
             progress=data.get("progress", 0.0),
             kwargs=data.get("kwargs", {}),
-            metadata_=data.get("metadata", {}),
+            metadata_=_sanitize_job_metadata(data.get("metadata", {})),
+            queue_wait_ms=queue_wait_ms,
             result=data.get("result"),
             error=data.get("error"),
         )
@@ -479,14 +510,12 @@ class JobRepository:
         function: str | None = None,
     ) -> dict[str, FunctionWaitStats]:
         """
-        Compute per-function queue wait metrics from persisted job metadata.
-
-        Wait time is expected in `metadata.queue_wait_ms` and is written by
-        workers when a job starts execution.
+        Compute per-function queue wait metrics from persisted job columns.
         """
-        query = select(JobHistory.function, JobHistory.metadata_).where(
+        query = select(JobHistory.function, JobHistory.queue_wait_ms).where(
             JobHistory.created_at >= start_date,
             JobHistory.started_at.isnot(None),
+            JobHistory.queue_wait_ms.isnot(None),
         )
         if function:
             query = query.where(JobHistory.function == function)
@@ -495,15 +524,8 @@ class JobRepository:
         waits_by_function: dict[str, list[float]] = {}
 
         for row in result.all():
-            metadata = row.metadata_ if isinstance(row.metadata_, dict) else {}
-            raw_wait = metadata.get("queue_wait_ms")
-            if raw_wait is None:
-                continue
-            try:
-                wait_ms = float(raw_wait)
-            except (TypeError, ValueError):
-                continue
-            if wait_ms < 0:
+            wait_ms = _coerce_non_negative_float(row.queue_wait_ms)
+            if wait_ms is None:
                 continue
             waits_by_function.setdefault(row.function, []).append(wait_ms)
 
@@ -519,6 +541,26 @@ class JobRepository:
                 p95_wait_ms=round(waits[p95_idx], 2),
             )
         return out
+
+    async def list_stuck_active_jobs(
+        self,
+        *,
+        started_before: datetime,
+        limit: int = 10,
+    ) -> list[JobHistory]:
+        """List active jobs that have been running since before `started_before`."""
+        query = (
+            select(JobHistory)
+            .where(
+                JobHistory.status == "active",
+                JobHistory.started_at.isnot(None),
+                JobHistory.started_at <= started_before,
+            )
+            .order_by(JobHistory.started_at.asc())
+            .limit(limit)
+        )
+        result = await self._session.execute(query)
+        return list(result.scalars().all())
 
     async def list_old_job_ids(self, retention_days: int = 30) -> list[str]:
         """Return job IDs older than retention cutoff."""

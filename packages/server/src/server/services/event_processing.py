@@ -29,6 +29,9 @@ from server.services.redis import get_redis
 logger = logging.getLogger(__name__)
 
 EventProcessor = Callable[[dict[str, Any], str | None], Awaitable[bool]]
+_NON_PERSISTED_JOB_METADATA_KEYS = frozenset(
+    {"_stream_key", "_stream_msg_id", "queued_at", "queue_wait_ms"}
+)
 
 
 @dataclass
@@ -79,6 +82,30 @@ def _as_utc_aware(ts: datetime | None) -> datetime | None:
     if ts.tzinfo is None:
         return ts.replace(tzinfo=UTC)
     return ts.astimezone(UTC)
+
+
+def _coerce_non_negative_float(value: Any) -> float | None:
+    """Parse numeric event metrics that should be persisted as typed columns."""
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
+def _sanitize_persisted_metadata(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep only user/feature metadata keys in persistent storage."""
+    if not value:
+        return {}
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in _NON_PERSISTED_JOB_METADATA_KEYS
+    }
 
 
 async def process_event(
@@ -164,7 +191,8 @@ async def _handle_job_started(
             existing = await repo.get_by_id(event.job_id)
             parent_id = event.parent_id
             root_id = event.root_id
-            event_metadata = dict(event.metadata or {})
+            event_metadata = _sanitize_persisted_metadata(event.metadata)
+            queue_wait_ms = _coerce_non_negative_float(event.queue_wait_ms)
 
             if existing:
                 existing_attempts = existing.attempts or 0
@@ -212,12 +240,16 @@ async def _handle_job_started(
                 existing.parent_id = parent_id
                 existing.root_id = root_id
                 existing.started_at = event.started_at
+                existing.scheduled_at = event.scheduled_at
+                existing.queue_wait_ms = queue_wait_ms
                 existing.completed_at = None
                 existing.progress = 0.0
                 existing.error = None
                 existing.result = None
                 if event_metadata:
-                    merged_metadata = dict(existing.metadata_ or {})
+                    merged_metadata = _sanitize_persisted_metadata(
+                        dict(existing.metadata_ or {})
+                    )
                     merged_metadata.update(event_metadata)
                     existing.metadata_ = merged_metadata
             else:
@@ -233,6 +265,8 @@ async def _handle_job_started(
                         "worker_id": event.worker_id or worker_id,
                         "parent_id": parent_id,
                         "root_id": root_id,
+                        "scheduled_at": event.scheduled_at,
+                        "queue_wait_ms": queue_wait_ms,
                         "started_at": event.started_at,
                         "created_at": event.started_at,
                         "metadata": event_metadata,
