@@ -402,3 +402,64 @@ async def test_cron_cursor_persists_next_and_last_completion(queue: RedisQueue) 
     )
     assert cursor["next_run_at"] is not None
     assert cursor["last_completed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_cron_startup_reconciliation_enqueues_catchup_when_cursor_is_stale(
+    queue: RedisQueue,
+) -> None:
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+
+    await client.hset(
+        queue._cron_cursor_key(),  # noqa: SLF001
+        "cron.reconcile",
+        json.dumps(
+            {
+                "function": "cron.reconcile",
+                "next_run_at": datetime.fromtimestamp(now - 120, UTC).isoformat(),
+                "last_completed_at": None,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        ),
+    )
+
+    cron_job = Job(
+        function="cron.reconcile",
+        function_name="cron_reconcile",
+        key="cron:cron.reconcile",
+        schedule="* * * * *",
+        metadata={"cron": True},
+    )
+
+    reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
+    assert reconciled is True
+
+    cron_job_id_raw = await client.hget(
+        queue._cron_registry_key(),  # noqa: SLF001
+        "cron:cron.reconcile",
+    )
+    assert cron_job_id_raw is not None
+    cron_job_id = (
+        cron_job_id_raw.decode()
+        if isinstance(cron_job_id_raw, bytes)
+        else str(cron_job_id_raw)
+    )
+
+    reconciled_job_raw = await client.get(
+        queue._key("job", "cron.reconcile", cron_job_id)  # noqa: SLF001
+    )
+    assert reconciled_job_raw is not None
+    reconciled_job = Job.from_json(
+        reconciled_job_raw.decode()
+        if isinstance(reconciled_job_raw, bytes)
+        else reconciled_job_raw
+    )
+    assert reconciled_job.metadata.get("startup_reconciled") is True
+
+    cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.reconcile")  # noqa: SLF001
+    assert cursor_raw is not None
+    cursor = json.loads(
+        cursor_raw.decode() if isinstance(cursor_raw, bytes) else cursor_raw
+    )
+    assert datetime.fromisoformat(cursor["next_run_at"]).timestamp() > now

@@ -39,6 +39,7 @@ This document defines the runtime contract for enqueue/dequeue/retry/cancel beha
 
 - Cron scheduling writes durable cursor state per function (last completion + next scheduled run).
 - Cursor state is stored independently of worker process memory so restart retains scheduling progress.
+- Worker startup reconciliation checks stale cursors and enqueues a catch-up run when schedule state is behind and no pending cron run exists.
 
 ## Source of Truth Tests
 

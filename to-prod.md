@@ -44,7 +44,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: track last successful run cursor per cron/function in durable store.
   - Done: restart does not lose schedule state.
 
-- [ ] Add startup reconciliation for missed runs.
+- [x] Add startup reconciliation for missed runs.
   - How: on boot, compare expected schedule windows with persisted cursor and backfill per policy.
   - Done: missed windows are either replayed or intentionally skipped with reason.
 

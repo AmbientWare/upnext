@@ -33,6 +33,7 @@ from shared.schemas import FunctionConfig
 from shared.workers import FUNCTION_KEY_PREFIX
 
 from upnext.config import get_settings
+from upnext.engine.cron import calculate_next_cron_run
 from upnext.engine.queue.base import (
     BaseQueue,
     DeadLetterEntry,
@@ -1777,6 +1778,24 @@ class RedisQueue(BaseQueue):
         }
         await client.hset(self._cron_cursor_key(), function, json.dumps(payload))
 
+    async def _read_cron_cursor(
+        self,
+        client: Any,
+        *,
+        function: str,
+    ) -> dict[str, Any] | None:
+        raw = await client.hget(self._cron_cursor_key(), function)
+        if not raw:
+            return None
+        payload = raw.decode() if isinstance(raw, bytes) else str(raw)
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return parsed
+
     async def seed_cron(self, job: Job, next_run_at: float) -> bool:
         client = await self._ensure_connected()
 
@@ -1838,6 +1857,87 @@ class RedisQueue(BaseQueue):
         await self._update_function_next_run(client, job.function, next_run_at)
 
         return new_job.id
+
+    async def reconcile_cron_startup(
+        self,
+        job: Job,
+        *,
+        now_ts: float | None = None,
+    ) -> bool:
+        client = await self._ensure_connected()
+        current_ts = time.time() if now_ts is None else now_ts
+
+        cursor = await self._read_cron_cursor(client, function=job.function)
+        if not cursor:
+            return False
+
+        next_run_at_raw = cursor.get("next_run_at")
+        if not isinstance(next_run_at_raw, str):
+            return False
+        try:
+            next_run_at = datetime.fromisoformat(next_run_at_raw).timestamp()
+        except ValueError:
+            return False
+
+        if next_run_at > current_ts:
+            return False
+
+        cron_registry = self._cron_registry_key()
+        cron_key = f"cron:{job.function}"
+        current_job_id = await client.hget(cron_registry, cron_key)
+        if isinstance(current_job_id, bytes):
+            current_job_id = current_job_id.decode()
+
+        if current_job_id:
+            scheduled_key = self._scheduled_key(job.function)
+            scheduled_score = await client.zscore(scheduled_key, current_job_id)
+            job_key = self._key("job", job.function, current_job_id)
+            if scheduled_score is not None or await client.exists(job_key):
+                # A cron run is already present; no extra catch-up enqueue needed.
+                return False
+
+        catchup_job = Job(
+            function=job.function,
+            function_name=job.function_name,
+            kwargs=job.kwargs,
+            key=f"cron:{job.function}",
+            schedule=job.schedule,
+            timeout=job.timeout,
+            metadata=dict(job.metadata or {}),
+        )
+        catchup_job.metadata.setdefault("cron", True)
+        catchup_job.metadata["startup_reconciled"] = True
+        catchup_job.mark_queued("Cron startup reconciliation catch-up")
+
+        try:
+            await self.enqueue(catchup_job, delay=0)
+        except DuplicateJobError:
+            return False
+
+        await client.hset(cron_registry, cron_key, catchup_job.id)
+
+        base_time = datetime.fromtimestamp(current_ts, UTC)
+        next_future = calculate_next_cron_run(job.schedule or "* * * * *", base_time)
+        last_completed_at: datetime | None = None
+        raw_last_completed = cursor.get("last_completed_at")
+        if isinstance(raw_last_completed, str):
+            try:
+                last_completed_at = datetime.fromisoformat(raw_last_completed)
+            except ValueError:
+                last_completed_at = None
+
+        await self._write_cron_cursor(
+            client,
+            function=job.function,
+            next_run_at=next_future.timestamp(),
+            last_completed_at=last_completed_at,
+        )
+        await self._update_function_next_run(
+            client,
+            job.function,
+            next_future.timestamp(),
+        )
+        return True
 
     async def _update_function_next_run(
         self, client: redis.Redis, function_name: str, next_run_at: float

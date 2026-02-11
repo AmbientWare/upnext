@@ -405,6 +405,21 @@ class BaseQueue(ABC):
         delay = max(0.0, next_run_at - time.time())
         return await self.enqueue(new_job, delay=delay)
 
+    async def reconcile_cron_startup(
+        self,
+        job: Job,
+        *,
+        now_ts: float | None = None,
+    ) -> bool:
+        """
+        Reconcile cron schedule state at startup.
+
+        Returns True when reconciliation enqueued or adjusted schedule state.
+        Default: no-op.
+        """
+        _ = (job, now_ts)
+        return False
+
     # =========================================================================
     # STREAMS - No-op defaults (events require Redis)
     # =========================================================================

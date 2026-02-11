@@ -501,9 +501,20 @@ class Worker:
                             f"Seeded cron '{cron_def.display_name}' ({cron_def.key}) → {next_run}"
                         )
                     else:
-                        logger.debug(
-                            f"Cron '{cron_def.display_name}' ({cron_def.key}) already registered"
+                        reconciled = await self._queue_backend.reconcile_cron_startup(
+                            job,
+                            now_ts=time_module.time(),
                         )
+                        if reconciled:
+                            logger.debug(
+                                "Cron '%s' (%s) startup reconciliation enqueued catch-up run",
+                                cron_def.display_name,
+                                cron_def.key,
+                            )
+                        else:
+                            logger.debug(
+                                f"Cron '{cron_def.display_name}' ({cron_def.key}) already registered"
+                            )
             except Exception as e:
                 logger.error(
                     f"Failed to seed cron job '{cron_def.display_name}' ({cron_def.key}): {e}"
