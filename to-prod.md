@@ -30,7 +30,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: maintain active-count guards per function key; dequeue only when under cap.
   - Done: hot functions cannot exceed configured concurrent runs.
 
-- [ ] Prevent queue starvation.
+- [x] Prevent queue starvation.
   - How: schedule dequeue fairly (round-robin/weighted rotation) instead of always favoring hottest streams.
   - Done: low-volume queues continue to make progress under high-volume contention.
 

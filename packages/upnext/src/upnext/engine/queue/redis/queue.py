@@ -155,6 +155,7 @@ class RedisQueue(BaseQueue):
         self._function_rate_limit_cache: dict[str, tuple[RateLimit | None, float]] = {}
         self._function_max_concurrency_cache: dict[str, tuple[int | None, float]] = {}
         self._function_active_count_cache: dict[str, tuple[int, float]] = {}
+        self._fair_dequeue_cursor = 0
 
         # Components (created on start)
         self._fetcher = None
@@ -488,6 +489,15 @@ class RedisQueue(BaseQueue):
                 runnable.append(function)
         return runnable
 
+    def _fair_order_functions(self, functions: list[str]) -> list[str]:
+        if not functions:
+            return []
+        count = len(functions)
+        start = self._fair_dequeue_cursor % count
+        ordered = functions[start:] + functions[:start]
+        self._fair_dequeue_cursor = (start + 1) % count
+        return ordered
+
     async def _xadd_job_payload(
         self,
         stream_key: str,
@@ -677,6 +687,7 @@ class RedisQueue(BaseQueue):
         client = await self._ensure_connected()
 
         runnable_functions = await self.get_runnable_functions(functions)
+        runnable_functions = self._fair_order_functions(runnable_functions)
         if not runnable_functions:
             await asyncio.sleep(min(timeout, 0.25))
             return None
@@ -735,6 +746,7 @@ class RedisQueue(BaseQueue):
         client = await self._ensure_connected()
 
         runnable_functions = await self.get_runnable_functions(functions)
+        runnable_functions = self._fair_order_functions(runnable_functions)
         if not runnable_functions:
             await asyncio.sleep(min(timeout, 0.25))
             return []

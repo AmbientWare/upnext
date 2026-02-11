@@ -314,3 +314,20 @@ async def test_max_concurrency_blocks_excess_dispatch(queue: RedisQueue) -> None
     unblocked = await queue.dequeue(["task_fn"], timeout=0.2)
     assert unblocked is not None
     assert unblocked.id == second.id
+
+
+@pytest.mark.asyncio
+async def test_dequeue_round_robin_prevents_hot_stream_starvation(queue: RedisQueue) -> None:
+    hot = Job(function="hot_fn", function_name="hot", key="hot-1")
+    cold = Job(function="cold_fn", function_name="cold", key="cold-1")
+    await queue.enqueue(hot)
+    await queue.enqueue(cold)
+
+    first = await queue.dequeue(["hot_fn", "cold_fn"], timeout=0.2)
+    assert first is not None
+    await queue.finish(first, JobStatus.COMPLETE)
+
+    second = await queue.dequeue(["hot_fn", "cold_fn"], timeout=0.2)
+    assert second is not None
+
+    assert {first.function, second.function} == {"hot_fn", "cold_fn"}
