@@ -22,7 +22,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
 
 ## 2) Rate Limiting + Fairness
 
-- [ ] Make `rate_limit` executable, not metadata-only.
+- [x] Make `rate_limit` executable, not metadata-only.
   - How: parse and validate configured limits, then enforce with Redis token-bucket/leaky-bucket logic during dispatch.
   - Done: throughput respects configured limits under load tests.
 

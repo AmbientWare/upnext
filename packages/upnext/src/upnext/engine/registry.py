@@ -7,6 +7,8 @@ from typing import Any
 
 from shared.patterns import matches_event_pattern
 
+from upnext.engine.queue.redis.rate_limit import parse_rate_limit
+
 
 @dataclass
 class TaskDefinition:
@@ -51,8 +53,12 @@ class TaskDefinition:
             raise ValueError(f"timeout must be > 0, got {self.timeout}")
         if self.cache_ttl is not None and self.cache_ttl <= 0:
             raise ValueError(f"cache_ttl must be > 0, got {self.cache_ttl}")
-        if self.rate_limit is not None and not self.rate_limit.strip():
-            raise ValueError("rate_limit must be a non-empty string")
+        if self.rate_limit is not None:
+            normalized = self.rate_limit.strip()
+            if not normalized:
+                raise ValueError("rate_limit must be a non-empty string")
+            parse_rate_limit(normalized)
+            self.rate_limit = normalized
 
 
 @dataclass

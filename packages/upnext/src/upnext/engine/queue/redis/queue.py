@@ -52,6 +52,7 @@ from upnext.engine.queue.redis.constants import (
 )
 from upnext.engine.queue.redis.fetcher import Fetcher
 from upnext.engine.queue.redis.finisher import Finisher
+from upnext.engine.queue.redis.rate_limit import RateLimit, parse_rate_limit
 from upnext.engine.queue.redis.sweeper import Sweeper
 
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
@@ -147,9 +148,11 @@ class RedisQueue(BaseQueue):
         self._sweep_sha: str | None = None
         self._retry_sha: str | None = None
         self._cancel_sha: str | None = None
+        self._rate_limit_sha: str | None = None
 
         # Function pause state cache (short-lived to avoid frequent Redis GETs).
         self._function_pause_cache: dict[str, tuple[bool, float]] = {}
+        self._function_rate_limit_cache: dict[str, tuple[RateLimit | None, float]] = {}
 
         # Components (created on start)
         self._fetcher = None
@@ -243,6 +246,9 @@ class RedisQueue(BaseQueue):
             self._cancel_sha = await self._client.script_load(
                 (SCRIPTS_DIR / "cancel.lua").read_text()
             )
+            self._rate_limit_sha = await self._client.script_load(
+                (SCRIPTS_DIR / "rate_limit.lua").read_text()
+            )
             self._scripts_loaded = True
             logger.debug("Loaded Lua scripts into Redis")
         except Exception as e:
@@ -299,6 +305,9 @@ class RedisQueue(BaseQueue):
     def _function_def_key(self, function: str) -> str:
         return f"{FUNCTION_KEY_PREFIX}:{function}"
 
+    def _rate_limit_key(self, function: str) -> str:
+        return self._key("fn", function, "rate_limit")
+
     async def _paused_state_map(self, functions: list[str]) -> dict[str, bool]:
         """Resolve paused state for functions with a small in-memory TTL cache."""
         now = time.time()
@@ -328,6 +337,72 @@ class RedisQueue(BaseQueue):
                 self._function_pause_cache[fn] = (paused, now + 1.0)
 
         return states
+
+    async def _function_rate_limit(self, function: str) -> RateLimit | None:
+        now = time.time()
+        cached = self._function_rate_limit_cache.get(function)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        client = await self._ensure_connected()
+        raw = await client.get(self._function_def_key(function))
+
+        parsed: RateLimit | None = None
+        if raw:
+            payload = raw.decode() if isinstance(raw, bytes) else str(raw)
+            try:
+                config = FunctionConfig.model_validate_json(payload)
+                if config.rate_limit:
+                    parsed = parse_rate_limit(config.rate_limit)
+            except ValueError as exc:
+                logger.warning(
+                    "Invalid rate_limit for function '%s': %s", function, exc
+                )
+            except Exception:
+                parsed = None
+
+        self._function_rate_limit_cache[function] = (parsed, now + 1.0)
+        return parsed
+
+    async def _acquire_rate_limit_token(
+        self,
+        function: str,
+        rate_limit: RateLimit,
+    ) -> bool:
+        client = await self._ensure_connected()
+        bucket_key = self._rate_limit_key(function)
+        now_ms = int(time.time() * 1000)
+        ttl_ms = max(1000, int(rate_limit.window_seconds * 2000))
+
+        if self._rate_limit_sha:
+            allowed = await client.evalsha(
+                self._rate_limit_sha,
+                1,
+                bucket_key,
+                str(now_ms),
+                str(rate_limit.capacity),
+                str(rate_limit.refill_per_ms),
+                str(ttl_ms),
+            )
+            return int(allowed) == 1
+
+        raw_tokens, raw_ts = await client.hmget(bucket_key, "tokens", "ts")
+        tokens = float(raw_tokens) if raw_tokens is not None else float(rate_limit.capacity)
+        ts = float(raw_ts) if raw_ts is not None else float(now_ms)
+        if now_ms > ts:
+            tokens = min(
+                float(rate_limit.capacity),
+                tokens + ((now_ms - ts) * rate_limit.refill_per_ms),
+            )
+            ts = float(now_ms)
+
+        allowed = tokens >= 1.0
+        if allowed:
+            tokens -= 1.0
+
+        await client.hset(bucket_key, mapping={"tokens": tokens, "ts": ts})
+        await client.pexpire(bucket_key, ttl_ms)
+        return allowed
 
     async def is_function_paused(self, function: str) -> bool:
         states = await self._paused_state_map([function])
@@ -727,6 +802,16 @@ class RedisQueue(BaseQueue):
 
             job_str = job_data.decode() if isinstance(job_data, bytes) else job_data
             job = Job.from_json(job_str)
+
+        rate_limit = await self._function_rate_limit(job.function)
+        if rate_limit is not None:
+            allowed = await self._acquire_rate_limit_token(job.function, rate_limit)
+            if not allowed:
+                job.metadata = job.metadata or {}
+                job.metadata["_stream_msg_id"] = msg_id_str
+                job.metadata["_stream_key"] = stream_key
+                await self.retry(job, delay=rate_limit.token_interval_seconds)
+                return None
 
         # Store stream info for later ACK
         job.metadata = job.metadata or {}

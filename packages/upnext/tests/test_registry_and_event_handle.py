@@ -37,6 +37,8 @@ def test_registry_validates_definitions_and_duplicate_names() -> None:
         registry.register_task("bad-backoff", task, retry_backoff=0.5)
     with pytest.raises(ValueError, match="rate_limit must be a non-empty string"):
         registry.register_task("bad-rate", task, rate_limit=" ")
+    with pytest.raises(ValueError, match="rate_limit must match"):
+        registry.register_task("bad-rate-format", task, rate_limit="10/x")
 
     registry.register_task("ok-task", task)
     with pytest.raises(ValueError, match="already registered"):

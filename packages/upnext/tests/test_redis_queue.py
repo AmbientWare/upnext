@@ -259,3 +259,29 @@ async def test_replay_dead_letter_rejects_duplicate_active_key(queue: RedisQueue
     # Replay failed and entry should remain for future manual handling.
     remaining = await queue.get_dead_letters("task_fn", limit=10)
     assert len(remaining) == 1
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_blocks_dispatch_and_requeues_for_later(queue: RedisQueue) -> None:
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:task_fn",
+        b'{"key":"task_fn","name":"task_fn","paused":false,"rate_limit":"1/h"}',
+    )
+
+    first = Job(function="task_fn", function_name="task", key="rate-limit-1")
+    second = Job(function="task_fn", function_name="task", key="rate-limit-2")
+    await queue.enqueue(first)
+    await queue.enqueue(second)
+
+    run_first = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert run_first is not None
+    assert run_first.id == first.id
+    await queue.finish(run_first, JobStatus.COMPLETE)
+
+    # Second dequeue is rate-limited and job is rescheduled for later.
+    run_second = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert run_second is None
+
+    scheduled_at = await client.zscore(queue._scheduled_key("task_fn"), second.id)  # noqa: SLF001
+    assert scheduled_at is not None
