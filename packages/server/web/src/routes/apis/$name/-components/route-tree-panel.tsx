@@ -86,7 +86,7 @@ export function RouteTreePanel({ totalEndpoints, routeTree }: RouteTreePanelProp
       {totalEndpoints === 0 ? (
         <div className="p-6 text-sm text-muted-foreground">No tracked routes for this API yet.</div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="max-h-[420px] overflow-auto">
           <div className="min-w-[820px]">
             <div className={cn(routeTreeGridClass, "px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border bg-muted/30")}>
               <span>Route</span>
