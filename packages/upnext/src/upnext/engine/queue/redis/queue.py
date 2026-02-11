@@ -155,6 +155,10 @@ class RedisQueue(BaseQueue):
         self._function_rate_limit_cache: dict[str, tuple[RateLimit | None, float]] = {}
         self._function_max_concurrency_cache: dict[str, tuple[int | None, float]] = {}
         self._function_active_count_cache: dict[str, tuple[int, float]] = {}
+        self._function_group_quota_cache: dict[
+            str, tuple[tuple[str | None, int | None], float]
+        ] = {}
+        self._group_active_count_cache: dict[str, tuple[int, float]] = {}
         self._fair_dequeue_cursor = 0
 
         # Components (created on start)
@@ -424,8 +428,84 @@ class RedisQueue(BaseQueue):
         self._function_active_count_cache[function] = (active, now + 0.25)
         return active
 
+    async def _function_group_quota(
+        self,
+        function: str,
+    ) -> tuple[str | None, int | None]:
+        now = time.time()
+        cached = self._function_group_quota_cache.get(function)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        client = await self._ensure_connected()
+        raw = await client.get(self._function_def_key(function))
+
+        group: str | None = None
+        limit: int | None = None
+        if raw:
+            payload = raw.decode() if isinstance(raw, bytes) else str(raw)
+            try:
+                config = FunctionConfig.model_validate_json(payload)
+                group = config.routing_group
+                limit = config.group_max_concurrency
+                if group is not None:
+                    group = group.strip()
+                    if not group:
+                        group = None
+                if limit is not None and limit < 1:
+                    logger.warning(
+                        "Invalid group_max_concurrency for function '%s': %s",
+                        function,
+                        limit,
+                    )
+                    limit = None
+            except Exception:
+                group = None
+                limit = None
+
+        result = (group, limit)
+        self._function_group_quota_cache[function] = (result, now + 1.0)
+        return result
+
+    async def _group_active_count(self, group: str) -> int:
+        now = time.time()
+        cached = self._group_active_count_cache.get(group)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        client = await self._ensure_connected()
+        members: list[str] = []
+        cursor = 0
+        while True:
+            cursor, keys = await client.scan(
+                cursor=cursor,
+                match=f"{FUNCTION_KEY_PREFIX}:*",
+                count=100,
+            )
+            for key in keys:
+                raw = await client.get(key)
+                if not raw:
+                    continue
+                payload = raw.decode() if isinstance(raw, bytes) else str(raw)
+                try:
+                    config = FunctionConfig.model_validate_json(payload)
+                except Exception:
+                    continue
+                if config.routing_group == group:
+                    members.append(config.key)
+            if cursor == 0:
+                break
+
+        active = 0
+        for function in members:
+            active += await self._function_active_count(function)
+
+        self._group_active_count_cache[group] = (active, now + 0.25)
+        return active
+
     def _invalidate_function_active_count(self, function: str) -> None:
         self._function_active_count_cache.pop(function, None)
+        self._group_active_count_cache.clear()
 
     async def _acquire_rate_limit_token(
         self,
@@ -487,7 +567,21 @@ class RedisQueue(BaseQueue):
             active = await self._function_active_count(function)
             if active < max_concurrency:
                 runnable.append(function)
-        return runnable
+                continue
+
+            continue
+
+        filtered: list[str] = []
+        for function in runnable:
+            group, group_limit = await self._function_group_quota(function)
+            if group is None or group_limit is None:
+                filtered.append(function)
+                continue
+
+            group_active = await self._group_active_count(group)
+            if group_active < group_limit:
+                filtered.append(function)
+        return filtered
 
     def _fair_order_functions(self, functions: list[str]) -> list[str]:
         if not functions:
@@ -894,6 +988,17 @@ class RedisQueue(BaseQueue):
         if max_concurrency is not None:
             active_count = await self._function_active_count(job.function)
             if active_count > max_concurrency:
+                job.metadata = job.metadata or {}
+                job.metadata["_stream_msg_id"] = msg_id_str
+                job.metadata["_stream_key"] = stream_key
+                await self.retry(job, delay=0.1)
+                self._invalidate_function_active_count(job.function)
+                return None
+
+        group, group_limit = await self._function_group_quota(job.function)
+        if group is not None and group_limit is not None:
+            group_active = await self._group_active_count(group)
+            if group_active > group_limit:
                 job.metadata = job.metadata or {}
                 job.metadata["_stream_msg_id"] = msg_id_str
                 job.metadata["_stream_key"] = stream_key

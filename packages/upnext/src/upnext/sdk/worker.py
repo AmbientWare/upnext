@@ -194,6 +194,8 @@ class Worker:
         cache_ttl: int | None = None,
         rate_limit: str | None = None,
         max_concurrency: int | None = None,
+        routing_group: str | None = None,
+        group_max_concurrency: int | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -214,6 +216,8 @@ class Worker:
         cache_ttl: int | None = None,
         rate_limit: str | None = None,
         max_concurrency: int | None = None,
+        routing_group: str | None = None,
+        group_max_concurrency: int | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -268,6 +272,8 @@ class Worker:
                 cache_ttl=cache_ttl,
                 rate_limit=rate_limit,
                 max_concurrency=max_concurrency,
+                routing_group=routing_group,
+                group_max_concurrency=group_max_concurrency,
                 on_start=on_start,
                 on_success=on_success,
                 on_failure=on_failure,
@@ -395,6 +401,8 @@ class Worker:
                     "retry_delay": handle.definition.retry_delay,
                     "rate_limit": handle.definition.rate_limit,
                     "max_concurrency": handle.definition.max_concurrency,
+                    "routing_group": handle.definition.routing_group,
+                    "group_max_concurrency": handle.definition.group_max_concurrency,
                 }
             )
 
@@ -432,6 +440,8 @@ class Worker:
                         "retry_delay": handler["retry_delay"],
                         "rate_limit": handler["rate_limit"],
                         "max_concurrency": handler["max_concurrency"],
+                        "routing_group": handler["routing_group"],
+                        "group_max_concurrency": handler["group_max_concurrency"],
                     }
                 )
 

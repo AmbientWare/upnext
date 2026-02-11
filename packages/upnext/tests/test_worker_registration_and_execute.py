@@ -38,6 +38,8 @@ async def test_worker_writes_worker_and_function_definitions(
         timeout=45,
         rate_limit="25/m",
         max_concurrency=3,
+        routing_group="ops",
+        group_max_concurrency=5,
     )
     async def health_check() -> str:
         return "ok"
@@ -63,6 +65,8 @@ async def test_worker_writes_worker_and_function_definitions(
         assert function_def["timeout"] == 45
         assert function_def["rate_limit"] == "25/m"
         assert function_def["max_concurrency"] == 3
+        assert function_def["routing_group"] == "ops"
+        assert function_def["group_max_concurrency"] == 5
     finally:
         await worker.stop(timeout=0.1)
 

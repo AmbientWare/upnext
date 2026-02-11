@@ -34,6 +34,8 @@ class TaskDefinition:
     cache_ttl: int | None = None
     rate_limit: str | None = None
     max_concurrency: int | None = None
+    routing_group: str | None = None
+    group_max_concurrency: int | None = None
 
     # Hooks
     on_start: Callable[..., Any] | None = None
@@ -62,6 +64,13 @@ class TaskDefinition:
             self.rate_limit = normalized
         if self.max_concurrency is not None and self.max_concurrency < 1:
             raise ValueError("max_concurrency must be >= 1")
+        if self.routing_group is not None:
+            normalized_group = self.routing_group.strip()
+            if not normalized_group:
+                raise ValueError("routing_group must be a non-empty string")
+            self.routing_group = normalized_group
+        if self.group_max_concurrency is not None and self.group_max_concurrency < 1:
+            raise ValueError("group_max_concurrency must be >= 1")
 
 
 @dataclass
@@ -80,6 +89,8 @@ class EventDefinition:
     timeout: float = 30 * 60  # 30 minutes
     rate_limit: str | None = None
     max_concurrency: int | None = None
+    routing_group: str | None = None
+    group_max_concurrency: int | None = None
 
 
 @dataclass
@@ -169,6 +180,8 @@ class Registry:
         cache_ttl: int | None = None,
         rate_limit: str | None = None,
         max_concurrency: int | None = None,
+        routing_group: str | None = None,
+        group_max_concurrency: int | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -189,6 +202,8 @@ class Registry:
             cache_ttl: Cache TTL in seconds
             rate_limit: Rate limit string (e.g., "100/m")
             max_concurrency: Max number of concurrent active jobs for this function
+            routing_group: Optional dispatch group identifier for shared quotas
+            group_max_concurrency: Max active jobs allowed across a routing group
             on_start: Hook called before execution
             on_success: Hook called on success
             on_failure: Hook called on failure
@@ -214,6 +229,8 @@ class Registry:
             cache_ttl=cache_ttl,
             rate_limit=rate_limit,
             max_concurrency=max_concurrency,
+            routing_group=routing_group,
+            group_max_concurrency=group_max_concurrency,
             on_start=on_start,
             on_success=on_success,
             on_failure=on_failure,
@@ -237,6 +254,8 @@ class Registry:
         timeout: float = 30 * 60,  # 30 minutes
         rate_limit: str | None = None,
         max_concurrency: int | None = None,
+        routing_group: str | None = None,
+        group_max_concurrency: int | None = None,
     ) -> EventDefinition:
         """Register an event."""
         definition = EventDefinition(
@@ -251,6 +270,8 @@ class Registry:
             timeout=timeout,
             rate_limit=rate_limit,
             max_concurrency=max_concurrency,
+            routing_group=routing_group,
+            group_max_concurrency=group_max_concurrency,
         )
 
         # Register by key for worker lookup (with retry/timeout config)
@@ -265,6 +286,8 @@ class Registry:
             timeout=timeout,
             rate_limit=rate_limit,
             max_concurrency=max_concurrency,
+            routing_group=routing_group,
+            group_max_concurrency=group_max_concurrency,
         )
 
         # Register by event pattern for routing

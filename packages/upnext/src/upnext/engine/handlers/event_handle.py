@@ -42,6 +42,8 @@ class _Handler:
     timeout: float = 30 * 60  # 30 minutes
     rate_limit: str | None = None
     max_concurrency: int | None = None
+    routing_group: str | None = None
+    group_max_concurrency: int | None = None
 
 
 class HandlerConfig(TypedDict):
@@ -54,6 +56,8 @@ class HandlerConfig(TypedDict):
     retry_delay: float
     rate_limit: str | None
     max_concurrency: int | None
+    routing_group: str | None
+    group_max_concurrency: int | None
 
 
 class TypedEvent(Generic[P]):
@@ -170,6 +174,8 @@ class EventHandle:
         timeout: float = 30 * 60,  # 30 minutes
         rate_limit: str | None = None,
         max_concurrency: int | None = None,
+        routing_group: str | None = None,
+        group_max_concurrency: int | None = None,
     ) -> Callable[[Callable[P, Any]], TypedEvent[P]]: ...
 
     def on(
@@ -183,6 +189,8 @@ class EventHandle:
         timeout: float = 30 * 60,  # 30 minutes
         rate_limit: str | None = None,
         max_concurrency: int | None = None,
+        routing_group: str | None = None,
+        group_max_concurrency: int | None = None,
     ) -> Any:
         """
         Subscribe a handler to this event.
@@ -222,6 +230,8 @@ class EventHandle:
                 timeout=timeout,
                 rate_limit=rate_limit,
                 max_concurrency=max_concurrency,
+                routing_group=routing_group,
+                group_max_concurrency=group_max_concurrency,
             )
             self._handlers.append(handler)
 
@@ -236,6 +246,8 @@ class EventHandle:
                 timeout=handler.timeout,
                 rate_limit=handler.rate_limit,
                 max_concurrency=handler.max_concurrency,
+                routing_group=handler.routing_group,
+                group_max_concurrency=handler.group_max_concurrency,
             )
 
             # Return typed event for this handler
@@ -318,6 +330,8 @@ class EventHandle:
                 "retry_delay": h.retry_delay,
                 "rate_limit": h.rate_limit,
                 "max_concurrency": h.max_concurrency,
+                "routing_group": h.routing_group,
+                "group_max_concurrency": h.group_max_concurrency,
             }
             for h in self._handlers
         ]

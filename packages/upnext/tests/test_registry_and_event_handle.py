@@ -41,6 +41,10 @@ def test_registry_validates_definitions_and_duplicate_names() -> None:
         registry.register_task("bad-rate-format", task, rate_limit="10/x")
     with pytest.raises(ValueError, match="max_concurrency must be >= 1"):
         registry.register_task("bad-concurrency", task, max_concurrency=0)
+    with pytest.raises(ValueError, match="routing_group must be a non-empty string"):
+        registry.register_task("bad-group", task, routing_group="   ")
+    with pytest.raises(ValueError, match="group_max_concurrency must be >= 1"):
+        registry.register_task("bad-group-limit", task, group_max_concurrency=0)
 
     registry.register_task("ok-task", task)
     with pytest.raises(ValueError, match="already registered"):
@@ -124,6 +128,8 @@ async def test_event_handle_enqueues_handlers_and_exposes_configs() -> None:
         timeout=12,
         rate_limit="10/s",
         max_concurrency=4,
+        routing_group="orders",
+        group_max_concurrency=6,
     )
     async def notify(order_id: str) -> None:
         return None
@@ -151,6 +157,8 @@ async def test_event_handle_enqueues_handlers_and_exposes_configs() -> None:
     assert configs[0]["timeout"] == 12
     assert configs[0]["rate_limit"] == "10/s"
     assert configs[0]["max_concurrency"] == 4
+    assert configs[0]["routing_group"] == "orders"
+    assert configs[0]["group_max_concurrency"] == 6
 
     assert worker._registry.get_task(order_created.handler_keys[0]) is not None  # noqa: SLF001
     assert "handlers=2" in repr(order_created)

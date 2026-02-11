@@ -34,7 +34,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: schedule dequeue fairly (round-robin/weighted rotation) instead of always favoring hottest streams.
   - Done: low-volume queues continue to make progress under high-volume contention.
 
-- [ ] Add per-tenant/per-group controls (if multi-tenant).
+- [x] Add per-tenant/per-group controls (if multi-tenant).
   - How: optional namespace or routing group quotas and limits.
   - Done: one tenant/workload cannot monopolize shared capacity.
 

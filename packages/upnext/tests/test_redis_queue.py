@@ -331,3 +331,34 @@ async def test_dequeue_round_robin_prevents_hot_stream_starvation(queue: RedisQu
     assert second is not None
 
     assert {first.function, second.function} == {"hot_fn", "cold_fn"}
+
+
+@pytest.mark.asyncio
+async def test_group_concurrency_cap_limits_shared_routing_group(
+    queue: RedisQueue,
+) -> None:
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:fn.group.a",
+        b'{"key":"fn.group.a","name":"group_a","paused":false,"routing_group":"tenant-a","group_max_concurrency":1}',
+    )
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:fn.group.b",
+        b'{"key":"fn.group.b","name":"group_b","paused":false,"routing_group":"tenant-a","group_max_concurrency":1}',
+    )
+
+    a = Job(function="fn.group.a", function_name="group_a", key="group-a")
+    b = Job(function="fn.group.b", function_name="group_b", key="group-b")
+    await queue.enqueue(a)
+    await queue.enqueue(b)
+
+    first = await queue.dequeue(["fn.group.a", "fn.group.b"], timeout=0.2)
+    assert first is not None
+
+    second = await queue.dequeue(["fn.group.a", "fn.group.b"], timeout=0.2)
+    assert second is None
+
+    await queue.finish(first, JobStatus.COMPLETE)
+    next_job = await queue.dequeue(["fn.group.a", "fn.group.b"], timeout=0.2)
+    assert next_job is not None
+    assert {first.id, next_job.id} == {a.id, b.id}
