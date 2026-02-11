@@ -1,4 +1,5 @@
 import { useAutoAnimate } from "@formkit/auto-animate/react";
+import { useNavigate } from "@tanstack/react-router";
 import { Circle } from "lucide-react";
 import { cn, formatTimeAgo } from "@/lib/utils";
 import type { WorkerInfo } from "@/lib/types";
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/table";
 
 export function WorkersTable({ workers }: { workers: WorkerInfo[] }) {
+  const navigate = useNavigate();
   const [bodyRef] = useAutoAnimate<HTMLTableSectionElement>({
     duration: 180,
     easing: "ease-out",
@@ -44,7 +46,19 @@ export function WorkersTable({ workers }: { workers: WorkerInfo[] }) {
             )
           );
           return (
-          <TableRow key={worker.name} className="border-border hover:bg-accent">
+          <TableRow
+            key={worker.name}
+            className="border-border hover:bg-accent cursor-pointer"
+            tabIndex={0}
+            role="link"
+            onClick={() => navigate({ to: "/workers/$name", params: { name: worker.name } })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                navigate({ to: "/workers/$name", params: { name: worker.name } });
+              }
+            }}
+          >
             <TableCell className="py-2">
               <div className="flex items-center gap-2">
                 <Circle className={cn("w-2 h-2 shrink-0", worker.active ? "fill-emerald-400 text-emerald-400" : "fill-muted-foreground/60 text-muted-foreground/60")} />
