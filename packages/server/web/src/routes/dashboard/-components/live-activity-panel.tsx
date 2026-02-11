@@ -22,6 +22,13 @@ const statusFilters = [
   { value: "retrying", label: "Retrying" },
 ] as const;
 
+const apiFilters = [
+  { value: "all", label: "All" },
+  { value: "2xx", label: "2xx" },
+  { value: "4xx", label: "4xx" },
+  { value: "5xx", label: "5xx" },
+] as const;
+
 export function LiveActivityPanel({
   jobs,
   apiRequestEvents,
@@ -33,6 +40,7 @@ export function LiveActivityPanel({
 }: LiveActivityPanelProps) {
   const [activeTab, setActiveTab] = useState("jobs");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [apiFilter, setApiFilter] = useState("all");
 
   const filteredJobs = useMemo(
     () =>
@@ -41,6 +49,17 @@ export function LiveActivityPanel({
         : jobs.filter((job) => job.status === statusFilter),
     [jobs, statusFilter]
   );
+
+  const filteredApiRequestEvents = useMemo(() => {
+    if (apiFilter === "all") return apiRequestEvents;
+    if (apiFilter === "2xx") {
+      return apiRequestEvents.filter((event) => event.status >= 200 && event.status < 300);
+    }
+    if (apiFilter === "4xx") {
+      return apiRequestEvents.filter((event) => event.status >= 400 && event.status < 500);
+    }
+    return apiRequestEvents.filter((event) => event.status >= 500 && event.status < 600);
+  }, [apiFilter, apiRequestEvents]);
 
   const statusFilterControls = (
     <div className="flex items-center gap-1">
@@ -61,20 +80,40 @@ export function LiveActivityPanel({
     </div>
   );
 
+  const apiFilterControls = (
+    <div className="flex items-center gap-1">
+      {apiFilters.map((status) => (
+        <button
+          key={status.value}
+          type="button"
+          onClick={() => setApiFilter(status.value)}
+          className={
+            apiFilter === status.value
+              ? "px-2 py-0.5 text-[10px] rounded bg-accent text-foreground"
+              : "px-2 py-0.5 text-[10px] rounded text-muted-foreground hover:text-foreground"
+          }
+        >
+          {status.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
-    <Panel
-      title="Live Activity"
-      className={className ?? "flex-1 min-h-72 flex flex-col overflow-hidden"}
-      contentClassName="flex-1 overflow-hidden p-0"
-      titleRight={activeTab === "jobs" ? statusFilterControls : undefined}
-    >
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full">
-        <div className="px-3 pt-2 border-b border-border">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full">
+      <Panel
+        title="Live Activity"
+        className={className ?? "flex-1 min-h-72 flex flex-col overflow-hidden"}
+        contentClassName="flex-1 overflow-hidden p-0"
+        titleCenter={
           <TabsList variant="line" className="h-8">
             <TabsTrigger value="jobs" className="text-xs">Jobs ({jobs.length})</TabsTrigger>
             <TabsTrigger value="api-requests" className="text-xs">API Events ({apiRequestEvents.length})</TabsTrigger>
           </TabsList>
-        </div>
+        }
+        titleRight={activeTab === "jobs" ? statusFilterControls : apiFilterControls}
+      >
+        <div className="border-b border-border" />
 
         <TabsContent value="jobs" className="h-full m-0">
           <JobsTable
@@ -92,13 +131,13 @@ export function LiveActivityPanel({
 
         <TabsContent value="api-requests" className="h-full m-0">
           <ApiRequestsTable
-            events={apiRequestEvents}
+            events={filteredApiRequestEvents}
             isLoading={isApiLoading}
             onApiClick={onApiClick}
             className="h-full"
           />
         </TabsContent>
-      </Tabs>
-    </Panel>
+      </Panel>
+    </Tabs>
   );
 }
