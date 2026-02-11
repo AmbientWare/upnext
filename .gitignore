@@ -68,6 +68,9 @@ yarn-error.log*
 *.tsbuildinfo
 .vercel
 
+# Generated server dashboard build output
+packages/server/static/
+
 # =============================================================================
 # Database
 # =============================================================================

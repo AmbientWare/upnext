@@ -155,6 +155,17 @@ run_cmd() {
   "$@"
 }
 
+build_server_frontend() {
+  local web_dir="$ROOT_DIR/packages/server/web"
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "bun is required to build server web assets before packaging." >&2
+    exit 1
+  fi
+
+  echo "Building server web assets from $web_dir"
+  run_cmd bash -lc "cd \"$web_dir\" && bun install --frozen-lockfile && bun run build"
+}
+
 check_publish_files() {
   local package_dir="$1"
   shopt -s nullglob
@@ -191,6 +202,10 @@ if [[ "$do_build" -eq 1 ]]; then
   for key in "${targets[@]}"; do
     package_dir="$(package_dir_for "$key")"
     dist_name="$(dist_name_for "$key")"
+
+    if [[ "$key" == "server" ]]; then
+      build_server_frontend
+    fi
 
     if [[ "$clean_dist" -eq 1 ]]; then
       run_cmd rm -rf "$package_dir/dist"

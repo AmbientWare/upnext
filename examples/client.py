@@ -61,6 +61,14 @@ USER_EMAILS = [
     "diana@example.com",
     "eve@example.com",
 ]
+REMOTE_IMAGE_URLS = [
+    "https://httpbin.org/image/png",
+    "https://httpbin.org/image/jpeg",
+    "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png",
+]
+REMOTE_PDF_URLS = [
+    "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+]
 
 
 async def create_order(session: aiohttp.ClientSession) -> dict | None:
@@ -159,6 +167,40 @@ async def sync_inventory(session: aiohttp.ClientSession) -> dict | None:
     return None
 
 
+async def fetch_image_artifact(session: aiohttp.ClientSession) -> dict | None:
+    """Trigger remote image fetch and artifact save."""
+    url = random.choice(REMOTE_IMAGE_URLS)
+    payload = {"url": url}
+    try:
+        async with session.post(f"{API_URL}/artifacts/fetch-image", json=payload) as resp:
+            if resp.status == 200:
+                result = await resp.json()
+                logger.info(f"Submitted image artifact fetch: {result['job_id']} ({url})")
+                return result
+            else:
+                logger.warning(f"Failed to fetch image artifact: {resp.status}")
+    except Exception as e:
+        logger.error(f"Error fetching image artifact: {e}")
+    return None
+
+
+async def fetch_pdf_artifact(session: aiohttp.ClientSession) -> dict | None:
+    """Trigger remote PDF fetch and artifact save."""
+    url = random.choice(REMOTE_PDF_URLS)
+    payload = {"url": url}
+    try:
+        async with session.post(f"{API_URL}/artifacts/fetch-pdf", json=payload) as resp:
+            if resp.status == 200:
+                result = await resp.json()
+                logger.info(f"Submitted PDF artifact fetch: {result['job_id']} ({url})")
+                return result
+            else:
+                logger.warning(f"Failed to fetch PDF artifact: {resp.status}")
+    except Exception as e:
+        logger.error(f"Error fetching PDF artifact: {e}")
+    return None
+
+
 async def health_check(session: aiohttp.ClientSession) -> bool:
     """Check if the API is healthy."""
     try:
@@ -179,7 +221,9 @@ async def run_traffic_generator():
         (send_notification, 25),
         (sync_inventory, 20),
         (register_user, 15),
-        (request_report, 10),  # Least common
+        (request_report, 10),
+        (fetch_image_artifact, 6),
+        (fetch_pdf_artifact, 4),  # Least common
     ]
 
     # Build weighted list

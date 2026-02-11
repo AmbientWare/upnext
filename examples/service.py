@@ -11,9 +11,13 @@ Run with: upnext run examples/service.py
 """
 
 import asyncio
+import base64
 import logging
 import random
 from datetime import datetime
+from urllib.parse import urlsplit
+
+import aiohttp
 
 import upnext
 
@@ -23,6 +27,58 @@ logger = logging.getLogger(__name__)
 # Create worker and API
 worker = upnext.Worker("example-worker", concurrency=10)
 api = upnext.Api("example-api", port=8001)
+
+DEFAULT_IMAGE_URL = "https://httpbin.org/image/png"
+DEFAULT_PDF_URL = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+MAX_FETCH_BYTES = 10 * 1024 * 1024  # 10 MB safety cap for demo fetch tasks.
+
+
+def _guess_name_from_url(url: str, fallback: str) -> str:
+    path = urlsplit(url).path.strip()
+    if not path:
+        return fallback
+    candidate = path.rsplit("/", 1)[-1]
+    return candidate or fallback
+
+
+async def _fetch_url_bytes(url: str, timeout_s: float = 30.0) -> tuple[bytes, str | None]:
+    timeout = aiohttp.ClientTimeout(total=timeout_s)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            body = await response.read()
+            if len(body) > MAX_FETCH_BYTES:
+                raise ValueError(
+                    f"Fetched payload too large ({len(body)} bytes, max {MAX_FETCH_BYTES})"
+                )
+            content_type = (
+                response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            )
+            return body, (content_type or None)
+
+
+def _image_type_from_content_type(content_type: str | None) -> upnext.ArtifactType:
+    if content_type == "image/jpeg":
+        return upnext.ArtifactType.JPEG
+    if content_type == "image/webp":
+        return upnext.ArtifactType.WEBP
+    if content_type == "image/gif":
+        return upnext.ArtifactType.GIF
+    if content_type in {"image/svg", "image/svg+xml"}:
+        return upnext.ArtifactType.SVG
+    return upnext.ArtifactType.PNG
+
+
+def _extension_for_image_type(artifact_type: upnext.ArtifactType) -> str:
+    if artifact_type == upnext.ArtifactType.JPEG:
+        return ".jpg"
+    if artifact_type == upnext.ArtifactType.WEBP:
+        return ".webp"
+    if artifact_type == upnext.ArtifactType.GIF:
+        return ".gif"
+    if artifact_type == upnext.ArtifactType.SVG:
+        return ".svg"
+    return ".png"
 
 
 # =============================================================================
@@ -111,6 +167,63 @@ def sync_inventory(product_ids: list[str]) -> dict:
     time.sleep(random.uniform(0.1, 0.3))
 
     return {"synced": len(product_ids), "status": "complete"}
+
+
+@worker.task(retries=1, timeout=45.0)
+async def fetch_image_as_artifact(url: str = DEFAULT_IMAGE_URL, name: str | None = None) -> dict:
+    """Fetch a remote image and store it as an artifact."""
+    ctx = upnext.get_current_context()
+    ctx.set_progress(10, "Fetching image")
+
+    payload, content_type = await _fetch_url_bytes(url)
+    artifact_type = _image_type_from_content_type(content_type)
+    artifact_name = name or _guess_name_from_url(url, "fetched-image")
+    if "." not in artifact_name:
+        artifact_name = f"{artifact_name}{_extension_for_image_type(artifact_type)}"
+
+    encoded = base64.b64encode(payload).decode("ascii")
+    await upnext.create_artifact(
+        name=artifact_name,
+        data=encoded,
+        artifact_type=artifact_type,
+    )
+    ctx.set_progress(100, "Image artifact saved")
+
+    return {
+        "url": url,
+        "artifact_name": artifact_name,
+        "artifact_type": artifact_type.value,
+        "content_type": content_type,
+        "size_bytes": len(payload),
+    }
+
+
+@worker.task(retries=1, timeout=45.0)
+async def fetch_pdf_as_artifact(url: str = DEFAULT_PDF_URL, name: str | None = None) -> dict:
+    """Fetch a remote PDF and store it as an artifact."""
+    ctx = upnext.get_current_context()
+    ctx.set_progress(10, "Fetching PDF")
+
+    payload, content_type = await _fetch_url_bytes(url)
+    artifact_name = name or _guess_name_from_url(url, "fetched-document.pdf")
+    if not artifact_name.lower().endswith(".pdf"):
+        artifact_name = f"{artifact_name}.pdf"
+
+    encoded = base64.b64encode(payload).decode("ascii")
+    await upnext.create_artifact(
+        name=artifact_name,
+        data=encoded,
+        artifact_type=upnext.ArtifactType.PDF,
+    )
+    ctx.set_progress(100, "PDF artifact saved")
+
+    return {
+        "url": url,
+        "artifact_name": artifact_name,
+        "artifact_type": upnext.ArtifactType.PDF.value,
+        "content_type": content_type,
+        "size_bytes": len(payload),
+    }
 
 
 @worker.task(timeout=30.0)
@@ -354,6 +467,32 @@ async def trigger_inventory_sync(request: dict):
     job = await sync_inventory.submit(product_ids=product_ids)
 
     return {"job_id": job.job_id, "products": len(product_ids), "status": "submitted"}
+
+
+@api.post("/artifacts/fetch-image")
+async def fetch_remote_image(request: dict):
+    """Fetch a remote image URL and save it as an artifact."""
+    url = request.get("url", DEFAULT_IMAGE_URL)
+    name = request.get("name")
+    job = await fetch_image_as_artifact.submit(url=url, name=name)
+    return {
+        "job_id": job.job_id,
+        "status": "submitted",
+        "url": url,
+    }
+
+
+@api.post("/artifacts/fetch-pdf")
+async def fetch_remote_pdf(request: dict):
+    """Fetch a remote PDF URL and save it as an artifact."""
+    url = request.get("url", DEFAULT_PDF_URL)
+    name = request.get("name")
+    job = await fetch_pdf_as_artifact.submit(url=url, name=name)
+    return {
+        "job_id": job.job_id,
+        "status": "submitted",
+        "url": url,
+    }
 
 
 # =============================================================================
