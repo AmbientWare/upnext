@@ -191,3 +191,28 @@ async def test_typed_event_send_maps_positional_args_to_kwargs() -> None:
 
     assert len(queue.jobs) == 1
     assert queue.jobs[0].kwargs == {"user_id": "u-42", "plan": "pro"}
+
+
+@pytest.mark.asyncio
+async def test_event_send_idempotent_applies_shared_key_to_handlers() -> None:
+    worker = Worker(name="idempotent-event-worker")
+    order_created = worker.event("order.created")
+
+    @order_created.on
+    async def notify(order_id: str) -> None:
+        return None
+
+    @order_created.on
+    async def audit(order_id: str) -> None:
+        return None
+
+    queue = _QueueRecorder()
+    order_created._queue = cast(BaseQueue, queue)  # noqa: SLF001
+
+    await order_created.send_idempotent(" event:123 ", order_id="ord-1")
+
+    assert len(queue.jobs) == 2
+    assert all(job.key == "event:123" for job in queue.jobs)
+
+    with pytest.raises(ValueError, match="idempotency_key must be a non-empty string"):
+        await order_created.send_idempotent(" ", order_id="ord-1")

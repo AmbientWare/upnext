@@ -20,6 +20,8 @@ This document defines the runtime contract for enqueue/dequeue/retry/cancel beha
 
 - If a job key is supplied at enqueue time, duplicate keys are rejected while the key is active.
 - Dedup entries are released when the job reaches terminal state (or is cancelled).
+- External callers can supply stable keys via `TaskHandle.submit_idempotent(...)`, `TaskHandle.wait_idempotent(...)`, and `EventHandle.send_idempotent(...)`.
+- Manual retries restore dedupe membership before re-enqueueing; retries with an already-active key are rejected with `409`.
 
 ## Pause / Resume Behavior
 

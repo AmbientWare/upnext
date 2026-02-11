@@ -91,3 +91,38 @@ async def test_task_submit_top_level_sets_root_to_own_job_id() -> None:
     job = queue.jobs[future.job_id]
     assert job.parent_id is None
     assert job.root_id == job.id
+
+
+@pytest.mark.asyncio
+async def test_task_submit_idempotent_sets_stable_key() -> None:
+    worker = Worker(name="test-worker")
+
+    @worker.task
+    async def process(name: str) -> str:
+        return name
+
+    queue = RecordingQueue()
+    process._queue = queue  # type: ignore[assignment]
+
+    future = await process.submit_idempotent(" customer:123 ", name="abc")
+    job = queue.jobs[future.job_id]
+    assert job.key == "customer:123"
+
+
+@pytest.mark.asyncio
+async def test_task_wait_idempotent_uses_timeout_and_validates_key() -> None:
+    worker = Worker(name="test-worker")
+
+    @worker.task(timeout=7)
+    async def process(name: str) -> str:
+        return name
+
+    queue = RecordingQueue()
+    process._queue = queue  # type: ignore[assignment]
+
+    result = await process.wait_idempotent("tenant:xyz", name="abc")
+    assert result.ok is True
+    assert queue.subscribe_timeouts[-1] == 7
+
+    with pytest.raises(ValueError, match="idempotency_key must be a non-empty string"):
+        await process.submit_idempotent("   ", name="abc")

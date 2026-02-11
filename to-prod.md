@@ -8,7 +8,7 @@ Use this as the execution checklist to reach production-grade competitiveness wi
   - How: write one short contract for enqueue/dequeue/retry/cancel semantics (`at least once`, duplicate possibilities, terminal state rules).
   - Done: docs are published and tests assert the documented behavior.
 
-- [ ] Enforce idempotency strategy at platform boundaries.
+- [x] Enforce idempotency strategy at platform boundaries.
   - How: require stable idempotency key support for externally-triggered jobs and preserve dedupe state across retries/restarts.
   - Done: duplicate submissions with same key are rejected or coalesced predictably.
 

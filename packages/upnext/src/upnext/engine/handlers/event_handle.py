@@ -15,6 +15,7 @@ from typing import (
 )
 
 from shared.models import Job
+from upnext.engine.handlers.idempotency import normalize_idempotency_key
 from upnext.engine.function_identity import build_function_key
 from upnext.engine.queue.base import BaseQueue
 
@@ -76,9 +77,34 @@ class TypedEvent(Generic[P]):
                 kwargs[params[i]] = arg
         await self._event._enqueue_handlers(kwargs)
 
+    async def send_idempotent(
+        self,
+        idempotency_key: str,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> None:
+        """Deliver event with typed parameters and idempotency key."""
+        import inspect
+
+        sig = inspect.signature(self._func)
+        params = list(sig.parameters.keys())
+        for i, arg in enumerate(args):
+            if i < len(params):
+                kwargs[params[i]] = arg
+        await self._event._enqueue_handlers(kwargs, idempotency_key=idempotency_key)
+
     def send_sync(self, *args: P.args, **kwargs: P.kwargs) -> None:
         """Send the event synchronously with typed parameters."""
         asyncio.run(self.send(*args, **kwargs))
+
+    def send_idempotent_sync(
+        self,
+        idempotency_key: str,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> None:
+        """Send the event synchronously with idempotency key."""
+        asyncio.run(self.send_idempotent(idempotency_key, *args, **kwargs))
 
 
 @dataclass
@@ -213,15 +239,26 @@ class EventHandle:
             return decorator(__func)
         return decorator
 
-    async def _enqueue_handlers(self, data: dict[str, Any]) -> None:
+    async def _enqueue_handlers(
+        self,
+        data: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         """Enqueue all handlers for this event."""
         queue = self._ensure_queue()
+        normalized_key = (
+            normalize_idempotency_key(idempotency_key)
+            if idempotency_key is not None
+            else ""
+        )
         for handler in self._handlers:
             # Pass event data directly as kwargs (like tasks)
             job = Job(
                 function=handler.key,
                 function_name=handler.display_name,
                 kwargs=data,
+                key=normalized_key,
             )
             try:
                 await queue.enqueue(job)
@@ -238,6 +275,10 @@ class EventHandle:
         """
         await self._enqueue_handlers(data)
 
+    async def send_idempotent(self, idempotency_key: str, **data: Any) -> None:
+        """Send event with a caller-supplied idempotency key."""
+        await self._enqueue_handlers(data, idempotency_key=idempotency_key)
+
     def send_sync(self, **data: Any) -> None:
         """Send event from a sync context.
 
@@ -245,6 +286,10 @@ class EventHandle:
         Cannot be called from inside a running event loop.
         """
         asyncio.run(self._enqueue_handlers(data))
+
+    def send_idempotent_sync(self, idempotency_key: str, **data: Any) -> None:
+        """Send event with idempotency key from a sync context."""
+        asyncio.run(self._enqueue_handlers(data, idempotency_key=idempotency_key))
 
     @property
     def handler_names(self) -> list[str]:

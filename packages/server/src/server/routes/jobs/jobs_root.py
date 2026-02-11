@@ -553,6 +553,16 @@ async def retry_job(job_id: str) -> dict:
     index_key = _job_index_key(job.id)
     stream_key = _stream_key(job.function)
     scheduled_key = _scheduled_key(job.function)
+    dedup_key = _dedup_key(job.function)
+
+    if job.key and await redis_client.sismember(dedup_key, job.key):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Job {job_id} cannot be retried: idempotency key '{job.key}' "
+                "is already active."
+            ),
+        )
 
     await redis_client.setex(
         job_key,
@@ -567,6 +577,9 @@ async def retry_job(job_id: str) -> dict:
     await redis_client.delete(_result_key(job.id))
     await redis_client.delete(_cancel_marker_key(job.id))
     await redis_client.zrem(scheduled_key, job.id)
+    if job.key:
+        await redis_client.sadd(dedup_key, job.key)
+        await redis_client.expire(dedup_key, max(1, settings.queue_job_ttl_seconds))
 
     payload = {"job_id": job.id, "function": job.function, "data": job.to_json()}
     stream_maxlen = max(0, settings.queue_stream_maxlen)

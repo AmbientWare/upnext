@@ -298,6 +298,7 @@ async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
 
     failed = Job(id="job-456", function="fn.retry", function_name="retry")
     failed.mark_failed("boom")
+    failed.key = "retry-key-456"
     await fake_redis.setex("upnext:result:job-456", 3_600, failed.to_json().encode())
 
     cancel_out = await jobs_route.cancel_job("job-123")
@@ -315,6 +316,7 @@ async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
     assert Job.from_json(retried_job.decode()).status.value == "queued"
     queued_messages = await fake_redis.xrange("upnext:fn:fn.retry:stream", count=10)
     assert any(row[1].get(b"job_id") == b"job-456" for row in queued_messages)
+    assert await fake_redis.sismember("upnext:fn:fn.retry:dedup", "retry-key-456") == 1
 
 
 @pytest.mark.asyncio
@@ -341,6 +343,30 @@ async def test_jobs_cancel_and_retry_routes_validate_status_and_presence(
 
     with pytest.raises(HTTPException, match="cannot be retried") as conflict:
         await jobs_route.retry_job("job-active")
+    assert conflict.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_retry_route_rejects_active_idempotency_key(
+    fake_redis, monkeypatch
+) -> None:
+    async def _get_redis():
+        return fake_redis
+
+    monkeypatch.setattr(jobs_root_route, "get_redis", _get_redis)
+
+    failed = Job(id="job-idempotency", function="fn.retry", function_name="retry")
+    failed.mark_failed("boom")
+    failed.key = "shared-key"
+    await fake_redis.setex(
+        "upnext:result:job-idempotency",
+        3_600,
+        failed.to_json().encode(),
+    )
+    await fake_redis.sadd("upnext:fn:fn.retry:dedup", "shared-key")
+
+    with pytest.raises(HTTPException, match="idempotency key 'shared-key'") as conflict:
+        await jobs_route.retry_job("job-idempotency")
     assert conflict.value.status_code == 409
 
 

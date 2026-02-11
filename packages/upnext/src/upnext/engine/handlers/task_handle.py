@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Generic, ParamSpec, overload
 
 from shared.models import Job
+from upnext.engine.handlers.idempotency import normalize_idempotency_key
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.registry import TaskDefinition
 from upnext.sdk.context import Context, get_current_context, set_current_context
@@ -45,15 +46,26 @@ class TaskHandle(Generic[P]):
         self.__name__ = func.__name__
         self.__doc__ = func.__doc__
 
-    def _create_job(self, kwargs: dict[str, Any]) -> Job:
+    def _create_job(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+    ) -> Job:
         """Create a Job from this task's definition.
 
         Automatically sets lineage if called from inside a running task.
         """
+        normalized_key = (
+            normalize_idempotency_key(idempotency_key)
+            if idempotency_key is not None
+            else ""
+        )
         job = Job(
             function=self.function_key,
             function_name=self.name,
             kwargs=kwargs,
+            key=normalized_key,
             timeout=self.definition.timeout,
             max_retries=self.definition.retries,
         )
@@ -72,17 +84,38 @@ class TaskHandle(Generic[P]):
             raise RuntimeError("Worker not started. Call worker.start() first.")
         return self._queue
 
+    async def _enqueue_future(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+    ) -> Future[Any]:
+        queue = self._ensure_queue()
+        merged_kwargs = self._merge_args_kwargs(args, kwargs)
+        job = self._create_job(merged_kwargs, idempotency_key=idempotency_key)
+        job_id = await queue.enqueue(job)
+        return Future(job_id=job_id, queue=queue)
+
     async def submit(self, *args: P.args, **kwargs: P.kwargs) -> Future[Any]:
         """Submit task for background execution, return a Future.
 
         Parameters are typed based on the original function signature.
         """
-        queue = self._ensure_queue()
-        # Convert positional args to kwargs based on function signature
-        merged_kwargs = self._merge_args_kwargs(args, kwargs)
-        job = self._create_job(merged_kwargs)
-        job_id = await queue.enqueue(job)
-        return Future(job_id=job_id, queue=queue)
+        return await self._enqueue_future(args, dict(kwargs))
+
+    async def submit_idempotent(
+        self,
+        idempotency_key: str,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> Future[Any]:
+        """Submit task using a caller-supplied idempotency key."""
+        return await self._enqueue_future(
+            args,
+            dict(kwargs),
+            idempotency_key=idempotency_key,
+        )
 
     @overload
     async def wait(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]: ...
@@ -106,11 +139,23 @@ class TaskHandle(Generic[P]):
         Parameters are typed based on the original function signature.
         By default, wait timeout matches the task definition timeout.
         """
-        queue = self._ensure_queue()
-        merged_kwargs = self._merge_args_kwargs(args, kwargs)
-        job = self._create_job(merged_kwargs)
-        job_id = await queue.enqueue(job)
-        future = Future(job_id=job_id, queue=queue)
+        future = await self._enqueue_future(args, kwargs)
+        timeout = self.definition.timeout if wait_timeout is None else wait_timeout
+        return await future.result(timeout=timeout)
+
+    async def wait_idempotent(
+        self,
+        idempotency_key: str,
+        *args: Any,
+        wait_timeout: float | None = None,
+        **kwargs: Any,
+    ) -> TaskResult[Any]:
+        """Submit with idempotency key and wait for completion."""
+        future = await self._enqueue_future(
+            args,
+            kwargs,
+            idempotency_key=idempotency_key,
+        )
         timeout = self.definition.timeout if wait_timeout is None else wait_timeout
         return await future.result(timeout=timeout)
 
@@ -121,6 +166,17 @@ class TaskHandle(Generic[P]):
         Cannot be called from inside a running event loop.
         """
         return asyncio.run(self.submit(*args, **kwargs))
+
+    def submit_idempotent_sync(
+        self,
+        idempotency_key: str,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> Future[Any]:
+        """Submit task with idempotency key from a sync context."""
+        return asyncio.run(
+            self.submit_idempotent(idempotency_key, *args, **kwargs)
+        )
 
     @overload
     def wait_sync(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]: ...
@@ -145,6 +201,23 @@ class TaskHandle(Generic[P]):
         Cannot be called from inside a running event loop.
         """
         return asyncio.run(self.wait(*args, wait_timeout=wait_timeout, **kwargs))
+
+    def wait_idempotent_sync(
+        self,
+        idempotency_key: str,
+        *args: Any,
+        wait_timeout: float | None = None,
+        **kwargs: Any,
+    ) -> TaskResult[Any]:
+        """Submit with idempotency key and wait from a sync context."""
+        return asyncio.run(
+            self.wait_idempotent(
+                idempotency_key,
+                *args,
+                wait_timeout=wait_timeout,
+                **kwargs,
+            )
+        )
 
     def _merge_args_kwargs(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]
