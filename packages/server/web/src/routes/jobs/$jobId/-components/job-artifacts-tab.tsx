@@ -1,10 +1,19 @@
-import { useCallback, useMemo, useState } from "react";
+import {
+  useCallback,
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   CheckCircle2,
   Clock3,
   Download,
+  Ellipsis,
+  ExternalLink,
   FileArchive,
   FileCode2,
   FileJson2,
@@ -13,8 +22,6 @@ import {
   Image as ImageIcon,
   type LucideIcon,
 } from "lucide-react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { getArtifactContentUrl, getJobArtifacts, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
@@ -25,10 +32,15 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -40,8 +52,21 @@ interface JobArtifactsTabProps {
 }
 
 type ArtifactScope = "all" | "selected";
+type ImageScaleMode = "fit" | "actual";
 
 type ArtifactKind = "image" | "json" | "text" | "table" | "markup" | "pdf" | "binary";
+
+const PREVIEW_HEIGHT_CLASS = "h-[min(56vh,520px)]";
+const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024; // 1 MB safety cap for inline preview fetch.
+const MAX_TEXT_PREVIEW_CHARS = 200_000;
+const TEXT_PREVIEW_TIMEOUT_MS = 15_000;
+const HIGHLIGHTABLE_LANGUAGES = new Set(["json", "xml", "html", "csv"]);
+
+const ArtifactCodePreview = lazy(() =>
+  import("@/components/shared/artifact-code-preview").then((module) => ({
+    default: module.ArtifactCodePreview,
+  }))
+);
 
 const artifactKindMeta: Record<
   ArtifactKind,
@@ -187,6 +212,7 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
   const queryClient = useQueryClient();
   const [scope, setScope] = useState<ArtifactScope>("all");
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
+  const [imageScaleMode, setImageScaleMode] = useState<ImageScaleMode>("fit");
   const jobIds = useMemo(() => jobs.map((job) => job.id), [jobs]);
 
   const artifactsQueryKey = queryKeys.jobArtifacts(selectedJobId);
@@ -239,21 +265,72 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
     selectedArtifactContentType.includes("json") ||
     selectedArtifactContentType.includes("xml") ||
     selectedArtifactContentType.includes("html");
+  const isTextPreviewTooLarge =
+    (selectedArtifact?.size_bytes ?? 0) > MAX_TEXT_PREVIEW_BYTES;
+
+  useEffect(() => {
+    setImageScaleMode("fit");
+  }, [selectedArtifact?.id]);
 
   const {
     data: selectedArtifactTextPreview,
     isPending: isTextPreviewLoading,
+    isError: isTextPreviewError,
+    error: selectedArtifactTextPreviewError,
+    refetch: refetchTextPreview,
   } = useQuery({
     queryKey: ["artifact", "content-preview", selectedArtifact?.id],
     queryFn: async () => {
       if (!selectedArtifactContentUrl) return "";
-      const response = await fetch(selectedArtifactContentUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to load artifact content (${response.status})`);
+      const controller = new AbortController();
+      const timeoutId = globalThis.setTimeout(
+        () => controller.abort(),
+        TEXT_PREVIEW_TIMEOUT_MS
+      );
+
+      try {
+        const response = await fetch(selectedArtifactContentUrl, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load artifact content (${response.status})`);
+        }
+
+        const contentLengthHeader = response.headers.get("content-length");
+        if (contentLengthHeader) {
+          const contentLength = Number(contentLengthHeader);
+          if (
+            Number.isFinite(contentLength) &&
+            contentLength > MAX_TEXT_PREVIEW_BYTES
+          ) {
+            throw new Error(
+              `Artifact is too large for inline preview (>${formatBytes(
+                MAX_TEXT_PREVIEW_BYTES
+              )})`
+            );
+          }
+        }
+
+        const text = await response.text();
+        if (text.length > MAX_TEXT_PREVIEW_CHARS) {
+          return `${text.slice(
+            0,
+            MAX_TEXT_PREVIEW_CHARS
+          )}\n\n[Preview truncated at ${MAX_TEXT_PREVIEW_CHARS.toLocaleString()} characters]`;
+        }
+
+        return text;
+      } finally {
+        globalThis.clearTimeout(timeoutId);
       }
-      return response.text();
     },
-    enabled: Boolean(selectedArtifact && selectedArtifactContentUrl && isTextPreview),
+    enabled: Boolean(
+      selectedArtifact &&
+      selectedArtifactContentUrl &&
+      isTextPreview &&
+      !isTextPreviewTooLarge
+    ),
+    retry: 1,
   });
   const selectedArtifactLanguage = selectedArtifact ? getPreviewLanguage(selectedArtifact) : "text";
   const formattedArtifactPreview = useMemo(
@@ -263,6 +340,13 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
         : "",
     [selectedArtifactLanguage, selectedArtifactTextPreview]
   );
+  const isHighlightableTextPreview = HIGHLIGHTABLE_LANGUAGES.has(
+    selectedArtifactLanguage
+  );
+  const textPreviewErrorMessage =
+    selectedArtifactTextPreviewError instanceof Error
+      ? selectedArtifactTextPreviewError.message
+      : "Failed to load preview content.";
 
   const streamUrl = `${env.VITE_API_BASE_URL}/jobs/${encodeURIComponent(selectedJobId)}/artifacts/stream`;
   const handleArtifactStreamMessage = useCallback(
@@ -414,7 +498,7 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
           if (!open) setSelectedArtifact(null);
         }}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="w-[min(94vw,1120px)] max-w-[1120px]">
           <DialogHeader>
             <DialogTitle className="truncate">{selectedArtifact?.name}</DialogTitle>
             <DialogDescription>
@@ -456,62 +540,138 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
           <div className="rounded border border-input bg-muted/30 p-3">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Preview</div>
-              {isTextPreview && selectedArtifact ? (
-                <Badge variant="outline" className="mono text-[10px] text-muted-foreground">
-                  {selectedArtifactLanguage}
-                </Badge>
-              ) : null}
+              <div className="flex items-center gap-1">
+                {isTextPreview && selectedArtifact ? (
+                  <Badge variant="outline" className="mono text-[10px] text-muted-foreground">
+                    {selectedArtifactLanguage}
+                  </Badge>
+                ) : null}
+                {isImagePreview ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant={imageScaleMode === "fit" ? "secondary" : "outline"}
+                      onClick={() => setImageScaleMode("fit")}
+                    >
+                      Fit
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant={imageScaleMode === "actual" ? "secondary" : "outline"}
+                      onClick={() => setImageScaleMode("actual")}
+                    >
+                      Actual
+                    </Button>
+                  </>
+                ) : null}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" size="xs" variant="outline" className="px-2">
+                      <Ellipsis className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem asChild disabled={!selectedArtifactContentUrl}>
+                      <a
+                        href={selectedArtifactContentUrl ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="cursor-pointer"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Open
+                      </a>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        handleDownload();
+                      }}
+                      disabled={!selectedArtifactDownloadUrl}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
             {isImagePreview && selectedArtifactContentUrl ? (
-              <div className="h-[320px] overflow-auto">
+              <div
+                className={cn(
+                  PREVIEW_HEIGHT_CLASS,
+                  "overflow-auto grid place-items-center rounded border border-input bg-background"
+                )}
+              >
                 <img
                   src={selectedArtifactContentUrl}
                   alt={selectedArtifact?.name ?? "Artifact preview"}
-                  className="max-h-full max-w-full object-contain"
+                  className={cn(
+                    "select-none",
+                    imageScaleMode === "fit"
+                      ? "max-h-full max-w-full object-contain"
+                      : "h-auto w-auto max-h-none max-w-none object-none"
+                  )}
                 />
               </div>
             ) : isPdfPreview && selectedArtifactContentUrl ? (
-              <iframe
-                title={selectedArtifact?.name ?? "Artifact preview"}
-                src={selectedArtifactContentUrl}
-                className="h-[320px] w-full rounded border border-input bg-background"
-              />
+              <div className={cn(PREVIEW_HEIGHT_CLASS, "rounded border border-input bg-background overflow-hidden")}>
+                <iframe
+                  title={selectedArtifact?.name ?? "Artifact preview"}
+                  src={selectedArtifactContentUrl}
+                  className="h-full w-full"
+                />
+              </div>
             ) : isTextPreview ? (
-              <ScrollArea className="h-[320px]">
-                {isTextPreviewLoading ? (
+              <ScrollArea className={PREVIEW_HEIGHT_CLASS}>
+                {isTextPreviewTooLarge ? (
+                  <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-all pr-3">
+                    Artifact too large for inline preview ({formatBytes(selectedArtifact?.size_bytes ?? null)}).
+                    Use download or open in a new tab.
+                  </pre>
+                ) : isTextPreviewLoading ? (
                   <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-all pr-3">
                     Loading preview...
                   </pre>
+                ) : isTextPreviewError ? (
+                  <div className="space-y-2 pr-3">
+                    <p className="text-xs text-destructive">{textPreviewErrorMessage}</p>
+                    <Button type="button" size="xs" variant="outline" onClick={() => refetchTextPreview()}>
+                      Retry
+                    </Button>
+                  </div>
                 ) : (
-                  <SyntaxHighlighter
-                    language={selectedArtifactLanguage}
-                    style={vscDarkPlus}
-                    customStyle={{
-                      margin: 0,
-                      background: "transparent",
-                      fontSize: "11px",
-                      lineHeight: "1.55",
-                      padding: 0,
-                    }}
-                    wrapLongLines
-                  >
-                    {formattedArtifactPreview || "No artifact content available."}
-                  </SyntaxHighlighter>
+                  <>
+                    {isHighlightableTextPreview ? (
+                      <Suspense
+                        fallback={
+                          <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-all pr-3">
+                            {formattedArtifactPreview || "No artifact content available."}
+                          </pre>
+                        }
+                      >
+                        <ArtifactCodePreview
+                          language={selectedArtifactLanguage as "json" | "xml" | "html" | "csv"}
+                          code={formattedArtifactPreview || "No artifact content available."}
+                        />
+                      </Suspense>
+                    ) : (
+                      <pre className="mono text-[11px] text-foreground whitespace-pre-wrap break-all pr-3">
+                        {formattedArtifactPreview || "No artifact content available."}
+                      </pre>
+                    )}
+                  </>
                 )}
               </ScrollArea>
             ) : (
-              <div className="h-[320px] flex items-center justify-center text-xs text-muted-foreground">
+              <div className={cn(PREVIEW_HEIGHT_CLASS, "flex items-center justify-center text-xs text-muted-foreground")}>
                 Preview unavailable for this artifact type.
               </div>
             )}
           </div>
 
-          <DialogFooter showCloseButton>
-            <Button type="button" onClick={handleDownload} disabled={!selectedArtifactDownloadUrl}>
-              <Download className="h-3.5 w-3.5" />
-              Download
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
