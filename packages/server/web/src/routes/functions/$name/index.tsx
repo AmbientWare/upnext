@@ -267,6 +267,15 @@ function FunctionDetailPage() {
               value={fn.p95_duration_ms != null ? formatDuration(fn.p95_duration_ms) : "\u2014"}
             />
             <MetricCard
+              label="Avg Queue Wait"
+              value={fn.avg_wait_ms != null ? formatDuration(fn.avg_wait_ms) : "\u2014"}
+            />
+            <MetricCard
+              label="P95 Queue Wait"
+              value={fn.p95_wait_ms != null ? formatDuration(fn.p95_wait_ms) : "\u2014"}
+            />
+            <MetricCard label="Queue Backlog" value={formatNumber(fn.queue_backlog)} />
+            <MetricCard
               label="Last Run"
               value={fn.last_run_at ? formatTimeAgo(new Date(fn.last_run_at)) : "\u2014"}
               sub={fn.last_run_status ?? undefined}
