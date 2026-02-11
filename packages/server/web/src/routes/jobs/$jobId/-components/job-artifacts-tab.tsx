@@ -388,6 +388,7 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
 
   useEventSource(streamUrl, {
     enabled: Boolean(selectedJobId),
+    pauseWhenHidden: true,
     onMessage: handleArtifactStreamMessage,
   });
 

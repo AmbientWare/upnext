@@ -18,18 +18,19 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 import aiohttp
-
 import upnext
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Create worker and API
-worker = upnext.Worker("example-worker", concurrency=10)
+worker = upnext.Worker("example-worker", concurrency=100)
 api = upnext.Api("example-api", port=8001)
 
 DEFAULT_IMAGE_URL = "https://httpbin.org/image/png"
-DEFAULT_PDF_URL = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+DEFAULT_PDF_URL = (
+    "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+)
 MAX_FETCH_BYTES = 10 * 1024 * 1024  # 10 MB safety cap for demo fetch tasks.
 
 
@@ -41,7 +42,9 @@ def _guess_name_from_url(url: str, fallback: str) -> str:
     return candidate or fallback
 
 
-async def _fetch_url_bytes(url: str, timeout_s: float = 30.0) -> tuple[bytes, str | None]:
+async def _fetch_url_bytes(
+    url: str, timeout_s: float = 30.0
+) -> tuple[bytes, str | None]:
     timeout = aiohttp.ClientTimeout(total=timeout_s)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url) as response:
@@ -52,7 +55,10 @@ async def _fetch_url_bytes(url: str, timeout_s: float = 30.0) -> tuple[bytes, st
                     f"Fetched payload too large ({len(body)} bytes, max {MAX_FETCH_BYTES})"
                 )
             content_type = (
-                response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                response.headers.get("Content-Type", "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
             )
             return body, (content_type or None)
 
@@ -170,7 +176,9 @@ def sync_inventory(product_ids: list[str]) -> dict:
 
 
 @worker.task(retries=1, timeout=45.0)
-async def fetch_image_as_artifact(url: str = DEFAULT_IMAGE_URL, name: str | None = None) -> dict:
+async def fetch_image_as_artifact(
+    url: str = DEFAULT_IMAGE_URL, name: str | None = None
+) -> dict:
     """Fetch a remote image and store it as an artifact."""
     ctx = upnext.get_current_context()
     ctx.set_progress(10, "Fetching image")
@@ -199,7 +207,9 @@ async def fetch_image_as_artifact(url: str = DEFAULT_IMAGE_URL, name: str | None
 
 
 @worker.task(retries=1, timeout=45.0)
-async def fetch_pdf_as_artifact(url: str = DEFAULT_PDF_URL, name: str | None = None) -> dict:
+async def fetch_pdf_as_artifact(
+    url: str = DEFAULT_PDF_URL, name: str | None = None
+) -> dict:
     """Fetch a remote PDF and store it as an artifact."""
     ctx = upnext.get_current_context()
     ctx.set_progress(10, "Fetching PDF")

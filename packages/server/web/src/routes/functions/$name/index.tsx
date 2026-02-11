@@ -10,6 +10,8 @@ import {
   JobsTablePanel,
   LiveWindowControls,
   getTimeWindowBounds,
+  LIVE_LIST_LIMIT,
+  LIVE_REFRESH_INTERVAL_MS,
   type TimeWindowPreset,
 } from "@/components/shared";
 import { FunctionDetailSkeleton } from "./-components/skeletons";
@@ -32,8 +34,6 @@ export const Route = createFileRoute("/functions/$name/")({
 });
 
 const SAFETY_RESYNC_MS = 10 * 60 * 1000;
-const LIVE_RESYNC_MS = 5 * 1000;
-const LIVE_JOBS_LIMIT = 50;
 
 const typeStyles: Record<FunctionType, string> = {
   task: "bg-blue-500/20 text-blue-400",
@@ -62,7 +62,7 @@ function FunctionDetailPage() {
 
   const jobsQueryParams = useMemo(() => {
     if (jobsLive) {
-      return { function: decodedName, limit: LIVE_JOBS_LIMIT };
+      return { function: decodedName, limit: LIVE_LIST_LIMIT };
     }
 
     if (!jobsWindow) {
@@ -90,7 +90,7 @@ function FunctionDetailPage() {
   const { data: jobsData, isPending: isJobsPending } = useQuery({
     queryKey: jobsQueryKey,
     queryFn: () => getJobs(jobsQueryParams),
-    refetchInterval: jobsLive ? LIVE_RESYNC_MS : false,
+    refetchInterval: jobsLive ? LIVE_REFRESH_INTERVAL_MS : false,
     staleTime: jobsLive ? 0 : Number.POSITIVE_INFINITY,
   });
 

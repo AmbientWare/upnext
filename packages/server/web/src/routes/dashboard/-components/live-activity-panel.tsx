@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { DateRange } from "react-day-picker";
 
-import { getApiRequestEvents, getJobs } from "@/lib/upnext-api";
+import { getApiRequestEvents, getJobs, queryKeys } from "@/lib/upnext-api";
 import type { Job } from "@/lib/types";
 import {
   Panel,
@@ -10,6 +10,8 @@ import {
   ApiRequestsTable,
   LiveWindowControls,
   getTimeWindowBounds,
+  LIVE_LIST_LIMIT,
+  LIVE_REFRESH_INTERVAL_MS,
   type TimeWindowPreset,
 } from "@/components/shared";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -26,10 +28,6 @@ interface LiveActivityPanelProps {
   onApiClick?: (apiName: string) => void;
   className?: string;
 }
-
-const LIVE_LIMIT = 50;
-const WINDOW_API_LIMIT = 500;
-const LIVE_RESYNC_MS = 5_000;
 
 const jobStatusOptions = [
   { value: "all", label: "All Status" },
@@ -80,7 +78,7 @@ export function LiveActivityPanel({
 
   const jobsQueryParams = useMemo(() => {
     if (live) {
-      return { limit: LIVE_LIMIT };
+      return { limit: LIVE_LIST_LIMIT };
     }
     if (!bounds) {
       return {};
@@ -92,35 +90,33 @@ export function LiveActivityPanel({
   }, [bounds, live]);
 
   const jobsQueryKey = live
-    ? (["dashboard", "live-activity", "jobs-live", jobsQueryParams] as const)
+    ? queryKeys.jobs(jobsQueryParams)
     : (["dashboard", "live-activity", "jobs-window", jobsQueryParams] as const);
 
   const { data: jobsData, isPending: isJobsLoading } = useQuery({
     queryKey: jobsQueryKey,
     queryFn: () => getJobs(jobsQueryParams),
-    refetchInterval: live ? LIVE_RESYNC_MS : false,
+    refetchInterval: live ? LIVE_REFRESH_INTERVAL_MS : false,
     staleTime: live ? 0 : Number.POSITIVE_INFINITY,
   });
 
-  const apiEventsQueryParams = {
-    limit: live ? LIVE_LIMIT : WINDOW_API_LIMIT,
-  } as const;
+  const apiEventsQueryParams = live ? ({ limit: LIVE_LIST_LIMIT } as const) : ({} as const);
 
   const apiEventsQueryKey = live
-    ? (["dashboard", "live-activity", "api-events-live", apiEventsQueryParams] as const)
+    ? queryKeys.apiRequestEvents(apiEventsQueryParams)
     : (["dashboard", "live-activity", "api-events-window", apiEventsQueryParams] as const);
 
   const { data: apiEventsData, isPending: isApiLoading } = useQuery({
     queryKey: apiEventsQueryKey,
     queryFn: () => getApiRequestEvents(apiEventsQueryParams),
-    refetchInterval: live ? LIVE_RESYNC_MS : false,
+    refetchInterval: live ? LIVE_REFRESH_INTERVAL_MS : false,
     staleTime: live ? 0 : Number.POSITIVE_INFINITY,
   });
 
   const jobsInWindow = useMemo(() => {
     const sorted = [...(jobsData?.jobs ?? [])].sort((a, b) => jobTime(b) - jobTime(a));
     if (live) {
-      return sorted.slice(0, LIVE_LIMIT);
+      return sorted.slice(0, LIVE_LIST_LIMIT);
     }
     return sorted;
   }, [jobsData?.jobs, live]);
@@ -154,7 +150,7 @@ export function LiveActivityPanel({
   const apiEventsInWindow = useMemo(() => {
     const sorted = [...(apiEventsData?.events ?? [])].sort((a, b) => toTimestamp(b.at) - toTimestamp(a.at));
     if (live) {
-      return sorted.slice(0, LIVE_LIMIT);
+      return sorted.slice(0, LIVE_LIST_LIMIT);
     }
     if (!bounds) {
       return sorted;

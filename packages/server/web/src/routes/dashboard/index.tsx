@@ -16,8 +16,8 @@ export const Route = createFileRoute("/dashboard/")({
   component: DataMatrixDashboard,
 });
 
-const SAFETY_RESYNC_MS = 10 * 60 * 1000;
 const WORKERS_SAFETY_RESYNC_MS = 10 * 60 * 1000;
+const APIS_DASHBOARD_RESYNC_MS = 30 * 1000;
 
 function DataMatrixDashboard() {
   const navigate = useNavigate();
@@ -37,7 +37,7 @@ function DataMatrixDashboard() {
   const { data: apisData, isPending: isApisPending } = useQuery({
     queryKey: queryKeys.apis,
     queryFn: getApis,
-    refetchInterval: SAFETY_RESYNC_MS,
+    refetchInterval: APIS_DASHBOARD_RESYNC_MS,
   });
 
   const workers = workersData?.workers ?? [];

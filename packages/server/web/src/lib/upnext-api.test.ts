@@ -38,4 +38,24 @@ describe("upnext-api", () => {
     expect(url).toContain("limit=20");
     expect(url).toContain("offset=10");
   });
+
+  it("throws timeout ApiError when request exceeds timeout", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(
+        () =>
+          new Promise((_resolve, reject) => {
+            setTimeout(() => {
+              reject(new DOMException("aborted", "AbortError"));
+            }, 0);
+          })
+      )
+    );
+
+    await expect(getJob("job-timeout")).rejects.toBeInstanceOf(ApiError);
+    await expect(getJob("job-timeout")).rejects.toMatchObject({
+      status: 408,
+      statusText: "Request Timeout",
+    });
+  });
 });

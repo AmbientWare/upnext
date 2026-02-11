@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   queryKeys,
@@ -6,7 +12,10 @@ import {
   type GetJobsParams,
 } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
-import { useEventSource } from "@/hooks/use-event-source";
+import {
+  useEventSource,
+  type EventSourceConnectionState,
+} from "@/hooks/use-event-source";
 import type {
   ApiInfo,
   ApiPageResponse,
@@ -24,6 +33,15 @@ import type {
 
 interface EventStreamProviderProps {
   children: ReactNode;
+  streams?: Partial<EventStreamSubscriptions>;
+  pauseWhenHidden?: boolean;
+}
+
+export interface EventStreamSubscriptions {
+  jobs: boolean;
+  apis: boolean;
+  apiEvents: boolean;
+  workers: boolean;
 }
 
 const EVENT_STREAM_URL = env.VITE_EVENTS_STREAM_URL;
@@ -45,6 +63,21 @@ const BURST_QUEUE_THRESHOLD = 50;
 const MAX_QUEUE_LENGTH = 2_000;
 /** Minimum interval between reconnect-driven cache resync invalidations. */
 const RESYNC_RECONNECT_THROTTLE_MS = 15_000;
+const STREAM_IDLE_TIMEOUT_MS = 0;
+const FALLBACK_RESYNC_MS = 15_000;
+const FALLBACK_FAILURE_GRACE_MS = 12_000;
+const DEFAULT_STREAM_SUBSCRIPTIONS: EventStreamSubscriptions = {
+  jobs: true,
+  apis: true,
+  apiEvents: true,
+  workers: true,
+};
+const STREAM_KEYS: Array<keyof EventStreamSubscriptions> = [
+  "jobs",
+  "apis",
+  "apiEvents",
+  "workers",
+];
 
 /** Event types that change aggregate counts and warrant a stats refetch. */
 const STATE_CHANGE_EVENTS = new Set([
@@ -348,13 +381,45 @@ function upsertApiRequestEventList(
   };
 }
 
-export function EventStreamProvider({ children }: EventStreamProviderProps) {
+export function EventStreamProvider({
+  children,
+  streams,
+  pauseWhenHidden = true,
+}: EventStreamProviderProps) {
   const queryClient = useQueryClient();
+  const activeStreams = useMemo<EventStreamSubscriptions>(
+    () => ({
+      ...DEFAULT_STREAM_SUBSCRIPTIONS,
+      ...streams,
+    }),
+    [streams]
+  );
   const lastStatsInvalidation = useRef(0);
   const lastFunctionInvalidation = useRef<Record<string, number>>({});
   const lastReconnectResync = useRef(0);
   const eventQueue = useRef<JobEvent[]>([]);
   const eventTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackResyncTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectCount = useRef(0);
+  const droppedEventCount = useRef(0);
+  const streamOpenSinceMs = useRef<Record<keyof EventStreamSubscriptions, number | null>>({
+    jobs: null,
+    apis: null,
+    apiEvents: null,
+    workers: null,
+  });
+  const streamStates = useRef<Record<keyof EventStreamSubscriptions, EventSourceConnectionState>>({
+    jobs: "closed",
+    apis: "closed",
+    apiEvents: "closed",
+    workers: "closed",
+  });
+  const streamDegradedSinceMs = useRef<Record<keyof EventStreamSubscriptions, number | null>>({
+    jobs: null,
+    apis: null,
+    apiEvents: null,
+    workers: null,
+  });
 
   const triggerReconnectResync = useCallback(() => {
     const now = Date.now();
@@ -375,6 +440,104 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
     queryClient.invalidateQueries({ queryKey: ["jobs", "trends"] });
     queryClient.invalidateQueries({ queryKey: ["apis", "events"] });
   }, [queryClient]);
+
+  const publishMetrics = useCallback(() => {
+    const now = Date.now();
+    const activeStreamCount = STREAM_KEYS.filter(
+      (key) => activeStreams[key] && streamStates.current[key] !== "closed"
+    ).length;
+    const streamUptimeMs = Object.fromEntries(
+      STREAM_KEYS.map((key) => [
+        key,
+        streamOpenSinceMs.current[key] == null
+          ? 0
+          : Math.max(now - streamOpenSinceMs.current[key]!, 0),
+      ])
+    );
+    const metricsTarget = globalThis as typeof globalThis & {
+      __UPNEXT_STREAM_METRICS__?: unknown;
+    };
+    metricsTarget.__UPNEXT_STREAM_METRICS__ = {
+      activeStreamCount,
+      reconnectCount: reconnectCount.current,
+      droppedEventCount: droppedEventCount.current,
+      states: { ...streamStates.current },
+      streamUptimeMs,
+      updatedAt: new Date().toISOString(),
+    };
+  }, [activeStreams]);
+
+  const syncFallbackResync = useCallback(() => {
+    const isVisible =
+      !pauseWhenHidden ||
+      typeof document === "undefined" ||
+      document.visibilityState === "visible";
+    if (!isVisible) {
+      if (fallbackResyncTimer.current) {
+        clearInterval(fallbackResyncTimer.current);
+        fallbackResyncTimer.current = null;
+      }
+      publishMetrics();
+      return;
+    }
+    const hasDegradedStream = STREAM_KEYS.some(
+      (key) => {
+        if (!activeStreams[key]) return false;
+        if (streamStates.current[key] === "open") return false;
+        return true;
+      }
+    );
+    const exceededGrace = () => {
+      const now = Date.now();
+      return STREAM_KEYS.some((key) => {
+        if (!activeStreams[key]) return false;
+        if (streamStates.current[key] === "open") return false;
+        const degradedSince = streamDegradedSinceMs.current[key];
+        if (degradedSince == null) return false;
+        return now - degradedSince >= FALLBACK_FAILURE_GRACE_MS;
+      });
+    };
+
+    if (hasDegradedStream && !fallbackResyncTimer.current) {
+      fallbackResyncTimer.current = setInterval(() => {
+        if (exceededGrace()) {
+          triggerReconnectResync();
+        }
+      }, FALLBACK_RESYNC_MS);
+      if (exceededGrace()) {
+        triggerReconnectResync();
+      }
+    } else if (!hasDegradedStream && fallbackResyncTimer.current) {
+      clearInterval(fallbackResyncTimer.current);
+      fallbackResyncTimer.current = null;
+    }
+
+    publishMetrics();
+  }, [activeStreams, pauseWhenHidden, publishMetrics, triggerReconnectResync]);
+
+  const handleStreamStateChange = useCallback(
+    (stream: keyof EventStreamSubscriptions, state: EventSourceConnectionState) => {
+      const previous = streamStates.current[stream];
+      streamStates.current[stream] = state;
+      if (state === "open" && previous !== "open") {
+        streamOpenSinceMs.current[stream] = Date.now();
+        streamDegradedSinceMs.current[stream] = null;
+      } else if (state !== "open") {
+        streamOpenSinceMs.current[stream] = null;
+        if (
+          state === "connecting" ||
+          streamDegradedSinceMs.current[stream] == null
+        ) {
+          streamDegradedSinceMs.current[stream] = Date.now();
+        }
+      }
+      if (previous !== "reconnecting" && state === "reconnecting") {
+        reconnectCount.current += 1;
+      }
+      syncFallbackResync();
+    },
+    [syncFallbackResync]
+  );
 
   const applyStreamEvent = useCallback(
     (payload: JobEvent) => {
@@ -469,17 +632,19 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
         const dropIndex = eventQueue.current.findIndex(
           (queued) => queued.type === "job.progress"
         );
+        droppedEventCount.current += 1;
         if (dropIndex >= 0) {
           eventQueue.current.splice(dropIndex, 1);
         } else {
           eventQueue.current.shift();
         }
+        publishMetrics();
       }
       if (!eventTimer.current) {
         eventTimer.current = setTimeout(drainQueue, 0);
       }
     },
-    [drainQueue]
+    [drainQueue, publishMetrics]
   );
 
   const handleApiMessage = useCallback(
@@ -552,23 +717,58 @@ export function EventStreamProvider({ children }: EventStreamProviderProps) {
         clearTimeout(eventTimer.current);
         eventTimer.current = null;
       }
+      if (fallbackResyncTimer.current) {
+        clearInterval(fallbackResyncTimer.current);
+        fallbackResyncTimer.current = null;
+      }
       eventQueue.current = [];
     };
   }, []);
 
+  useEffect(() => {
+    for (const streamKey of STREAM_KEYS) {
+      if (!activeStreams[streamKey]) {
+        streamStates.current[streamKey] = "closed";
+        streamOpenSinceMs.current[streamKey] = null;
+        streamDegradedSinceMs.current[streamKey] = null;
+      }
+    }
+    syncFallbackResync();
+  }, [activeStreams, syncFallbackResync]);
+
   useEventSource(EVENT_STREAM_URL, {
+    enabled: activeStreams.jobs,
+    pauseWhenHidden,
+    idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
+    onIdle: triggerReconnectResync,
+    onStateChange: (state) => handleStreamStateChange("jobs", state),
     onMessage: handleMessage,
     onReconnect: triggerReconnectResync,
   });
   useEventSource(APIS_STREAM_URL, {
+    enabled: activeStreams.apis,
+    pauseWhenHidden,
+    idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
+    onIdle: triggerReconnectResync,
+    onStateChange: (state) => handleStreamStateChange("apis", state),
     onMessage: handleApiMessage,
     onReconnect: triggerReconnectResync,
   });
   useEventSource(API_REQUEST_EVENTS_STREAM_URL, {
+    enabled: activeStreams.apiEvents,
+    pauseWhenHidden,
+    idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
+    onIdle: triggerReconnectResync,
+    onStateChange: (state) => handleStreamStateChange("apiEvents", state),
     onMessage: handleApiMessage,
     onReconnect: triggerReconnectResync,
   });
   useEventSource(WORKERS_STREAM_URL, {
+    enabled: activeStreams.workers,
+    pauseWhenHidden,
+    idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
+    onIdle: triggerReconnectResync,
+    onStateChange: (state) => handleStreamStateChange("workers", state),
     onMessage: handleWorkersMessage,
     onReconnect: triggerReconnectResync,
   });

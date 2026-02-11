@@ -111,6 +111,7 @@ function ApiDetailPage() {
   );
 
   useEventSource(streamUrl, {
+    pauseWhenHidden: true,
     onMessage: handleApiStreamMessage,
   });
 

@@ -1,4 +1,9 @@
 import { createRootRoute, Outlet, useRouterState } from "@tanstack/react-router";
+import { useMemo } from "react";
+import {
+  EventStreamProvider,
+  type EventStreamSubscriptions,
+} from "@/components/providers/event-stream-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/layout";
 
@@ -8,10 +13,31 @@ export const Route = createRootRoute({
 
 function RootLayout() {
   const router = useRouterState();
+  const path = router.location.pathname;
+
+  const streamSubscriptions = useMemo<EventStreamSubscriptions>(() => {
+    if (path.startsWith("/dashboard")) {
+      // Keep dashboard stream count below browser connection limits.
+      // Prioritize live activity API events stream; API summaries can refresh via polling.
+      return { jobs: true, apis: false, apiEvents: true, workers: true };
+    }
+    if (path.startsWith("/workers")) {
+      return { jobs: false, apis: false, apiEvents: false, workers: true };
+    }
+    if (path.startsWith("/apis")) {
+      return { jobs: false, apis: true, apiEvents: true, workers: false };
+    }
+    if (path.startsWith("/functions")) {
+      return { jobs: true, apis: false, apiEvents: false, workers: false };
+    }
+    if (path.startsWith("/jobs")) {
+      return { jobs: true, apis: false, apiEvents: false, workers: false };
+    }
+    return { jobs: false, apis: false, apiEvents: false, workers: false };
+  }, [path]);
 
   // Get page title from current path
   const getPageTitle = () => {
-    const path = router.location.pathname;
     if (path.startsWith("/dashboard")) return "Dashboard";
     if (path.startsWith("/workers")) return "Workers";
     if (path.startsWith("/apis")) return "APIs";
@@ -33,9 +59,11 @@ function RootLayout() {
 
           {/* Main Content */}
           <main className="flex-1 overflow-hidden">
-            <div key={router.location.pathname} className="route-fade h-full">
-              <Outlet />
-            </div>
+            <EventStreamProvider streams={streamSubscriptions} pauseWhenHidden>
+              <div key={router.location.pathname} className="route-fade h-full">
+                <Outlet />
+              </div>
+            </EventStreamProvider>
           </main>
         </div>
       </div>

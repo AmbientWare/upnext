@@ -8,6 +8,8 @@ import {
   ApiRequestsTable,
   LiveWindowControls,
   getTimeWindowBounds,
+  LIVE_LIST_LIMIT,
+  LIVE_REFRESH_INTERVAL_MS,
   type TimeWindowPreset,
 } from "@/components/shared";
 
@@ -16,10 +18,6 @@ interface ApiLiveRequestsPanelProps {
   className?: string;
 }
 
-const LIVE_RESYNC_MS = 5 * 1000;
-const DISPLAY_LIMIT = 50;
-const WINDOW_QUERY_LIMIT = 500;
-
 export function ApiLiveRequestsPanel({ apiName, className }: ApiLiveRequestsPanelProps) {
   const [live, setLive] = useState(true);
   const [windowPreset, setWindowPreset] = useState<TimeWindowPreset>("custom");
@@ -27,7 +25,7 @@ export function ApiLiveRequestsPanel({ apiName, className }: ApiLiveRequestsPane
 
   const queryParams = {
     api_name: apiName,
-    limit: live ? DISPLAY_LIMIT : WINDOW_QUERY_LIMIT,
+    ...(live ? { limit: LIVE_LIST_LIMIT } : {}),
   } as const;
 
   const queryKey = live
@@ -37,7 +35,7 @@ export function ApiLiveRequestsPanel({ apiName, className }: ApiLiveRequestsPane
   const { data, isPending } = useQuery({
     queryKey,
     queryFn: () => getApiRequestEvents(queryParams),
-    refetchInterval: live ? LIVE_RESYNC_MS : false,
+    refetchInterval: live ? LIVE_REFRESH_INTERVAL_MS : false,
     staleTime: live ? 0 : Number.POSITIVE_INFINITY,
   });
 
@@ -47,7 +45,7 @@ export function ApiLiveRequestsPanel({ apiName, className }: ApiLiveRequestsPane
     );
 
     if (live) {
-      return latest.slice(0, DISPLAY_LIMIT);
+      return latest.slice(0, LIVE_LIST_LIMIT);
     }
 
     const bounds = getTimeWindowBounds(windowPreset, dateRange);

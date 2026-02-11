@@ -20,6 +20,7 @@ import type {
 import { env } from "./env";
 
 const API_BASE = env.VITE_API_BASE_URL;
+const API_REQUEST_TIMEOUT_MS = 10_000;
 
 // =============================================================================
 // Error Handling
@@ -37,6 +38,38 @@ export class ApiError extends Error {
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: string }).name === "AbortError")
+  );
+}
+
+async function apiFetch(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => {
+    controller.abort();
+  }, API_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new ApiError(
+        408,
+        "Request Timeout",
+        `Request timed out after ${API_REQUEST_TIMEOUT_MS}ms`
+      );
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -50,7 +83,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
 // =============================================================================
 
 export async function getDashboardStats(): Promise<DashboardStats> {
-  const response = await fetch(`${API_BASE}/dashboard/stats`);
+  const response = await apiFetch(`${API_BASE}/dashboard/stats`);
   return handleResponse<DashboardStats>(response);
 }
 
@@ -84,7 +117,7 @@ export async function getJobs(params: GetJobsParams = {}): Promise<JobListRespon
   const query = searchParams.toString();
   const url = `${API_BASE}/jobs${query ? `?${query}` : ""}`;
 
-  const response = await fetch(url);
+  const response = await apiFetch(url);
   return handleResponse<JobListResponse>(response);
 }
 
@@ -104,22 +137,22 @@ export async function getJobTrends(params: GetJobTrendsParams = {}): Promise<Job
   const query = searchParams.toString();
   const url = `${API_BASE}/jobs/trends${query ? `?${query}` : ""}`;
 
-  const response = await fetch(url);
+  const response = await apiFetch(url);
   return handleResponse<JobTrendsResponse>(response);
 }
 
 export async function getJob(jobId: string): Promise<Job> {
-  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`);
+  const response = await apiFetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`);
   return handleResponse<Job>(response);
 }
 
 export async function getJobTimeline(jobId: string): Promise<JobListResponse> {
-  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/timeline`);
+  const response = await apiFetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/timeline`);
   return handleResponse<JobListResponse>(response);
 }
 
 export async function getJobArtifacts(jobId: string): Promise<ArtifactListResponse> {
-  const response = await fetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/artifacts`);
+  const response = await apiFetch(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/artifacts`);
   return handleResponse<ArtifactListResponse>(response);
 }
 
@@ -140,7 +173,7 @@ export function getArtifactContentUrl(
 // =============================================================================
 
 export async function getWorkers(): Promise<WorkersListResponse> {
-  const response = await fetch(`${API_BASE}/workers`);
+  const response = await apiFetch(`${API_BASE}/workers`);
   return handleResponse<WorkersListResponse>(response);
 }
 
@@ -160,12 +193,12 @@ export async function getFunctions(params: GetFunctionsParams = {}): Promise<Fun
   const query = searchParams.toString();
   const url = `${API_BASE}/functions${query ? `?${query}` : ""}`;
 
-  const response = await fetch(url);
+  const response = await apiFetch(url);
   return handleResponse<FunctionsListResponse>(response);
 }
 
 export async function getFunction(name: string): Promise<FunctionDetailResponse> {
-  const response = await fetch(`${API_BASE}/functions/${encodeURIComponent(name)}`);
+  const response = await apiFetch(`${API_BASE}/functions/${encodeURIComponent(name)}`);
   return handleResponse<FunctionDetailResponse>(response);
 }
 
@@ -174,7 +207,7 @@ export async function getFunction(name: string): Promise<FunctionDetailResponse>
 // =============================================================================
 
 export async function getApis(): Promise<ApisListResponse> {
-  const response = await fetch(`${API_BASE}/apis`);
+  const response = await apiFetch(`${API_BASE}/apis`);
   return handleResponse<ApisListResponse>(response);
 }
 
@@ -190,12 +223,12 @@ export async function getApiTrends(params: GetApiTrendsParams = {}): Promise<Api
   const query = searchParams.toString();
   const url = `${API_BASE}/apis/trends${query ? `?${query}` : ""}`;
 
-  const response = await fetch(url);
+  const response = await apiFetch(url);
   return handleResponse<ApiTrendsResponse>(response);
 }
 
 export async function getApi(name: string): Promise<ApiPageResponse> {
-  const response = await fetch(`${API_BASE}/apis/${encodeURIComponent(name)}`);
+  const response = await apiFetch(`${API_BASE}/apis/${encodeURIComponent(name)}`);
   return handleResponse<ApiPageResponse>(response);
 }
 
@@ -212,7 +245,7 @@ export async function getApiRequestEvents(
   if (params.limit !== undefined) searchParams.set("limit", String(params.limit));
 
   const query = searchParams.toString();
-  const response = await fetch(`${API_BASE}/apis/events${query ? `?${query}` : ""}`);
+  const response = await apiFetch(`${API_BASE}/apis/events${query ? `?${query}` : ""}`);
   return handleResponse<ApiRequestEventsResponse>(response);
 }
 

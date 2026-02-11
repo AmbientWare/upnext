@@ -10,7 +10,6 @@ import {
 } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { Toaster, toast } from "sonner";
-import { EventStreamProvider } from "@/components/providers/event-stream-provider";
 import "./index.css";
 
 const queryErrorLabels: Record<string, string> = {
@@ -71,9 +70,7 @@ declare module "@tanstack/react-router" {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <EventStreamProvider>
-        <RouterProvider router={router} />
-      </EventStreamProvider>
+      <RouterProvider router={router} />
       <Toaster richColors position="top-right" />
     </QueryClientProvider>
   </StrictMode>

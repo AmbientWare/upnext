@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import { useEventSource } from "./use-event-source";
@@ -43,8 +43,16 @@ function LifecycleHarness(props: {
   onClose: () => void;
   onStateChange: (state: string) => void;
   onError: (event: Event) => void;
+  onIdle?: () => void;
+  idleTimeoutMs?: number;
+  reconnectOnIdle?: boolean;
 }) {
   useEventSource("/events", props);
+  return null;
+}
+
+function VisibilityHarness() {
+  useEventSource("/events", { pauseWhenHidden: true });
   return null;
 }
 
@@ -114,5 +122,68 @@ describe("useEventSource", () => {
     expect(second.closed).toBe(true);
     expect(onStateChange).toHaveBeenCalledWith("open");
     expect(onStateChange).toHaveBeenCalledWith("closed");
+  });
+
+  it("reconnects after idle timeout", async () => {
+    const onOpen = vi.fn();
+    const onReconnect = vi.fn();
+    const onClose = vi.fn();
+    const onError = vi.fn();
+    const onStateChange = vi.fn();
+    const onIdle = vi.fn();
+
+    render(
+      <LifecycleHarness
+        onOpen={onOpen}
+        onReconnect={onReconnect}
+        onClose={onClose}
+        onError={onError}
+        onStateChange={onStateChange}
+        onIdle={onIdle}
+        idleTimeoutMs={60_000}
+        reconnectOnIdle
+      />
+    );
+
+    expect(MockEventSource.instances).toHaveLength(1);
+    const first = MockEventSource.instances[0];
+    first.emit("open", new Event("open"));
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onIdle).toHaveBeenCalledTimes(1);
+    expect(first.closed).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(MockEventSource.instances).toHaveLength(2);
+
+    const second = MockEventSource.instances[1];
+    second.emit("open", new Event("open"));
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("pauses connection while tab is hidden when configured", async () => {
+    let visibilityState: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibilityState,
+    });
+
+    render(<VisibilityHarness />);
+    expect(MockEventSource.instances).toHaveLength(1);
+    const first = MockEventSource.instances[0];
+
+    visibilityState = "hidden";
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+    });
+    expect(first.closed).toBe(true);
+
+    visibilityState = "visible";
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+    });
+    expect(MockEventSource.instances).toHaveLength(2);
   });
 });

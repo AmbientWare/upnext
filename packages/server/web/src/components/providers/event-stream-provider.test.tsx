@@ -13,13 +13,27 @@ import type {
   WorkersListResponse,
 } from "@/lib/types";
 import { EventStreamProvider } from "./event-stream-provider";
+import type { EventSourceConnectionState } from "@/hooks/use-event-source";
 
 const messageHandlers = new Map<string, (event: MessageEvent) => void>();
+const stateHandlers = new Map<
+  string,
+  (state: EventSourceConnectionState) => void
+>();
 
 vi.mock("@/hooks/use-event-source", () => ({
-  useEventSource: (_url: string, options: { onMessage?: (event: MessageEvent) => void }) => {
+  useEventSource: (
+    _url: string,
+    options: {
+      onMessage?: (event: MessageEvent) => void;
+      onStateChange?: (state: EventSourceConnectionState) => void;
+    }
+  ) => {
     if (options.onMessage) {
       messageHandlers.set(_url, options.onMessage);
+    }
+    if (options.onStateChange) {
+      stateHandlers.set(_url, options.onStateChange);
     }
     return { current: null };
   },
@@ -74,6 +88,10 @@ function getWorkersMessageHandler() {
   return messageHandlers.get("/api/v1/workers/stream");
 }
 
+function getJobStateHandler() {
+  return stateHandlers.get("/api/v1/events/stream");
+}
+
 async function flushQueue() {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(120);
@@ -85,6 +103,7 @@ describe("EventStreamProvider", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     messageHandlers.clear();
+    stateHandlers.clear();
   });
 
   afterEach(() => {
@@ -473,5 +492,132 @@ describe("EventStreamProvider", () => {
     const workers = client.getQueryData<WorkersListResponse>(queryKeys.workers);
     expect(workers?.total).toBe(1);
     expect(workers?.workers[0]?.name).toBe("worker-a");
+  });
+
+  it("keeps window-mode caches isolated from live stream mutations", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { gcTime: Infinity } },
+    });
+
+    const liveJobsKey = queryKeys.jobs({ function: "fn.a", limit: 50 });
+    const windowJobsKey = ["jobs", "window", { function: "fn.a" }] as const;
+    const liveApiEventsKey = queryKeys.apiRequestEvents({ api_name: "orders", limit: 50 });
+    const windowApiEventsKey = ["apis", "events-window", { api_name: "orders" }] as const;
+
+    client.setQueryData<JobListResponse>(liveJobsKey, {
+      jobs: [mkJob({ id: "job-live", function: "fn.a", function_name: "A", progress: 0 })],
+      total: 1,
+      has_more: false,
+    });
+    client.setQueryData<JobListResponse>(windowJobsKey, {
+      jobs: [mkJob({ id: "job-window", function: "fn.a", function_name: "A", progress: 0 })],
+      total: 1,
+      has_more: false,
+    });
+
+    client.setQueryData<ApiRequestEventsResponse>(liveApiEventsKey, {
+      events: [],
+      total: 0,
+    });
+    client.setQueryData<ApiRequestEventsResponse>(windowApiEventsKey, {
+      events: [],
+      total: 0,
+    });
+
+    renderWithQueryClient(client, (
+      <EventStreamProvider>
+        <div />
+      </EventStreamProvider>
+    ));
+
+    const jobHandler = getJobMessageHandler();
+    const apiRequestEventsHandler = getApiRequestEventsMessageHandler();
+    expect(jobHandler).toBeDefined();
+    expect(apiRequestEventsHandler).toBeDefined();
+
+    act(() => {
+      jobHandler?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "job.progress",
+            job_id: "job-live",
+            root_id: "job-live",
+            progress: 0.75,
+          }),
+        })
+      );
+      apiRequestEventsHandler?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "api.request",
+            at: "2026-02-09T12:00:02Z",
+            request: {
+              id: 99,
+              api_name: "orders",
+              method: "GET",
+              path: "/orders",
+              status: 200,
+              latency_ms: 12.3,
+              instance_id: "api-a",
+              sampled: true,
+              at: "2026-02-09T12:00:02Z",
+            },
+          }),
+        })
+      );
+    });
+    await flushQueue();
+
+    const liveJobs = client.getQueryData<JobListResponse>(liveJobsKey);
+    const windowJobs = client.getQueryData<JobListResponse>(windowJobsKey);
+    expect(liveJobs?.jobs[0].progress).toBe(0.75);
+    expect(windowJobs?.jobs[0].progress).toBe(0);
+
+    const liveApiEvents = client.getQueryData<ApiRequestEventsResponse>(liveApiEventsKey);
+    const windowApiEvents = client.getQueryData<ApiRequestEventsResponse>(windowApiEventsKey);
+    expect(liveApiEvents?.events).toHaveLength(1);
+    expect(windowApiEvents?.events).toHaveLength(0);
+  });
+
+  it("starts fallback invalidation only after sustained stream degradation", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { gcTime: Infinity } },
+    });
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+
+    renderWithQueryClient(client, (
+      <EventStreamProvider
+        streams={{ jobs: true, apis: false, apiEvents: false, workers: false }}
+      >
+        <div />
+      </EventStreamProvider>
+    ));
+
+    const jobStateHandler = getJobStateHandler();
+    expect(jobStateHandler).toBeDefined();
+
+    act(() => {
+      jobStateHandler?.("connecting");
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(11_000);
+    });
+    expect(invalidateSpy).toHaveBeenCalledTimes(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(invalidateSpy).toHaveBeenCalled();
+    const callsAfterFallback = invalidateSpy.mock.calls.length;
+
+    act(() => {
+      jobStateHandler?.("open");
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(invalidateSpy).toHaveBeenCalledTimes(callsAfterFallback);
   });
 });

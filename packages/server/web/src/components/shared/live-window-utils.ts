@@ -1,6 +1,8 @@
 import type { DateRange } from "react-day-picker";
 
 export type TimeWindowPreset = "15m" | "1h" | "6h" | "24h" | "custom";
+export const LIVE_LIST_LIMIT = 50;
+export const LIVE_REFRESH_INTERVAL_MS = 5_000;
 
 interface TimeWindowBounds {
   from: Date;

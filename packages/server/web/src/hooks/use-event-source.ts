@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type EventSourceConnectionState =
   | "connecting"
@@ -8,22 +8,32 @@ export type EventSourceConnectionState =
 
 interface UseEventSourceOptions {
   enabled?: boolean;
+  pauseWhenHidden?: boolean;
   onMessage?: (event: MessageEvent) => void;
   onError?: (event: Event) => void;
   onOpen?: (event: Event) => void;
   onReconnect?: (event: Event) => void;
   onClose?: () => void;
   onStateChange?: (state: EventSourceConnectionState) => void;
+  onIdle?: () => void;
   reconnectInitialDelayMs?: number;
   reconnectMaxDelayMs?: number;
+  idleTimeoutMs?: number;
+  reconnectOnIdle?: boolean;
 }
 
 export function useEventSource(url: string, options: UseEventSourceOptions = {}) {
   const {
     enabled = true,
+    pauseWhenHidden = false,
     reconnectInitialDelayMs = 1_000,
     reconnectMaxDelayMs = 30_000,
+    idleTimeoutMs = 0,
+    reconnectOnIdle = true,
   } = options;
+  const [isPageVisible, setIsPageVisible] = useState(() =>
+    typeof document === "undefined" ? true : document.visibilityState === "visible"
+  );
   const sourceRef = useRef<EventSource | null>(null);
   const onMessageRef = useRef(options.onMessage);
   const onErrorRef = useRef(options.onError);
@@ -31,6 +41,7 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
   const onReconnectRef = useRef(options.onReconnect);
   const onCloseRef = useRef(options.onClose);
   const onStateChangeRef = useRef(options.onStateChange);
+  const onIdleRef = useRef(options.onIdle);
 
   useEffect(() => {
     onMessageRef.current = options.onMessage;
@@ -39,9 +50,11 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
     onReconnectRef.current = options.onReconnect;
     onCloseRef.current = options.onClose;
     onStateChangeRef.current = options.onStateChange;
+    onIdleRef.current = options.onIdle;
   }, [
     options.onClose,
     options.onError,
+    options.onIdle,
     options.onMessage,
     options.onOpen,
     options.onReconnect,
@@ -49,7 +62,24 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
   ]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!pauseWhenHidden || typeof document === "undefined") {
+      return;
+    }
+
+    const handleVisibilityChange = () => {
+      setIsPageVisible(document.visibilityState === "visible");
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [pauseWhenHidden]);
+
+  const effectiveEnabled = enabled && (!pauseWhenHidden || isPageVisible);
+
+  useEffect(() => {
+    if (!effectiveEnabled) {
       onStateChangeRef.current?.("closed");
       return;
     }
@@ -58,6 +88,7 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
     let attempt = 0;
     let hasConnected = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let currentSource: EventSource | null = null;
     let currentState: EventSourceConnectionState | null = null;
 
@@ -75,6 +106,25 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
       reconnectTimer = null;
     };
 
+    const clearIdleTimer = () => {
+      if (!idleTimer) return;
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    };
+
+    const scheduleIdleTimeout = () => {
+      clearIdleTimer();
+      if (idleTimeoutMs <= 0) return;
+      idleTimer = setTimeout(() => {
+        if (cancelled) return;
+        onIdleRef.current?.();
+        if (reconnectOnIdle) {
+          closeCurrentSource(false);
+          scheduleReconnect();
+        }
+      }, idleTimeoutMs);
+    };
+
     const closeCurrentSource = (emitClose: boolean) => {
       if (!currentSource) return;
       currentSource.close();
@@ -83,6 +133,7 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
       if (emitClose) {
         onCloseRef.current?.();
       }
+      clearIdleTimer();
     };
 
     const scheduleReconnect = () => {
@@ -116,14 +167,16 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
         hasConnected = true;
         attempt = 0;
         emitState("open");
+        scheduleIdleTimeout();
         onOpenRef.current?.(event);
         if (reconnected) {
           onReconnectRef.current?.(event);
         }
       });
-      source.addEventListener("message", (event) =>
-        onMessageRef.current?.(event as MessageEvent)
-      );
+      source.addEventListener("message", (event) => {
+        scheduleIdleTimeout();
+        onMessageRef.current?.(event as MessageEvent);
+      });
       source.addEventListener("error", (event) => {
         onErrorRef.current?.(event);
         if (cancelled) return;
@@ -137,11 +190,19 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
     return () => {
       cancelled = true;
       clearReconnectTimer();
+      clearIdleTimer();
       closeCurrentSource(true);
       emitState("closed");
       sourceRef.current = null;
     };
-  }, [enabled, reconnectInitialDelayMs, reconnectMaxDelayMs, url]);
+  }, [
+    effectiveEnabled,
+    idleTimeoutMs,
+    reconnectOnIdle,
+    reconnectInitialDelayMs,
+    reconnectMaxDelayMs,
+    url,
+  ]);
 
   return sourceRef;
 }

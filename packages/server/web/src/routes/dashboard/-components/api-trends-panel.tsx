@@ -81,6 +81,7 @@ export function ApiTrendsPanel({ className }: ApiTrendsPanelProps) {
   );
 
   useEventSource(streamUrl, {
+    pauseWhenHidden: true,
     onMessage: handleTrendsStreamMessage,
   });
 

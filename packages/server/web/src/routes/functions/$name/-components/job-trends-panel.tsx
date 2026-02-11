@@ -80,6 +80,7 @@ export function JobTrendsPanel({ functionName, className }: JobTrendsPanelProps)
   );
 
   useEventSource(streamUrl, {
+    pauseWhenHidden: true,
     onMessage: handleTrendsStreamMessage,
   });
 

@@ -94,6 +94,7 @@ export function TrendsPanel({ className }: TrendsPanelProps) {
   );
 
   useEventSource(streamUrl, {
+    pauseWhenHidden: true,
     onMessage: handleTrendsStreamMessage,
   });
 
