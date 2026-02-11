@@ -88,7 +88,7 @@ function CapacityDonut({ active, total }: { active: number; total: number }) {
           </text>
         </svg>
       </div>
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Capacity Used</span>
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Running / Capacity</span>
     </div>
   );
 }
@@ -205,8 +205,8 @@ function WorkerDetailPage() {
               value={`${worker.instances.length}/${Math.max(worker.instance_count, worker.instances.length)}`}
             />
             <MetricTile label="Functions" value={`${functions.length}`} />
-            <MetricTile label="Active Jobs" value={`${stats.activeJobs}`} tone="text-cyan-300" />
-            <MetricTile label="Processed Jobs" value={formatNumber(stats.jobsProcessed)} />
+            <MetricTile label="Running Jobs" value={`${stats.activeJobs}`} tone="text-cyan-300" />
+            <MetricTile label="Completed Jobs" value={formatNumber(stats.jobsProcessed)} />
             <MetricTile
               label="Failed Jobs"
               value={formatNumber(stats.jobsFailed)}

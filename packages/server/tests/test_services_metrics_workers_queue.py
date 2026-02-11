@@ -222,23 +222,68 @@ async def test_workers_service_parses_and_lists_instances_and_definitions(
 
 
 @pytest.mark.asyncio
-async def test_queue_service_sums_active_jobs_and_handles_errors(
+async def test_queue_service_reads_depth_from_stream_groups(
     redis_text_client, monkeypatch
 ) -> None:
-    await redis_text_client.set(
-        f"{WORKER_INSTANCE_KEY_PREFIX}:worker-1",
-        json.dumps({"id": "w1", "active_jobs": 2}),
+    stream_a = "upnext:fn:fn.a:stream"
+    stream_b = "upnext:fn:fn.b:stream"
+    await redis_text_client.xgroup_create(stream_a, "workers", id="0", mkstream=True)
+    await redis_text_client.xgroup_create(stream_b, "workers", id="0", mkstream=True)
+
+    # stream_a => lag 2, pending 1
+    for idx in range(3):
+        await redis_text_client.xadd(stream_a, {"job_id": f"a-{idx}"})
+    await redis_text_client.xreadgroup(
+        groupname="workers",
+        consumername="consumer-a",
+        streams={stream_a: ">"},
+        count=1,
     )
-    await redis_text_client.set(
-        f"{WORKER_INSTANCE_KEY_PREFIX}:worker-2",
-        json.dumps({"id": "w2", "active_jobs": 5}),
+
+    # stream_b => lag 1, pending 2
+    for idx in range(3):
+        await redis_text_client.xadd(stream_b, {"job_id": f"b-{idx}"})
+    await redis_text_client.xreadgroup(
+        groupname="workers",
+        consumername="consumer-b",
+        streams={stream_b: ">"},
+        count=2,
     )
 
     async def fake_get_redis() -> FakeRedis:
         return redis_text_client
 
-    monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
-    assert await queue_service_module.get_active_job_count() == 7
+    await redis_text_client.set(
+        f"{WORKER_INSTANCE_KEY_PREFIX}:worker-1",
+        json.dumps({"id": "w1", "active_jobs": 1, "concurrency": 2}),
+    )
+    await redis_text_client.set(
+        f"{WORKER_INSTANCE_KEY_PREFIX}:worker-2",
+        json.dumps({"id": "w2", "active_jobs": 2, "concurrency": 3}),
+    )
 
-    await redis_text_client.set(f"{WORKER_INSTANCE_KEY_PREFIX}:worker-bad", "{not-json")
-    assert await queue_service_module.get_active_job_count() == 0
+    monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
+
+    stats = await queue_service_module.get_queue_depth_stats()
+    assert stats.waiting == 3
+    assert stats.claimed == 3
+    assert stats.running == 3
+    assert stats.capacity == 5
+    assert stats.total == 6
+
+
+@pytest.mark.asyncio
+async def test_queue_service_returns_zero_stats_when_redis_unavailable(
+    monkeypatch,
+) -> None:
+    async def fake_get_redis() -> FakeRedis:
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
+
+    stats = await queue_service_module.get_queue_depth_stats()
+    assert stats.waiting == 0
+    assert stats.claimed == 0
+    assert stats.running == 0
+    assert stats.capacity == 0
+    assert stats.total == 0

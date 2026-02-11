@@ -18,6 +18,7 @@ from shared.events import (
 )
 from shared.models import Job, JobStatus, StateTransition
 from shared.patterns import get_matching_patterns, matches_event_pattern
+from shared.queue import QUEUE_CONSUMER_GROUP, QUEUE_KEY_PREFIX
 from shared.schemas import (
     ApiDetailResponse,
     ApiEndpoint,
@@ -99,6 +100,9 @@ __all__ = [
     # Pattern matching
     "matches_event_pattern",
     "get_matching_patterns",
+    # Queue constants
+    "QUEUE_KEY_PREFIX",
+    "QUEUE_CONSUMER_GROUP",
     # API Schemas
     "ApiInstance",
     "ApiEndpoint",

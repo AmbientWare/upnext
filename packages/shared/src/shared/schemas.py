@@ -467,7 +467,16 @@ class RunStats(BaseModel):
 
     total_24h: int
     success_rate: float
-    active_count: int
+
+
+class QueueStats(BaseModel):
+    """Queue depth statistics."""
+
+    running: int
+    waiting: int
+    claimed: int
+    capacity: int
+    total: int
 
 
 class ApiStats(BaseModel):
@@ -482,6 +491,7 @@ class DashboardStats(BaseModel):
     """Dashboard stats response."""
 
     runs: RunStats
+    queue: QueueStats
     workers: WorkerStats
     apis: ApiStats
     recent_runs: list[Run]

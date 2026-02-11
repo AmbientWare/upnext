@@ -9,8 +9,11 @@ WORKER_DEF_PREFIX = "upnext:workers:definitions"
 # Key prefix for function definitions
 FUNCTION_KEY_PREFIX = "upnext:functions"
 
+# Worker heartbeat cadence (seconds)
+WORKER_HEARTBEAT_INTERVAL = 5
+
 # Worker instance TTL - must heartbeat within this time
-# With 10s heartbeat interval, this gives 3 missed heartbeats before expiry
+# With 5s heartbeat interval, this gives 6 missed heartbeats before expiry
 WORKER_TTL = 30
 
 # Stream used for worker heartbeat/lifecycle signals consumed by realtime routes

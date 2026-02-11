@@ -7,7 +7,8 @@ import {
   queryKeys,
 } from "@/lib/upnext-api";
 import { SystemOverviewPanel } from "./-components/system-overview-panel";
-import { SystemOverviewSkeleton } from "./-components/skeletons";
+import { QueueStatsPanel } from "./-components/queue-stats-panel";
+import { QueueStatsSkeleton, SystemOverviewSkeleton } from "./-components/skeletons";
 import { TrendsPanel } from "./-components/trends-panel";
 import { ApiTrendsPanel } from "./-components/api-trends-panel";
 import { LiveActivityPanel } from "./-components/live-activity-panel";
@@ -47,17 +48,29 @@ function DataMatrixDashboard() {
 
   return (
     <div className="p-4 flex flex-col gap-3 h-full min-h-0 overflow-hidden">
-      {/* System Overview */}
-      {isOverviewPending ? (
-        <SystemOverviewSkeleton />
-      ) : (
-        <SystemOverviewPanel
-          stats={dashboardStats}
-          workers={workers}
-          apis={apis}
-          className="shrink-0"
-        />
-      )}
+      <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] items-stretch gap-3 shrink-0">
+        {/* Queue Stats */}
+        {isOverviewPending ? (
+          <QueueStatsSkeleton />
+        ) : (
+          <QueueStatsPanel
+            stats={dashboardStats}
+            className="h-full"
+          />
+        )}
+
+        {/* System Overview */}
+        {isOverviewPending ? (
+          <SystemOverviewSkeleton />
+        ) : (
+          <SystemOverviewPanel
+            stats={dashboardStats}
+            workers={workers}
+            apis={apis}
+            className="shrink-0"
+          />
+        )}
+      </div>
 
       {/* Trends Charts */}
       <div className="flex gap-3 h-56 shrink-0">

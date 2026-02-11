@@ -39,6 +39,7 @@ from upnext.engine.queue.redis.constants import (
     DEFAULT_FLUSH_INTERVAL,
     DEFAULT_INBOX_SIZE,
     DEFAULT_JOB_TTL_SECONDS,
+    DEFAULT_KEY_PREFIX,
     DEFAULT_OUTBOX_SIZE,
     DEFAULT_STREAM_MAXLEN,
     CompletedJob,
@@ -74,7 +75,7 @@ class RedisQueue(BaseQueue):
     def __init__(
         self,
         redis_url: str = "redis://localhost:6379",
-        key_prefix: str = "upnext",
+        key_prefix: str = DEFAULT_KEY_PREFIX,
         consumer_group: str = DEFAULT_CONSUMER_GROUP,
         claim_timeout_ms: int = DEFAULT_CLAIM_TIMEOUT_MS,
         job_ttl_seconds: int = DEFAULT_JOB_TTL_SECONDS,

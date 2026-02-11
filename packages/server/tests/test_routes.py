@@ -524,8 +524,15 @@ async def test_dashboard_returns_defaults_when_database_unavailable(
     def no_db():
         raise RuntimeError("db unavailable")
 
-    async def fake_active_count() -> int:
-        return 3
+    class _QueueDepth:
+        running = 3
+        waiting = 0
+        claimed = 3
+        capacity = 10
+        total = 3
+
+    async def fake_queue_depth() -> _QueueDepth:
+        return _QueueDepth()
 
     async def fake_worker_stats() -> WorkerStats:
         return WorkerStats(total=0)
@@ -538,14 +545,79 @@ async def test_dashboard_returns_defaults_when_database_unavailable(
         return FakeReader()
 
     monkeypatch.setattr(dashboard_route, "get_database", no_db)
-    monkeypatch.setattr(dashboard_route, "get_active_job_count", fake_active_count)
+    monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
     monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
 
     out = await dashboard_route.get_dashboard_stats()
     assert out.runs.total_24h == 0
-    assert out.runs.active_count == 3
+    assert out.queue.running == 3
+    assert out.queue.waiting == 0
+    assert out.queue.claimed == 3
+    assert out.queue.capacity == 10
+    assert out.queue.total == 3
     assert out.recent_runs == []
+
+
+@pytest.mark.asyncio
+async def test_dashboard_includes_queue_depth_when_database_available(
+    sqlite_db, monkeypatch
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with sqlite_db.session() as session:
+        repo = JobRepository(session)
+        await repo.record_job(
+            {
+                "job_id": "job-queued-1",
+                "function": "fn.queue",
+                "function_name": "queue",
+                "status": "queued",
+                "root_id": "job-queued-1",
+                "created_at": now,
+            }
+        )
+        await repo.record_job(
+            {
+                "job_id": "job-complete-1",
+                "function": "fn.queue",
+                "function_name": "queue",
+                "status": "complete",
+                "root_id": "job-complete-1",
+                "created_at": now,
+            }
+        )
+
+    class _QueueDepth:
+        running = 4
+        waiting = 1
+        claimed = 5
+        capacity = 8
+        total = 5
+
+    async def fake_queue_depth() -> _QueueDepth:
+        return _QueueDepth()
+
+    async def fake_worker_stats() -> WorkerStats:
+        return WorkerStats(total=1)
+
+    class FakeReader:
+        async def get_summary(self) -> dict[str, float]:
+            return {"requests_24h": 0, "avg_latency_ms": 0, "error_rate": 0}
+
+    async def fake_reader() -> FakeReader:
+        return FakeReader()
+
+    monkeypatch.setattr(dashboard_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
+    monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
+    monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
+
+    out = await dashboard_route.get_dashboard_stats()
+    assert out.queue.running == 4
+    assert out.queue.waiting == 1
+    assert out.queue.claimed == 5
+    assert out.queue.capacity == 8
+    assert out.queue.total == 5
 
 
 @pytest.mark.asyncio

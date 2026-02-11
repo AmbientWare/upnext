@@ -331,7 +331,14 @@ export interface ApiRequestSnapshotEvent {
 export interface RunStats {
   total_24h: number;
   success_rate: number;
-  active_count: number;
+}
+
+export interface QueueStats {
+  running: number;
+  waiting: number;
+  claimed: number;
+  capacity: number;
+  total: number;
 }
 
 export interface ApiStats {
@@ -342,6 +349,7 @@ export interface ApiStats {
 
 export interface DashboardStats {
   runs: RunStats;
+  queue: QueueStats;
   workers: WorkerStats;
   apis: ApiStats;
   recent_runs: Run[];

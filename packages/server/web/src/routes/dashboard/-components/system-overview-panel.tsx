@@ -18,12 +18,10 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
   const allInstances = activeWorkers.flatMap((w) => w.instances);
   const totalCapacity = allInstances.reduce((sum, inst) => sum + inst.concurrency, 0);
   const totalActive = allInstances.reduce((sum, inst) => sum + inst.active_jobs, 0);
-  const loadPct = totalCapacity > 0 ? Math.round((totalActive / totalCapacity) * 100) : 0;
 
   // Job metrics
   const throughput = stats ? Math.round(stats.runs.total_24h / 1440) : 0;
   const throughputStr = throughput >= 1000 ? `${(throughput / 1000).toFixed(1)}K` : `${throughput}`;
-  const activeJobs = stats?.runs.active_count ?? 0;
   const successRate = stats?.runs.success_rate ?? 0;
 
   // API aggregates
@@ -32,8 +30,9 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
   const errorRate = stats?.apis.error_rate ?? 0;
 
   const animatedWorkers = useAnimatedNumber(activeCount);
+  const animatedUtilActive = useAnimatedNumber(totalActive);
+  const animatedUtilCapacity = useAnimatedNumber(totalCapacity);
   const animatedThroughput = useAnimatedNumber(throughputStr);
-  const animatedActiveJobs = useAnimatedNumber(activeJobs);
   const animatedSuccessRate = useAnimatedNumber(`${successRate.toFixed(1)}%`);
   const animatedApiReqs = useAnimatedNumber(
     totalReqPerMin >= 1000 ? `${(totalReqPerMin / 1000).toFixed(1)}K` : `${totalReqPerMin}`
@@ -47,26 +46,22 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
       className={className}
       contentClassName="p-5"
     >
-      <div className="grid grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 xl:grid-cols-3 gap-6">
         {/* Workers - with load bar */}
         <div>
           <div className={cn("mono text-3xl font-bold", activeCount > 0 ? "text-foreground" : "text-muted-foreground")}>
             {animatedWorkers}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Workers</div>
-          <div className="mono text-xs text-muted-foreground mt-1">{loadPct}% load</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Active Workers</div>
+          <div className="mono text-xs text-muted-foreground mt-1">
+            Utilization {animatedUtilActive}/{animatedUtilCapacity}
+          </div>
         </div>
 
         {/* Throughput */}
         <div>
           <div className="mono text-3xl font-bold text-foreground">{animatedThroughput}</div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Jobs/min</div>
-        </div>
-
-        {/* Active Jobs */}
-        <div>
-          <div className="mono text-3xl font-bold text-foreground">{animatedActiveJobs}</div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Active Jobs</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Jobs / Min (24h Avg)</div>
         </div>
 
         {/* Success Rate */}
@@ -77,7 +72,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
           )}>
             {animatedSuccessRate}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Success Rate</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Job Success Rate (24h)</div>
         </div>
 
         {/* API Req/min */}
@@ -85,7 +80,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
           <div className="mono text-3xl font-bold text-foreground">
             {animatedApiReqs}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">API Req/min</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">API Requests / Min</div>
         </div>
 
         {/* API Latency */}
@@ -96,7 +91,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
           )}>
             {animatedLatency}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Latency (ms)</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">API Avg Latency (ms)</div>
         </div>
 
         {/* Error Rate */}
@@ -107,7 +102,7 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
           )}>
             {animatedErrorRate}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Error Rate</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">API Error Rate (24h)</div>
         </div>
       </div>
     </Panel>

@@ -7,13 +7,14 @@ from fastapi import APIRouter
 from shared.schemas import (
     ApiStats,
     DashboardStats,
+    QueueStats,
     Run,
     RunStats,
 )
 
 from server.db.repository import JobRepository
 from server.db.session import get_database
-from server.services import get_active_job_count, get_worker_stats
+from server.services import get_queue_depth_stats, get_worker_stats
 from server.services.api_tracking import get_metrics_reader
 
 logger = logging.getLogger(__name__)
@@ -35,15 +36,18 @@ async def get_dashboard_stats() -> DashboardStats:
     run_stats = RunStats(
         total_24h=0,
         success_rate=100.0,
-        active_count=0,
+    )
+    queue_depth = await get_queue_depth_stats()
+    queue_stats = QueueStats(
+        running=queue_depth.running,
+        waiting=queue_depth.waiting,
+        claimed=queue_depth.claimed,
+        capacity=queue_depth.capacity,
+        total=queue_depth.total,
     )
 
     recent_runs: list[Run] = []
     recent_failures: list[Run] = []
-
-    # Get active job count from Redis (real-time from worker heartbeats)
-    active_count = await get_active_job_count()
-    run_stats.active_count = active_count
 
     try:
         db = get_database()
@@ -56,7 +60,6 @@ async def get_dashboard_stats() -> DashboardStats:
             run_stats = RunStats(
                 total_24h=stats["total"],
                 success_rate=stats["success_rate"],
-                active_count=active_count,
             )
 
             # Get recent runs (last 10)
@@ -138,6 +141,7 @@ async def get_dashboard_stats() -> DashboardStats:
 
     return DashboardStats(
         runs=run_stats,
+        queue=queue_stats,
         workers=worker_stats,
         apis=api_stats,
         recent_runs=recent_runs,

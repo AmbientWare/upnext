@@ -27,7 +27,7 @@ export function WorkersTable({ workers }: { workers: WorkerInfo[] }) {
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Name</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Instances</TableHead>
           <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Functions</TableHead>
-          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Concurrency</TableHead>
+          <TableHead className="text-[10px] text-muted-foreground font-medium h-8">Capacity</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody ref={bodyRef}>

@@ -91,7 +91,7 @@ describe("WorkerDetailPage", () => {
     });
 
     expect(screen.getByText("3/5")).toBeInTheDocument();
-    expect(screen.getByText("Processed Jobs")).toBeInTheDocument();
+    expect(screen.getByText("Completed Jobs")).toBeInTheDocument();
     expect(screen.getByText("alpha")).toBeInTheDocument();
     expect(screen.getByText("beta")).toBeInTheDocument();
   });

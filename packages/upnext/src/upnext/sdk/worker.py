@@ -24,6 +24,7 @@ from shared.workers import (
     FUNCTION_KEY_PREFIX,
     WORKER_DEF_PREFIX,
     WORKER_DEF_TTL,
+    WORKER_HEARTBEAT_INTERVAL,
     WORKER_EVENTS_STREAM,
     WORKER_INSTANCE_KEY_PREFIX,
     WORKER_TTL,
@@ -589,13 +590,13 @@ class Worker:
         """Refresh worker heartbeat TTL in Redis periodically."""
         while True:
             try:
-                await asyncio.sleep(10)
+                await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL)
                 await self._write_worker_heartbeat()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.debug(f"Worker heartbeat error: {e}")
-                await asyncio.sleep(10)
+                await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL)
 
     async def execute(
         self,
