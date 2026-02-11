@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import mimetypes
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -10,6 +12,43 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.db.models import Artifact, JobHistory, PendingArtifact
+
+
+def _infer_artifact_metadata(
+    *,
+    data: Any | None,
+    path: str | None,
+    size_bytes: int | None,
+    content_type: str | None,
+) -> tuple[int | None, str | None]:
+    """Derive missing artifact metadata for backwards compatibility."""
+    resolved_size = size_bytes
+    resolved_type = content_type
+
+    if resolved_size is None and data is not None:
+        if isinstance(data, (bytes, bytearray)):
+            resolved_size = len(data)
+        elif isinstance(data, str):
+            resolved_size = len(data.encode())
+        else:
+            try:
+                resolved_size = len(json.dumps(data, default=str).encode())
+            except Exception:
+                resolved_size = len(str(data).encode())
+
+    if resolved_type is None and path:
+        guessed, _encoding = mimetypes.guess_type(path)
+        resolved_type = guessed
+
+    if resolved_type is None and data is not None:
+        if isinstance(data, (dict, list)):
+            resolved_type = "application/json"
+        elif isinstance(data, str):
+            resolved_type = "text/plain"
+        elif isinstance(data, (bytes, bytearray)):
+            resolved_type = "application/octet-stream"
+
+    return resolved_size, resolved_type
 
 
 class JobRepository:
@@ -285,6 +324,7 @@ class JobRepository:
         start_date: datetime,
         end_date: datetime,
         function: str | None = None,
+        functions: list[str] | None = None,
     ) -> list[Any]:
         """
         Get job counts grouped by hour and status using SQL aggregation.
@@ -315,6 +355,10 @@ class JobRepository:
 
         if function:
             query = query.where(JobHistory.function == function)
+        elif functions is not None:
+            if not functions:
+                return []
+            query = query.where(JobHistory.function.in_(functions))
 
         result = await self._session.execute(query)
         return list(result.all())
@@ -459,6 +503,13 @@ class ArtifactRepository:
         error: str | None = None,
     ) -> Artifact:
         """Create an artifact for a job."""
+        size_bytes, content_type = _infer_artifact_metadata(
+            data=data,
+            path=path,
+            size_bytes=size_bytes,
+            content_type=content_type,
+        )
+
         artifact = Artifact(
             job_id=job_id,
             name=name,
@@ -491,6 +542,13 @@ class ArtifactRepository:
         error: str | None = None,
     ) -> PendingArtifact:
         """Create a pending artifact when the job row is not yet available."""
+        size_bytes, content_type = _infer_artifact_metadata(
+            data=data,
+            path=path,
+            size_bytes=size_bytes,
+            content_type=content_type,
+        )
+
         pending = PendingArtifact(
             job_id=job_id,
             name=name,

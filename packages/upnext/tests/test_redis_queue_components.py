@@ -131,6 +131,48 @@ async def test_finisher_fallback_pipeline_flushes_and_acks(fake_redis) -> None:
 
 
 @pytest.mark.asyncio
+async def test_finisher_retries_flush_without_dropping_batch(fake_redis) -> None:
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-finisher-retry")
+
+    job = Job(function="task_fn", function_name="task", key="finisher-retry-key")
+    await queue.enqueue(job)
+    active = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert active is not None
+
+    finisher = Finisher(queue=queue, batch_size=8, outbox_size=8, flush_interval=0.01)
+    await finisher.start()
+    try:
+        original_flush = finisher._flush_batch  # noqa: SLF001
+        state = {"calls": 0}
+
+        async def flaky_flush(batch):  # type: ignore[no-untyped-def]
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise RuntimeError("transient redis failure")
+            await original_flush(batch)
+
+        finisher._flush_batch = flaky_flush  # type: ignore[method-assign]  # noqa: SLF001
+
+        await finisher.put(
+            CompletedJob(
+                job=active,
+                status=JobStatus.COMPLETE,
+                result={"ok": True},
+            )
+        )
+
+        client = await queue._ensure_connected()  # noqa: SLF001
+
+        async def result_written() -> bool:
+            return await client.get(queue._result_key(job.id)) is not None  # noqa: SLF001
+
+        assert await _wait_for(result_written)
+        assert state["calls"] >= 2
+    finally:
+        await finisher.stop()
+
+
+@pytest.mark.asyncio
 async def test_sweeper_fallback_moves_due_job_to_stream(fake_redis) -> None:
     queue = RedisQueue(client=fake_redis, key_prefix="upnext-sweeper-fallback")
     queue._scripts_loaded = True  # noqa: SLF001

@@ -93,6 +93,14 @@ async def test_cancel_non_terminal_job_returns_true(queue: RedisQueue) -> None:
     assert cancelled is not None
     assert cancelled.status == JobStatus.CANCELLED
 
+    # Cancellation should prevent queued jobs from executing.
+    candidate = await queue.dequeue(["task_fn"], timeout=0.05)
+    assert candidate is None
+
+    # Cancel should release the dedup key so callers can re-submit immediately.
+    client = await queue._ensure_connected()  # noqa: SLF001
+    assert await client.sismember(queue._dedup_key(queued_job.function), queued_job.key) == 0  # noqa: SLF001
+
 
 @pytest.mark.asyncio
 async def test_cancel_terminal_job_returns_false(queue: RedisQueue) -> None:
@@ -157,3 +165,21 @@ async def test_heartbeat_prevents_reclaim(fake_redis) -> None:
     for _ in range(3):
         reclaimed = await q2.dequeue(["task_fn"], timeout=0.02)
         assert reclaimed is None
+
+
+@pytest.mark.asyncio
+async def test_default_stream_maxlen_does_not_trim_unconsumed_jobs(queue: RedisQueue) -> None:
+    total = 12
+    submitted: list[str] = []
+    for idx in range(total):
+        job = Job(function="task_fn", function_name="task", key=f"no-trim-{idx}")
+        submitted.append(job.id)
+        await queue.enqueue(job)
+
+    seen: list[str] = []
+    for _ in range(total):
+        job = await queue.dequeue(["task_fn"], timeout=0.2)
+        assert job is not None
+        seen.append(job.id)
+
+    assert seen == submitted

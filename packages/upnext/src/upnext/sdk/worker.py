@@ -131,10 +131,12 @@ class Worker:
         if self._worker_id:
             return self._worker_id
 
+        settings = get_settings()
+
         if redis_url:
             self.redis_url = redis_url
         else:
-            self.redis_url = self.redis_url or get_settings().redis_url
+            self.redis_url = self.redis_url or settings.redis_url
 
         if not self.redis_url:
             raise ValueError(
@@ -143,7 +145,11 @@ class Worker:
             )
         self._redis_client = create_redis_client(self.redis_url)
         self._queue_backend = RedisQueue(
-            client=self._redis_client, inbox_size=self.prefetch
+            client=self._redis_client,
+            inbox_size=self.prefetch,
+            job_ttl_seconds=settings.queue_job_ttl_seconds,
+            result_ttl_seconds=settings.queue_result_ttl_seconds,
+            stream_maxlen=settings.queue_stream_maxlen,
         )
 
         # Connect task handles to queue
@@ -185,6 +191,7 @@ class Worker:
         timeout: float = 30 * 60,  # 30 minutes
         cache_key: str | None = None,
         cache_ttl: int | None = None,
+        rate_limit: str | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -203,6 +210,7 @@ class Worker:
         timeout: float = 30 * 60,  # 30 minutes
         cache_key: str | None = None,
         cache_ttl: int | None = None,
+        rate_limit: str | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -255,6 +263,7 @@ class Worker:
                 timeout=timeout,
                 cache_key=cache_key,
                 cache_ttl=cache_ttl,
+                rate_limit=rate_limit,
                 on_start=on_start,
                 on_success=on_success,
                 on_failure=on_failure,
@@ -380,6 +389,7 @@ class Worker:
                     "timeout": handle.definition.timeout,
                     "max_retries": handle.definition.retries,
                     "retry_delay": handle.definition.retry_delay,
+                    "rate_limit": handle.definition.rate_limit,
                 }
             )
 
@@ -415,6 +425,7 @@ class Worker:
                         "timeout": handler["timeout"],
                         "max_retries": handler["max_retries"],
                         "retry_delay": handler["retry_delay"],
+                        "rate_limit": handler["rate_limit"],
                     }
                 )
 

@@ -305,6 +305,25 @@ class JobProcessor:
             if not job:
                 return
 
+            # Job might have been cancelled after dequeue/prefetch.
+            is_cancelled = False
+            try:
+                is_cancelled = await self._queue.is_cancelled(job.id)
+            except AttributeError:
+                is_cancelled = False
+            if is_cancelled:
+                await self._queue.finish(
+                    job,
+                    JobStatus.CANCELLED,
+                    error="Cancelled before execution",
+                )
+                logger.debug(
+                    "Skipped cancelled job %s (%s)",
+                    job.function_name,
+                    job.id,
+                )
+                return
+
             # Mark job as started (records state transition)
             job.mark_started(self._worker_id)
             if not job.root_id:
@@ -677,7 +696,9 @@ class JobContextBackend:
         self._job = job
         self._status_buffer = status_buffer
 
-    async def set_progress(self, job_id: str, progress: float) -> None:
+    async def set_progress(
+        self, job_id: str, progress: float, message: str | None = None
+    ) -> None:
         await self._queue.update_progress(job_id, progress)
         if self._status_buffer:
             await self._status_buffer.record_job_progress(
@@ -685,6 +706,7 @@ class JobContextBackend:
                 self._job.root_id,
                 progress,
                 parent_id=self._job.parent_id,
+                message=message,
             )
 
     async def set_metadata(self, job_id: str, key: str, value: Any) -> None:
@@ -699,9 +721,15 @@ class JobContextBackend:
 
     async def get_metadata(self, job_id: str, key: str) -> Any:
         """Get a metadata value for this job."""
-        if self._job.metadata is None:
+        if job_id == self._job.id:
+            if self._job.metadata is None:
+                return None
+            return self._job.metadata.get(key)
+
+        other = await self._queue.get_job(job_id)
+        if other is None or other.metadata is None:
             return None
-        return self._job.metadata.get(key)
+        return other.metadata.get(key)
 
     async def checkpoint(self, job_id: str, state: dict[str, Any]) -> None:
         """Store checkpoint state for resumption after failures."""
@@ -779,8 +807,12 @@ async def _drain_commands(
         op = cmd[0]
         try:
             if op == "set_progress":
-                _, job_id, progress = cmd
-                await backend.set_progress(job_id, progress)
+                if len(cmd) == 4:
+                    _, job_id, progress, message = cmd
+                else:
+                    _, job_id, progress = cmd
+                    message = None
+                await backend.set_progress(job_id, progress, message)
             elif op == "set_metadata":
                 _, job_id, key, value = cmd
                 await backend.set_metadata(job_id, key, value)

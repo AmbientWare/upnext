@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     event_subscriber_poll_interval_ms: int = 2000
     event_subscriber_stale_claim_ms: int = 30000
 
+    # Cleanup service tuning.
+    cleanup_retention_days: int = 30
+    cleanup_interval_hours: int = 1
+    cleanup_pending_retention_hours: int = 24
+    cleanup_pending_promote_batch: int = 500
+    cleanup_pending_promote_max_loops: int = 20
+    cleanup_startup_jitter_seconds: float = 30.0
+
+    # Queue retention defaults (also used by server-side cancel/retry endpoints).
+    queue_job_ttl_seconds: int = 86_400
+    queue_result_ttl_seconds: int = 3_600
+    queue_stream_maxlen: int = 0
+
     # Job progress write-throttling for DB persistence.
     event_progress_min_interval_ms: int = 250
     event_progress_min_delta: float = 0.02

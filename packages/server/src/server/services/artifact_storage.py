@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from abc import ABC, abstractmethod
 from functools import lru_cache
@@ -10,6 +11,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from server.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_component(value: str) -> str:
@@ -61,6 +64,10 @@ class LocalStorage(BaseStorage):
         return target
 
     async def put(self, *, key: str, content: bytes, content_type: str | None = None) -> None:
+        if content_type:
+            logger.debug(
+                "Local artifact write key=%s content_type=%s", key, content_type
+            )
         target = self._resolve_key(key)
 
         def _write() -> None:

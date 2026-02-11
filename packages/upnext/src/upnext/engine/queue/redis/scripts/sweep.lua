@@ -34,12 +34,22 @@ for i, job_id in ipairs(due_jobs) do
 
     if job_data then
         -- Add to stream with full job data
-        redis.call("XADD", stream_key, "MAXLEN", "~", stream_maxlen, "*",
-                   "job_id", job_id, "function", function_name, "data", job_data)
+        if stream_maxlen > 0 then
+            redis.call("XADD", stream_key, "MAXLEN", "~", stream_maxlen, "*",
+                       "job_id", job_id, "function", function_name, "data", job_data)
+        else
+            redis.call("XADD", stream_key, "*",
+                       "job_id", job_id, "function", function_name, "data", job_data)
+        end
     else
         -- Fallback without data (legacy)
-        redis.call("XADD", stream_key, "MAXLEN", "~", stream_maxlen, "*",
-                   "job_id", job_id, "function", function_name)
+        if stream_maxlen > 0 then
+            redis.call("XADD", stream_key, "MAXLEN", "~", stream_maxlen, "*",
+                       "job_id", job_id, "function", function_name)
+        else
+            redis.call("XADD", stream_key, "*",
+                       "job_id", job_id, "function", function_name)
+        end
     end
 
     -- Remove from scheduled set

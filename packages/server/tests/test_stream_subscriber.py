@@ -444,3 +444,50 @@ async def test_process_batch_coalesces_duplicate_progress_events(
 
     pending_summary = await fake_redis.xpending(config.stream, config.group)
     assert pending_summary["pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_coalesced_progress_events_are_not_acked_when_latest_fails(
+    fake_redis, monkeypatch
+) -> None:
+    config = StreamSubscriberConfig(
+        stream=EVENTS_STREAM,
+        group="test-progress-failure",
+        consumer_id="consumer-progress-failure",
+        batch_size=10,
+        poll_interval=0.01,
+    )
+    subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
+    assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
+
+    async def fake_process_event(
+        event_type: str, data: dict, worker_id: str | None
+    ) -> bool:  # noqa: ARG001
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)
+
+    ts = datetime.now(UTC).isoformat()
+    for progress in (0.1, 0.2):
+        await fake_redis.xadd(
+            config.stream,
+            {
+                "type": "job.progress",
+                "job_id": "job-coalesce-fail-1",
+                "worker_id": "worker-1",
+                "data": json.dumps(
+                    {
+                        "root_id": "job-coalesce-fail-1",
+                        "progress": progress,
+                        "updated_at": ts,
+                    }
+                ),
+            },
+        )
+
+    processed = await subscriber._process_batch(drain=True)  # noqa: SLF001
+    assert processed == 0
+
+    pending_summary = await fake_redis.xpending(config.stream, config.group)
+    # Both events should remain pending for replay when the failure clears.
+    assert pending_summary["pending"] == 2

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
 
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
+    queue_job_ttl_seconds: int = 86_400
+    queue_result_ttl_seconds: int = 3_600
+    queue_stream_maxlen: int = 0
 
     # API tracking controls
     api_tracking_normalize_paths: bool = True

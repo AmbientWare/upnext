@@ -9,8 +9,6 @@ import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from upnext.engine.queue.redis.constants import DEFAULT_STREAM_MAXLEN
-
 if TYPE_CHECKING:
     from upnext.engine.queue.redis.queue import RedisQueue
 
@@ -131,7 +129,7 @@ class Sweeper:
                         str(now),
                         function,
                         "100",
-                        str(DEFAULT_STREAM_MAXLEN),
+                        str(self._queue._stream_maxlen),
                         self._queue._key_prefix,
                     )
                     if moved and moved > 0:
@@ -181,12 +179,15 @@ class Sweeper:
                 )
                 msg_fields["data"] = job_data_str
 
-            await client.xadd(
-                stream_key,
-                msg_fields,
-                maxlen=DEFAULT_STREAM_MAXLEN,
-                approximate=True,
-            )
+            if self._queue._stream_maxlen > 0:
+                await client.xadd(
+                    stream_key,
+                    msg_fields,
+                    maxlen=self._queue._stream_maxlen,
+                    approximate=True,
+                )
+            else:
+                await client.xadd(stream_key, msg_fields)
 
             await client.zrem(scheduled_key, job_id_str)
             logger.debug(f"Moved scheduled job {job_id_str} to stream")

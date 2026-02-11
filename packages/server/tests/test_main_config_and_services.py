@@ -24,6 +24,12 @@ class _SettingsStub:
     event_subscriber_batch_size: int = 100
     event_subscriber_poll_interval_ms: int = 2000
     event_subscriber_stale_claim_ms: int = 30000
+    cleanup_retention_days: int = 30
+    cleanup_interval_hours: int = 1
+    cleanup_pending_retention_hours: int = 24
+    cleanup_pending_promote_batch: int = 500
+    cleanup_pending_promote_max_loops: int = 20
+    cleanup_startup_jitter_seconds: float = 30.0
 
 
 class _FakeDatabase:
@@ -52,8 +58,9 @@ class _FakeDatabase:
 class _FakeCleanupService:
     instances: list[_FakeCleanupService] = []
 
-    def __init__(self, redis_client: Any = None) -> None:
+    def __init__(self, redis_client: Any = None, **kwargs: Any) -> None:
         self.redis_client = redis_client
+        self.kwargs = kwargs
         self.started = False
         self.stopped = False
         self.__class__.instances.append(self)
@@ -233,6 +240,7 @@ async def test_lifespan_sqlite_path_runs_cleanup_without_redis(monkeypatch) -> N
         assert db.created_tables == 1
         assert _FakeCleanupService.instances[0].started is True
         assert _FakeCleanupService.instances[0].redis_client is None
+        assert _FakeCleanupService.instances[0].kwargs["retention_days"] == 30
 
     assert db.disconnected == 1
     assert _FakeCleanupService.instances[0].stopped is True
@@ -291,6 +299,7 @@ async def test_lifespan_with_redis_starts_and_stops_subscriber(monkeypatch) -> N
         assert _FakeStreamSubscriber.instances[0].started is True
         assert _FakeStreamSubscriber.instances[0].redis_client is redis_client
         assert _FakeCleanupService.instances[0].redis_client is redis_client
+        assert _FakeCleanupService.instances[0].kwargs["interval_hours"] == 1
 
     assert _FakeStreamSubscriber.instances[0].stopped is True
     assert _FakeCleanupService.instances[0].stopped is True

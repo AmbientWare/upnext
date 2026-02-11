@@ -255,6 +255,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
                 "timeout": 30,
                 "max_retries": 2,
                 "retry_delay": 3,
+                "rate_limit": "100/m",
             },
             "fn.event": {
                 "key": "fn.event",
@@ -295,6 +296,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
 
     assert task.runs_24h == 2
     assert task.success_rate == 50.0
+    assert task.rate_limit == "100/m"
     assert set(task.workers) == {"alpha (2)", "host-1"}
     assert task.active is True
 

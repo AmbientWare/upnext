@@ -261,7 +261,7 @@ class StreamSubscriber:
         self._last_batch_event_count = len(event_ids)
 
         parsed_events = self._parse_events(events)
-        coalesced_events, coalesced_ack_ids = self._coalesce_progress_events(
+        coalesced_events, coalesced_ack_ids_by_latest = self._coalesce_progress_events(
             parsed_events
         )
 
@@ -274,12 +274,11 @@ class StreamSubscriber:
                 await self._handle_event(event_type, event_data, worker_id)
                 processed += 1
                 ack_ids.append(event_id)
+                ack_ids.extend(coalesced_ack_ids_by_latest.get(event_id, ()))
 
             except Exception as e:
                 errors += 1
                 logger.warning(f"Error processing event {event_id}: {e}")
-
-        ack_ids.extend(coalesced_ack_ids)
 
         # ACK only successfully processed events.
         # Failed events stay pending and can be retried/reclaimed later.
@@ -332,7 +331,7 @@ class StreamSubscriber:
     def _coalesce_progress_events(
         self,
         events: list[tuple[str, str, dict[str, Any], str]],
-    ) -> tuple[list[tuple[str, str, dict[str, Any], str]], list[str]]:
+    ) -> tuple[list[tuple[str, str, dict[str, Any], str]], dict[str, list[str]]]:
         """Coalesce duplicate progress updates within one batch.
 
         Keeps only the latest contiguous ``job.progress`` event for each job.
@@ -341,7 +340,7 @@ class StreamSubscriber:
         """
 
         coalesced: list[tuple[str, str, dict[str, Any], str]] = []
-        coalesced_ack_ids: list[str] = []
+        coalesced_ack_ids_by_latest: dict[str, list[str]] = {}
         latest_progress_index_by_job: dict[str, int] = {}
 
         for event in events:
@@ -361,10 +360,12 @@ class StreamSubscriber:
                 continue
 
             previous_event_id = coalesced[existing_index][0]
-            coalesced_ack_ids.append(previous_event_id)
             coalesced[existing_index] = event
+            coalesced_ack_ids_by_latest.setdefault(event_id, []).append(previous_event_id)
+            if prior_ids := coalesced_ack_ids_by_latest.pop(previous_event_id, None):
+                coalesced_ack_ids_by_latest[event_id].extend(prior_ids)
 
-        return coalesced, coalesced_ack_ids
+        return coalesced, coalesced_ack_ids_by_latest
 
     @staticmethod
     def _event_id_sort_key(event_id: str) -> tuple[int, int]:

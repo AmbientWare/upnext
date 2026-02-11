@@ -54,17 +54,18 @@ class Finisher:
             return
 
         self._stop_event.set()
-
-        # Give the loop a chance to flush remaining items
-        if not self._outbox.empty():
-            logger.debug(f"Flushing {self._outbox.qsize()} remaining completions")
-            await asyncio.sleep(0.1)
-
-        self._task.cancel()
         try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
+            await asyncio.wait_for(self._task, timeout=5.0)
+        except TimeoutError:
+            logger.warning(
+                "Finisher shutdown timed out with %s completions still buffered",
+                self._outbox.qsize(),
+            )
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
         self._task = None
         logger.debug("Finisher stopped")
 
@@ -75,6 +76,7 @@ class Finisher:
     async def _finish_loop(self) -> None:
         """Background loop that collects and batch-flushes completions."""
         batch: list[CompletedJob] = []
+        consecutive_failures = 0
 
         while not self._stop_event.is_set() or not self._outbox.empty():
             # Collect jobs up to batch_size or flush_interval
@@ -82,16 +84,23 @@ class Finisher:
                 async with asyncio.timeout(self._flush_interval):
                     while len(batch) < self._batch_size:
                         batch.append(await self._outbox.get())
-            except (TimeoutError, asyncio.CancelledError):
+            except TimeoutError:
                 pass
+            except asyncio.CancelledError:
+                # Drain cancelled task only when nothing is left to flush.
+                if not batch and self._outbox.empty():
+                    raise
 
             # Flush batch
             if batch:
                 try:
                     await self._flush_batch(batch)
+                    consecutive_failures = 0
+                    batch = []
                 except Exception as e:
                     logger.error(f"Finish loop flush error: {e}", exc_info=True)
-                batch = []
+                    consecutive_failures += 1
+                    await asyncio.sleep(min(0.1 * (2**consecutive_failures), 2.0))
 
     async def _flush_batch(self, batch: list[CompletedJob]) -> None:
         """Flush completed jobs using Redis pipeline."""
@@ -123,7 +132,7 @@ class Finisher:
                         self._queue._consumer_group,
                         msg_id or "",
                         job.to_json(),
-                        "3600",
+                        str(self._queue._result_ttl_seconds),
                         job.key or "",
                         completed.status.value,
                     )
@@ -132,13 +141,16 @@ class Finisher:
                     if msg_id:
                         pipe.xack(stream_key, self._queue._consumer_group, msg_id)
                     pipe.setex(
-                        self._queue._result_key(job.id), 3600, job.to_json().encode()
+                        self._queue._result_key(job.id),
+                        self._queue._result_ttl_seconds,
+                        job.to_json().encode(),
                     )
                     pipe.delete(self._queue._job_key(job))
                     pipe.delete(self._queue._job_index_key(job.id))
                     if job.key:
                         pipe.srem(self._queue._dedup_key(job.function), job.key)
                     pipe.publish(f"upnext:job:{job.id}", completed.status.value)
+                pipe.delete(self._queue._cancel_marker_key(job.id))
 
             await pipe.execute()
 

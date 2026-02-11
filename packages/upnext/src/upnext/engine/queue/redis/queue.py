@@ -41,6 +41,7 @@ from upnext.engine.queue.redis.constants import (
     DEFAULT_JOB_TTL_SECONDS,
     DEFAULT_KEY_PREFIX,
     DEFAULT_OUTBOX_SIZE,
+    DEFAULT_RESULT_TTL_SECONDS,
     DEFAULT_STREAM_MAXLEN,
     CompletedJob,
 )
@@ -79,6 +80,7 @@ class RedisQueue(BaseQueue):
         consumer_group: str = DEFAULT_CONSUMER_GROUP,
         claim_timeout_ms: int = DEFAULT_CLAIM_TIMEOUT_MS,
         job_ttl_seconds: int = DEFAULT_JOB_TTL_SECONDS,
+        result_ttl_seconds: int = DEFAULT_RESULT_TTL_SECONDS,
         sweep_interval: float = 5.0,
         *,
         client: Any | None = None,
@@ -86,12 +88,14 @@ class RedisQueue(BaseQueue):
         inbox_size: int = DEFAULT_INBOX_SIZE,
         outbox_size: int = DEFAULT_OUTBOX_SIZE,
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
+        stream_maxlen: int = DEFAULT_STREAM_MAXLEN,
     ) -> None:
         self._redis_url = redis_url
         self._key_prefix = key_prefix
         self._consumer_group = consumer_group
         self._claim_timeout_ms = claim_timeout_ms
         self._job_ttl_seconds = job_ttl_seconds
+        self._result_ttl_seconds = result_ttl_seconds
         self._sweep_interval = sweep_interval
 
         # Batching config (stored for component creation)
@@ -99,6 +103,7 @@ class RedisQueue(BaseQueue):
         self._inbox_size = inbox_size
         self._outbox_size = outbox_size
         self._flush_interval = flush_interval
+        self._stream_maxlen = max(0, int(stream_maxlen))
 
         self._consumer_id = f"consumer_{uuid.uuid4().hex[:8]}"
         self._client: Any = client
@@ -251,6 +256,71 @@ class RedisQueue(BaseQueue):
     def _result_key(self, job_id: str) -> str:
         return self._key("result", job_id)
 
+    def _cancel_marker_key(self, job_id: str) -> str:
+        return self._key("cancelled", job_id)
+
+    async def _xadd_job_payload(
+        self,
+        stream_key: str,
+        *,
+        job_id: str,
+        function: str,
+        data: str,
+    ) -> None:
+        client = await self._ensure_connected()
+        payload = {"job_id": job_id, "function": function, "data": data}
+        if self._stream_maxlen > 0:
+            await client.xadd(
+                stream_key,
+                payload,
+                maxlen=self._stream_maxlen,
+                approximate=True,
+            )
+        else:
+            await client.xadd(stream_key, payload)
+
+    async def _delete_stream_entries_for_job(
+        self,
+        stream_key: str,
+        job_id: str,
+        *,
+        batch_size: int = 500,
+        max_scan: int = 50_000,
+    ) -> int:
+        """Delete stream entries matching a job_id (best effort, cancel path only)."""
+        client = await self._ensure_connected()
+        start = "-"
+        scanned = 0
+        deleted = 0
+
+        while scanned < max_scan:
+            rows = await client.xrange(stream_key, min=start, max="+", count=batch_size)
+            if not rows:
+                break
+
+            delete_ids: list[str] = []
+            for msg_id, msg_data in rows:
+                scanned += 1
+                msg_job_id = msg_data.get(b"job_id") or msg_data.get("job_id")
+                msg_job_id_str = (
+                    msg_job_id.decode() if isinstance(msg_job_id, bytes) else msg_job_id
+                )
+                if msg_job_id_str == job_id:
+                    msg_id_str = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
+                    delete_ids.append(msg_id_str)
+
+            if delete_ids:
+                deleted += await client.xdel(stream_key, *delete_ids)
+
+            if len(rows) < batch_size:
+                break
+
+            last_id = rows[-1][0]
+            last_id_str = last_id.decode() if isinstance(last_id, bytes) else last_id
+            start = f"({last_id_str}"
+
+        return deleted
+
     # =========================================================================
     # CORE - enqueue
     # =========================================================================
@@ -287,7 +357,7 @@ class RedisQueue(BaseQueue):
                 job.id,
                 job.function,
                 str(scheduled_time),
-                str(DEFAULT_STREAM_MAXLEN),
+                str(self._stream_maxlen),
             )
 
             result_str = result.decode() if isinstance(result, bytes) else result
@@ -307,11 +377,11 @@ class RedisQueue(BaseQueue):
             if delay > 0:
                 await client.zadd(scheduled_key, {job.id: time.time() + delay})
             else:
-                await client.xadd(
+                await self._xadd_job_payload(
                     stream_key,
-                    {"job_id": job.id, "function": job.function, "data": job.to_json()},
-                    maxlen=DEFAULT_STREAM_MAXLEN,
-                    approximate=True,
+                    job_id=job.id,
+                    function=job.function,
+                    data=job.to_json(),
                 )
 
         return job.id
@@ -610,19 +680,24 @@ class RedisQueue(BaseQueue):
                 self._consumer_group,
                 msg_id or "",
                 job.to_json(),
-                "3600",
+                str(self._result_ttl_seconds),
                 job.key or "",
                 status.value,
             )
         else:
             if msg_id:
                 await client.xack(stream_key, self._consumer_group, msg_id)
-            await client.setex(result_key, 3600, job.to_json().encode())
+            await client.setex(
+                result_key, self._result_ttl_seconds, job.to_json().encode()
+            )
             await client.delete(job_key)
             await client.delete(job_index_key)
             if job.key:
                 await client.srem(dedup_key, job.key)
             await client.publish(pubsub_channel, status.value)
+
+        # Job has terminally finished; clear cancellation marker if present.
+        await client.delete(self._cancel_marker_key(job.id))
 
     # =========================================================================
     # CORE - retry, cancel, get_job
@@ -670,7 +745,7 @@ class RedisQueue(BaseQueue):
                 job.id,
                 job.function,
                 str(delay),
-                str(DEFAULT_STREAM_MAXLEN),
+                str(self._stream_maxlen),
             )
         else:
             # Fallback without Lua
@@ -683,11 +758,11 @@ class RedisQueue(BaseQueue):
             if delay > 0:
                 await client.zadd(dest_key, {job.id: time.time() + delay})
             else:
-                await client.xadd(
+                await self._xadd_job_payload(
                     dest_key,
-                    {"job_id": job.id, "function": job.function, "data": job.to_json()},
-                    maxlen=DEFAULT_STREAM_MAXLEN,
-                    approximate=True,
+                    job_id=job.id,
+                    function=job.function,
+                    data=job.to_json(),
                 )
 
     async def cancel(self, job_id: str) -> bool:
@@ -713,32 +788,54 @@ class RedisQueue(BaseQueue):
 
         msg_id = job.metadata.get("_stream_msg_id") if job.metadata else None
         stream_key = self._stream_key(job.function)
+        scheduled_key = self._scheduled_key(job.function)
         result_key = self._result_key(job.id)
         job_index_key = self._job_index_key(job.id)
+        dedup_key = self._dedup_key(job.function)
+        cancel_marker_key = self._cancel_marker_key(job.id)
         pubsub_channel = f"upnext:job:{job.id}"
+
+        # Mark cancellation immediately so workers can skip already-prefetched jobs.
+        await client.setex(cancel_marker_key, self._job_ttl_seconds, b"1")
+
+        # Remove queued copies from scheduled and stream storage (best effort).
+        await client.zrem(scheduled_key, job.id)
+        deleted_from_stream = await self._delete_stream_entries_for_job(stream_key, job.id)
+        if deleted_from_stream > 0:
+            logger.debug(
+                "Deleted %s queued stream entries for cancelled job %s",
+                deleted_from_stream,
+                job.id,
+            )
 
         # Use Lua script for atomic cancellation if available
         if self._cancel_sha:
             await client.evalsha(
                 self._cancel_sha,
-                5,  # number of keys
+                6,  # number of keys
                 stream_key,
                 result_key,
                 job_key,
                 job_index_key,
+                dedup_key,
                 pubsub_channel,
                 self._consumer_group,
                 msg_id or "",
                 job.to_json(),
-                "3600",
+                str(self._result_ttl_seconds),
+                job.key or "",
             )
         else:
             # Fallback without Lua
             if msg_id:
                 await client.xack(stream_key, self._consumer_group, msg_id)
-            await client.setex(result_key, 3600, job.to_json().encode())
+            await client.setex(
+                result_key, self._result_ttl_seconds, job.to_json().encode()
+            )
             await client.delete(job_key)
             await client.delete(job_index_key)
+            if job.key:
+                await client.srem(dedup_key, job.key)
             await client.publish(pubsub_channel, JobStatus.CANCELLED.value)
 
         return True
@@ -780,6 +877,11 @@ class RedisQueue(BaseQueue):
             job_key = self._job_key(job)
             client = await self._ensure_connected()
             await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
+
+    async def is_cancelled(self, job_id: str) -> bool:
+        client = await self._ensure_connected()
+        marker = await client.get(self._cancel_marker_key(job_id))
+        return marker is not None
 
     async def heartbeat_active_jobs(self, jobs: list[Job]) -> None:
         """Reset idle time on active jobs to prevent XAUTOCLAIM from reclaiming them."""
@@ -963,7 +1065,7 @@ class RedisQueue(BaseQueue):
         cursor = 0
         while True:
             cursor, keys = await client.scan(
-                cursor=cursor, match=f"{self._key_prefix}:fn:*:stream", count=100
+                cursor=cursor, match=f"{QUEUE_KEY_PREFIX}:fn:*:stream", count=100
             )
 
             for stream_key in keys:

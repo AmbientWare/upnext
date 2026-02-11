@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     """Application lifespan handler."""
+
     # Startup
     logger.info("Starting UpNext API server...")
 
@@ -76,7 +77,15 @@ async def lifespan(app: FastAPI):
         logger.info("Redis not configured (UPNEXT_REDIS_URL not set)")
 
     # Start periodic cleanup service
-    cleanup = CleanupService(redis_client=redis_client)
+    cleanup = CleanupService(
+        redis_client=redis_client,
+        retention_days=settings.cleanup_retention_days,
+        interval_hours=settings.cleanup_interval_hours,
+        pending_retention_hours=settings.cleanup_pending_retention_hours,
+        pending_promote_batch=settings.cleanup_pending_promote_batch,
+        pending_promote_max_loops=settings.cleanup_pending_promote_max_loops,
+        startup_jitter_seconds=settings.cleanup_startup_jitter_seconds,
+    )
     await cleanup.start()
 
     yield

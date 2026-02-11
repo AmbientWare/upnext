@@ -326,3 +326,47 @@ async def test_cron_jobs_reschedule_on_success_and_terminal_failure() -> None:
         assert failed_job.id in queue.rescheduled
     finally:
         processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@dataclass
+class _CancelledQueue:
+    job: Job | None
+    finishes: list[tuple[str, JobStatus, Any, str | None]] = field(default_factory=list)
+
+    async def dequeue(self, functions: list[str], *, timeout: float = 5.0) -> Job | None:  # noqa: ARG002
+        current = self.job
+        self.job = None
+        return current
+
+    async def is_cancelled(self, job_id: str) -> bool:
+        return True
+
+    async def finish(
+        self,
+        job: Job,
+        status: JobStatus,
+        result: Any = None,
+        error: str | None = None,
+    ) -> None:
+        self.finishes.append((job.id, status, result, error))
+
+
+@pytest.mark.asyncio
+async def test_process_one_skips_jobs_marked_cancelled_before_start() -> None:
+    registry = Registry()
+
+    async def task() -> str:
+        return "ok"
+
+    registry.register_task("task_key", task)
+    job = Job(function="task_key", function_name="task")
+    queue = _CancelledQueue(job=job)
+    processor = JobProcessor(queue=cast(BaseQueue, queue), registry=registry)
+
+    try:
+        await processor._process_one()  # noqa: SLF001
+        assert queue.finishes == [
+            (job.id, JobStatus.CANCELLED, None, "Cancelled before execution")
+        ]
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001

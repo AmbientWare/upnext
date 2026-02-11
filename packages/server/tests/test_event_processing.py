@@ -299,3 +299,38 @@ def test_progress_force_interval_persists_even_for_small_delta(monkeypatch) -> N
         )
         is True
     )
+
+
+@pytest.mark.asyncio
+async def test_progress_for_unknown_job_reports_not_applied(sqlite_db) -> None:
+    applied = await process_event(
+        "job.progress",
+        {
+            "job_id": "job-progress-missing-1",
+            "root_id": "job-progress-missing-1",
+            "progress": 0.4,
+            "updated_at": datetime.now(UTC),
+        },
+    )
+    assert applied is False
+
+
+@pytest.mark.asyncio
+async def test_completed_event_reports_not_applied_when_database_unavailable(monkeypatch) -> None:
+    def _raise_db():  # type: ignore[no-untyped-def]
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(event_processing_module, "get_database", _raise_db)
+
+    applied = await process_event(
+        "job.completed",
+        {
+            "job_id": "job-complete-unavailable-1",
+            "function": "task_key",
+            "function_name": "task_name",
+            "root_id": "job-complete-unavailable-1",
+            "attempt": 1,
+            "completed_at": datetime.now(UTC),
+        },
+    )
+    assert applied is False

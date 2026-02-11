@@ -22,6 +22,7 @@ import server.routes.workers.workers_root as workers_root_route
 import server.routes.workers.workers_stream as workers_stream_route
 from fastapi import HTTPException, Response
 from server.db.repository import JobRepository
+from shared.models import Job
 from shared.events import ARTIFACT_EVENTS_STREAM, BatchEventItem, BatchEventRequest
 from shared.schemas import (
     ApiInstance,
@@ -269,16 +270,75 @@ async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_jobs_cancel_and_retry_routes_return_not_implemented() -> None:
-    with pytest.raises(HTTPException, match="not implemented yet") as cancel_exc:
-        await jobs_route.cancel_job("job-123")
-    assert cancel_exc.value.status_code == 501
-    assert "job-123" in cancel_exc.value.detail
+async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
+    fake_redis, monkeypatch
+) -> None:
+    async def _get_redis():
+        return fake_redis
 
-    with pytest.raises(HTTPException, match="not implemented yet") as retry_exc:
-        await jobs_route.retry_job("job-456")
-    assert retry_exc.value.status_code == 501
-    assert "job-456" in retry_exc.value.detail
+    monkeypatch.setattr(jobs_root_route, "get_redis", _get_redis)
+
+    queued = Job(id="job-123", function="fn.cancel", function_name="cancel")
+    queued.mark_queued("queued for cancellation test")
+    queued_key = "upnext:job:fn.cancel:job-123"
+    queued_payload = queued.to_json().encode()
+    await fake_redis.setex(queued_key, 86_400, queued_payload)
+    await fake_redis.setex("upnext:job_index:job-123", 86_400, queued_key)
+    await fake_redis.xadd(
+        "upnext:fn:fn.cancel:stream",
+        {
+            "job_id": queued.id,
+            "function": queued.function,
+            "data": queued.to_json(),
+        },
+    )
+
+    failed = Job(id="job-456", function="fn.retry", function_name="retry")
+    failed.mark_failed("boom")
+    await fake_redis.setex("upnext:result:job-456", 3_600, failed.to_json().encode())
+
+    cancel_out = await jobs_route.cancel_job("job-123")
+    assert cancel_out["job_id"] == "job-123"
+    assert cancel_out["cancelled"] is True
+    assert await fake_redis.get(queued_key) is None
+    cancelled_result = await fake_redis.get("upnext:result:job-123")
+    assert cancelled_result is not None
+    assert Job.from_json(cancelled_result.decode()).status.value == "cancelled"
+
+    retry_out = await jobs_route.retry_job("job-456")
+    assert retry_out == {"job_id": "job-456", "retried": True}
+    retried_job = await fake_redis.get("upnext:job:fn.retry:job-456")
+    assert retried_job is not None
+    assert Job.from_json(retried_job.decode()).status.value == "queued"
+    queued_messages = await fake_redis.xrange("upnext:fn:fn.retry:stream", count=10)
+    assert any(row[1].get(b"job_id") == b"job-456" for row in queued_messages)
+
+
+@pytest.mark.asyncio
+async def test_jobs_cancel_and_retry_routes_validate_status_and_presence(
+    fake_redis, monkeypatch
+) -> None:
+    async def _get_redis():
+        return fake_redis
+
+    monkeypatch.setattr(jobs_root_route, "get_redis", _get_redis)
+
+    with pytest.raises(HTTPException, match="Job not found") as not_found:
+        await jobs_route.cancel_job("missing")
+    assert not_found.value.status_code == 404
+
+    active = Job(id="job-active", function="fn.active", function_name="active")
+    active.mark_queued()
+    await fake_redis.setex(
+        "upnext:job:fn.active:job-active", 86_400, active.to_json().encode()
+    )
+    await fake_redis.setex(
+        "upnext:job_index:job-active", 86_400, "upnext:job:fn.active:job-active"
+    )
+
+    with pytest.raises(HTTPException, match="cannot be retried") as conflict:
+        await jobs_route.retry_job("job-active")
+    assert conflict.value.status_code == 409
 
 
 @pytest.mark.asyncio

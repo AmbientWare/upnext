@@ -31,7 +31,13 @@ async def test_worker_writes_worker_and_function_definitions(
 
     worker = Worker(name="writer-worker")
 
-    @worker.task(name="health_check", retries=2, retry_delay=3, timeout=45)
+    @worker.task(
+        name="health_check",
+        retries=2,
+        retry_delay=3,
+        timeout=45,
+        rate_limit="25/m",
+    )
     async def health_check() -> str:
         return "ok"
 
@@ -54,6 +60,7 @@ async def test_worker_writes_worker_and_function_definitions(
         assert function_def["key"] == handle.function_key
         assert function_def["name"] == "health_check"
         assert function_def["timeout"] == 45
+        assert function_def["rate_limit"] == "25/m"
     finally:
         await worker.stop(timeout=0.1)
 

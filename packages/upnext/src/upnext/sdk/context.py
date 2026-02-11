@@ -122,7 +122,7 @@ class Context:
             )
 
         if self._cmd_queue is not None:
-            self._cmd_queue.put(("set_progress", self.job_id, progress))
+            self._cmd_queue.put(("set_progress", self.job_id, progress, message))
 
     def set_metadata(self, key: str, value: Any) -> None:
         """

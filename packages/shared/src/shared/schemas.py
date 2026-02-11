@@ -428,6 +428,7 @@ class FunctionInfo(BaseModel):
     timeout: int | None = None
     max_retries: int | None = None
     retry_delay: int | None = None
+    rate_limit: str | None = None
     # Cron config
     schedule: str | None = None
     next_run_at: str | None = None

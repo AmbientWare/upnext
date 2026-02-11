@@ -30,6 +30,7 @@ class TaskDefinition:
     # Caching
     cache_key: str | None = None
     cache_ttl: int | None = None
+    rate_limit: str | None = None
 
     # Hooks
     on_start: Callable[..., Any] | None = None
@@ -50,6 +51,8 @@ class TaskDefinition:
             raise ValueError(f"timeout must be > 0, got {self.timeout}")
         if self.cache_ttl is not None and self.cache_ttl <= 0:
             raise ValueError(f"cache_ttl must be > 0, got {self.cache_ttl}")
+        if self.rate_limit is not None and not self.rate_limit.strip():
+            raise ValueError("rate_limit must be a non-empty string")
 
 
 @dataclass
@@ -66,6 +69,7 @@ class EventDefinition:
     retry_delay: float = 1.0
     retry_backoff: float = 2.0
     timeout: float = 30 * 60  # 30 minutes
+    rate_limit: str | None = None
 
 
 @dataclass
@@ -153,6 +157,7 @@ class Registry:
         timeout: float = 30 * 60,  # 30 minutes
         cache_key: str | None = None,
         cache_ttl: int | None = None,
+        rate_limit: str | None = None,
         on_start: Callable[..., Any] | None = None,
         on_success: Callable[..., Any] | None = None,
         on_failure: Callable[..., Any] | None = None,
@@ -171,6 +176,7 @@ class Registry:
             timeout: Execution timeout (seconds)
             cache_key: Template for cache key (e.g., "user:{user_id}")
             cache_ttl: Cache TTL in seconds
+            rate_limit: Rate limit string (e.g., "100/m")
             on_start: Hook called before execution
             on_success: Hook called on success
             on_failure: Hook called on failure
@@ -194,6 +200,7 @@ class Registry:
             timeout=timeout,
             cache_key=cache_key,
             cache_ttl=cache_ttl,
+            rate_limit=rate_limit,
             on_start=on_start,
             on_success=on_success,
             on_failure=on_failure,
@@ -215,6 +222,7 @@ class Registry:
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
         timeout: float = 30 * 60,  # 30 minutes
+        rate_limit: str | None = None,
     ) -> EventDefinition:
         """Register an event."""
         definition = EventDefinition(
@@ -227,6 +235,7 @@ class Registry:
             retry_delay=retry_delay,
             retry_backoff=retry_backoff,
             timeout=timeout,
+            rate_limit=rate_limit,
         )
 
         # Register by key for worker lookup (with retry/timeout config)
@@ -239,6 +248,7 @@ class Registry:
             retry_delay=retry_delay,
             retry_backoff=retry_backoff,
             timeout=timeout,
+            rate_limit=rate_limit,
         )
 
         # Register by event pattern for routing

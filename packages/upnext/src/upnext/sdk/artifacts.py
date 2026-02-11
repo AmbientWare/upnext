@@ -68,6 +68,14 @@ async def create_artifact(
 ) -> ArtifactCreateResult: ...
 
 
+@overload
+async def create_artifact(
+    name: str,
+    data: str,
+    artifact_type: ArtifactType,
+) -> ArtifactCreateResult: ...
+
+
 async def create_artifact(
     name: str,
     data: str | dict[str, Any] | list[Any],
@@ -196,6 +204,14 @@ def create_artifact_sync(
         ArtifactType.HTML,
         ArtifactType.BINARY,
     ],
+) -> ArtifactCreateResult: ...
+
+
+@overload
+def create_artifact_sync(
+    name: str,
+    data: str,
+    artifact_type: ArtifactType,
 ) -> ArtifactCreateResult: ...
 
 

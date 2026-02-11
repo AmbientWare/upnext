@@ -35,6 +35,8 @@ def test_registry_validates_definitions_and_duplicate_names() -> None:
 
     with pytest.raises(ValueError, match="retry_backoff must be >= 1"):
         registry.register_task("bad-backoff", task, retry_backoff=0.5)
+    with pytest.raises(ValueError, match="rate_limit must be a non-empty string"):
+        registry.register_task("bad-rate", task, rate_limit=" ")
 
     registry.register_task("ok-task", task)
     with pytest.raises(ValueError, match="already registered"):
@@ -111,7 +113,13 @@ async def test_event_handle_enqueues_handlers_and_exposes_configs() -> None:
     worker = Worker(name="event-worker")
     order_created = worker.event("order.created")
 
-    @order_created.on(name="notify", retries=2, retry_delay=3.0, timeout=12)
+    @order_created.on(
+        name="notify",
+        retries=2,
+        retry_delay=3.0,
+        timeout=12,
+        rate_limit="10/s",
+    )
     async def notify(order_id: str) -> None:
         return None
 
@@ -136,6 +144,7 @@ async def test_event_handle_enqueues_handlers_and_exposes_configs() -> None:
     assert configs[0]["max_retries"] == 2
     assert configs[0]["retry_delay"] == 3.0
     assert configs[0]["timeout"] == 12
+    assert configs[0]["rate_limit"] == "10/s"
 
     assert worker._registry.get_task(order_created.handler_keys[0]) is not None  # noqa: SLF001
     assert "handlers=2" in repr(order_created)

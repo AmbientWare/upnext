@@ -170,8 +170,8 @@ async def test_outage_then_replay_recovers_without_duplicates(sqlite_db, monkeyp
 
     monkeypatch.setattr(event_processing_module, "get_database", flaky_get_database)
 
-    # First processing during outage is accepted but not persisted.
-    assert await process_event("job.started", payload, worker_id="worker") is True
+    # First processing during outage is not applied/persisted.
+    assert await process_event("job.started", payload, worker_id="worker") is False
 
     # Replay after DB recovery should persist exactly one row.
     assert await process_event("job.started", payload, worker_id="worker") is True

@@ -207,6 +207,14 @@ class BaseQueue(ABC):
         """
         pass
 
+    async def is_cancelled(self, job_id: str) -> bool:  # noqa: ARG002
+        """
+        Check whether a job has been cancelled before execution starts.
+
+        Default: returns False. Override when the backend can track cancellation markers.
+        """
+        return False
+
     async def subscribe_job(
         self,
         job_id: str,
@@ -269,6 +277,7 @@ class BaseQueue(ABC):
 
         Default: returns empty stats.
         """
+        _ = function
         return QueueStats()
 
     async def stats(self) -> dict[str, int]:
@@ -290,6 +299,7 @@ class BaseQueue(ABC):
 
         Default: returns empty list.
         """
+        _ = (function, limit)
         return []
 
     # =========================================================================
@@ -374,6 +384,7 @@ class BaseQueue(ABC):
 
         Default: no-op, returns False.
         """
+        _ = (stream_name, group, start_id, mkstream)
         return False
 
     async def read_stream(
@@ -402,6 +413,7 @@ class BaseQueue(ABC):
 
         Default: returns empty list.
         """
+        _ = (stream_name, group, consumer, count, block, start_id)
         return []
 
     async def ack_stream(
@@ -423,6 +435,7 @@ class BaseQueue(ABC):
 
         Default: no-op, returns 0.
         """
+        _ = (stream_name, group, event_ids)
         return 0
 
 

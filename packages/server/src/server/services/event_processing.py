@@ -245,10 +245,10 @@ async def _handle_job_started(
         return True
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
-        return True
+        return False
 
 
-async def _handle_job_completed(event: JobCompletedEvent) -> None:
+async def _handle_job_completed(event: JobCompletedEvent) -> bool:
     """Handle job.completed event - update job with success."""
     logger.debug(
         "Job completed: %s (%s) duration=%sms",
@@ -292,11 +292,13 @@ async def _handle_job_completed(event: JobCompletedEvent) -> None:
             await session.flush()
             await _promote_pending_artifacts(session, event.job_id)
         _progress_write_state.pop(event.job_id, None)
+        return True
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
+        return False
 
 
-async def _handle_job_failed(event: JobFailedEvent) -> None:
+async def _handle_job_failed(event: JobFailedEvent) -> bool:
     """Handle job.failed event - update job with failure."""
     logger.debug(
         "Job failed: %s (%s) error=%s will_retry=%s",
@@ -346,7 +348,7 @@ async def _handle_job_failed(event: JobFailedEvent) -> None:
                         event.attempt,
                         incoming_failed_at.isoformat() if incoming_failed_at else None,
                     )
-                    return
+                    return False
 
                 existing.status = "failed"
                 existing.function = event.function
@@ -377,14 +379,16 @@ async def _handle_job_failed(event: JobFailedEvent) -> None:
 
             await session.flush()
             await _promote_pending_artifacts(session, event.job_id)
+        return True
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
+        return False
     finally:
         if applied_terminal_state:
             _progress_write_state.pop(event.job_id, None)
 
 
-async def _handle_job_retrying(event: JobRetryingEvent) -> None:
+async def _handle_job_retrying(event: JobRetryingEvent) -> bool:
     """Handle job.retrying event - update job with retry status."""
     logger.debug(
         "Job retrying: %s (%s) attempt %s -> %s delay=%ss",
@@ -411,11 +415,14 @@ async def _handle_job_retrying(event: JobRetryingEvent) -> None:
                 existing.root_id = event.root_id
                 await session.flush()
                 await _promote_pending_artifacts(session, event.job_id)
+                return True
+            return False
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
+        return False
 
 
-async def _handle_job_progress(event: JobProgressEvent) -> None:
+async def _handle_job_progress(event: JobProgressEvent) -> bool:
     """Handle job.progress event - update progress."""
     logger.debug(
         "Job progress: %s progress=%.1f%% message=%s",
@@ -430,7 +437,7 @@ async def _handle_job_progress(event: JobProgressEvent) -> None:
             event.job_id,
             event.progress,
         )
-        return
+        return False
 
     try:
         db = get_database()
@@ -445,21 +452,24 @@ async def _handle_job_progress(event: JobProgressEvent) -> None:
                         existing.status,
                     )
                     _progress_write_state.pop(event.job_id, None)
-                    return
+                    return False
                 existing.progress = event.progress
                 existing.parent_id = event.parent_id
                 existing.root_id = event.root_id
                 _record_progress_write(event.job_id, event.progress)
+                return True
             else:
                 logger.debug(
                     "Ignoring job.progress for unknown job %s",
                     event.job_id,
                 )
+                return False
     except RuntimeError:
         logger.debug("Database not available, skipping job persistence")
+        return False
 
 
-async def _handle_job_checkpoint(event: JobCheckpointEvent) -> None:
+async def _handle_job_checkpoint(event: JobCheckpointEvent) -> bool:
     """Handle job.checkpoint event - store checkpoint state."""
     logger.debug(
         "Job checkpoint: %s state_keys=%s", event.job_id, list(event.state.keys())
@@ -478,8 +488,11 @@ async def _handle_job_checkpoint(event: JobCheckpointEvent) -> None:
                 existing.metadata_ = metadata
                 existing.parent_id = event.parent_id
                 existing.root_id = event.root_id
+                return True
+            return False
     except RuntimeError:
         logger.debug("Database not available, skipping checkpoint persistence")
+        return False
 
 
 async def _process_job_started(
@@ -495,8 +508,7 @@ async def _process_job_completed(
 ) -> bool:
     if "function_name" not in data and "function" in data:
         data = {**data, "function_name": data["function"]}
-    await _handle_job_completed(JobCompletedEvent(**data))
-    return True
+    return await _handle_job_completed(JobCompletedEvent(**data))
 
 
 async def _process_job_failed(
@@ -504,8 +516,7 @@ async def _process_job_failed(
 ) -> bool:
     if "function_name" not in data and "function" in data:
         data = {**data, "function_name": data["function"]}
-    await _handle_job_failed(JobFailedEvent(**data))
-    return True
+    return await _handle_job_failed(JobFailedEvent(**data))
 
 
 async def _process_job_retrying(
@@ -513,22 +524,19 @@ async def _process_job_retrying(
 ) -> bool:
     if "function_name" not in data and "function" in data:
         data = {**data, "function_name": data["function"]}
-    await _handle_job_retrying(JobRetryingEvent(**data))
-    return True
+    return await _handle_job_retrying(JobRetryingEvent(**data))
 
 
 async def _process_job_progress(
     data: dict[str, Any], _: str | None
 ) -> bool:
-    await _handle_job_progress(JobProgressEvent(**data))
-    return True
+    return await _handle_job_progress(JobProgressEvent(**data))
 
 
 async def _process_job_checkpoint(
     data: dict[str, Any], _: str | None
 ) -> bool:
-    await _handle_job_checkpoint(JobCheckpointEvent(**data))
-    return True
+    return await _handle_job_checkpoint(JobCheckpointEvent(**data))
 
 
 EVENT_PROCESSORS: dict[str, EventProcessor] = {

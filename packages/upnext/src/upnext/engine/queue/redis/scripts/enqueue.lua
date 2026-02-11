@@ -48,8 +48,13 @@ if scheduled_time > 0 then
 else
     -- Immediate job - add to stream with full job data
     -- This allows dequeue to skip the extra GET call
-    redis.call("XADD", dest_key, "MAXLEN", "~", stream_maxlen, "*",
-               "job_id", job_id, "function", function_name, "data", job_data)
+    if stream_maxlen > 0 then
+        redis.call("XADD", dest_key, "MAXLEN", "~", stream_maxlen, "*",
+                   "job_id", job_id, "function", function_name, "data", job_data)
+    else
+        redis.call("XADD", dest_key, "*",
+                   "job_id", job_id, "function", function_name, "data", job_data)
+    end
 end
 
 return "OK"
