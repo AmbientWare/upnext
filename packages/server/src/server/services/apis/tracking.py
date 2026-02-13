@@ -295,6 +295,45 @@ class ApiMetricsReader:
             error_rate=round(total_errors / total_requests * 100, 1),
         )
 
+    async def get_summary_window(self, *, minutes: int) -> ApiMetricsSummary:
+        """Get summary stats for a rolling window in minutes."""
+        safe_minutes = max(1, int(minutes))
+
+        if safe_minutes >= 24 * 60:
+            return await self.get_summary()
+
+        endpoints_by_api = await self._list_endpoints_by_api()
+        if not endpoints_by_api:
+            return ApiMetricsSummary(
+                requests_24h=0,
+                avg_latency_ms=0.0,
+                error_rate=0.0,
+            )
+
+        totals = _HourlyTotals()
+        for api_name, endpoint_keys in endpoints_by_api:
+            api_totals = await self._aggregate_minutes(
+                api_name,
+                endpoint_keys,
+                minutes=safe_minutes,
+            )
+            totals.requests += api_totals.requests
+            totals.errors += api_totals.errors
+            totals.total_latency_ms += api_totals.total_latency_ms
+
+        if totals.requests <= 0:
+            return ApiMetricsSummary(
+                requests_24h=0,
+                avg_latency_ms=0.0,
+                error_rate=0.0,
+            )
+
+        return ApiMetricsSummary(
+            requests_24h=totals.requests,
+            avg_latency_ms=round(totals.total_latency_ms / totals.requests, 2),
+            error_rate=round(totals.errors / totals.requests * 100, 1),
+        )
+
     async def _aggregate_hourly(
         self,
         api_name: str,
@@ -332,6 +371,60 @@ class ApiMetricsReader:
             totals.status_5xx += bucket.status_5xx
 
         return totals
+
+    async def _aggregate_minutes(
+        self,
+        api_name: str,
+        endpoints: Sequence[str],
+        *,
+        minutes: int,
+    ) -> _HourlyTotals:
+        """Sum minute buckets for the given endpoints over N recent minutes."""
+        if not endpoints:
+            return _HourlyTotals()
+
+        safe_minutes = max(1, int(minutes))
+        now = datetime.now(UTC)
+        minute_keys = [
+            (now - timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M")
+            for i in range(safe_minutes)
+        ]
+
+        totals = _HourlyTotals()
+
+        pipe = self._redis.pipeline(transaction=False)
+        for ep_key in endpoints:
+            for minute_key in minute_keys:
+                pipe.hgetall(api_minute_bucket_key(api_name, ep_key, minute_key))
+
+        results = await pipe.execute()
+        for raw_bucket in results:
+            bucket = self._parse_bucket(raw_bucket)
+            if bucket is None:
+                continue
+            totals.requests += bucket.requests
+            totals.errors += bucket.errors
+            totals.total_latency_ms += bucket.total_latency_ms
+            totals.status_2xx += bucket.status_2xx
+            totals.status_4xx += bucket.status_4xx
+            totals.status_5xx += bucket.status_5xx
+
+        return totals
+
+    async def _list_endpoints_by_api(self) -> list[tuple[str, list[str]]]:
+        raw_api_names = await self._redis.smembers(api_registry_key())
+        api_names = self._decode_members(raw_api_names)
+        if not api_names:
+            return []
+
+        endpoints_by_api: list[tuple[str, list[str]]] = []
+        for api_name in api_names:
+            endpoint_values = await self._redis.smembers(api_endpoints_key(api_name))
+            endpoint_keys = self._decode_members(endpoint_values)
+            if endpoint_keys:
+                endpoints_by_api.append((api_name, endpoint_keys))
+
+        return endpoints_by_api
 
     async def _get_req_per_min(self, api_name: str, endpoints: Sequence[str]) -> float:
         """Get current requests/min from the latest minute bucket."""

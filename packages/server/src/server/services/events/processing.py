@@ -342,6 +342,8 @@ async def _handle_job_completed(
         existing.parent_id = event.parent_id
         existing.root_id = event.root_id
         existing.progress = 1.0
+        if existing.created_at is None:
+            existing.created_at = existing.started_at or event.completed_at
     else:
         await repo.record_job(
             JobRecordCreate(
@@ -349,6 +351,7 @@ async def _handle_job_completed(
                 function=event.function,
                 function_name=event.function_name,
                 status="complete",
+                created_at=event.completed_at,
                 result=event.result,
                 completed_at=event.completed_at,
                 attempts=event.attempt,
@@ -409,6 +412,8 @@ async def _handle_job_failed(
             existing.max_retries = max(existing.max_retries or 0, event.max_retries)
             existing.parent_id = event.parent_id
             existing.root_id = event.root_id
+            if existing.created_at is None:
+                existing.created_at = existing.started_at or event.failed_at
             applied_terminal_state = True
         else:
             await repo.record_job(
@@ -417,6 +422,7 @@ async def _handle_job_failed(
                     function=event.function,
                     function_name=event.function_name,
                     status="failed",
+                    created_at=event.failed_at,
                     error=event.error,
                     completed_at=event.failed_at,
                     attempts=event.attempt,
@@ -479,6 +485,8 @@ async def _handle_job_retrying(
         existing.error = event.error
         existing.parent_id = event.parent_id
         existing.root_id = event.root_id
+        if existing.created_at is None:
+            existing.created_at = existing.started_at or event.retry_at
         await session.flush()
         return True
     return False

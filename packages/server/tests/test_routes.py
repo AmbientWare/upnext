@@ -822,7 +822,10 @@ async def test_dashboard_returns_defaults_when_database_unavailable(
         return WorkerStats(total=0)
 
     class FakeReader:
-        async def get_summary(self) -> api_tracking_module.ApiMetricsSummary:
+        async def get_summary_window(
+            self, *, minutes: int
+        ) -> api_tracking_module.ApiMetricsSummary:
+            _ = minutes
             return api_tracking_module.ApiMetricsSummary(
                 requests_24h=0,
                 avg_latency_ms=0.0,
@@ -838,7 +841,9 @@ async def test_dashboard_returns_defaults_when_database_unavailable(
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
 
     out = await dashboard_route.get_dashboard_stats()
-    assert out.runs.total_24h == 0
+    assert out.runs.total == 0
+    assert out.runs.window_minutes == 24 * 60
+    assert out.runs.jobs_per_min == 0.0
     assert out.queue.running == 3
     assert out.queue.waiting == 0
     assert out.queue.claimed == 3
@@ -889,7 +894,10 @@ async def test_dashboard_includes_queue_depth_when_database_available(
         return WorkerStats(total=1)
 
     class FakeReader:
-        async def get_summary(self) -> api_tracking_module.ApiMetricsSummary:
+        async def get_summary_window(
+            self, *, minutes: int
+        ) -> api_tracking_module.ApiMetricsSummary:
+            _ = minutes
             return api_tracking_module.ApiMetricsSummary(
                 requests_24h=0,
                 avg_latency_ms=0.0,
@@ -910,6 +918,59 @@ async def test_dashboard_includes_queue_depth_when_database_available(
     assert out.queue.claimed == 5
     assert out.queue.capacity == 8
     assert out.queue.total == 5
+
+
+@pytest.mark.asyncio
+async def test_dashboard_window_stats_use_requested_minutes(monkeypatch) -> None:
+    def no_db():
+        raise RuntimeError("db unavailable")
+
+    class _QueueDepth:
+        running = 1
+        waiting = 0
+        claimed = 1
+        capacity = 10
+        total = 1
+
+    async def fake_queue_depth() -> _QueueDepth:
+        return _QueueDepth()
+
+    async def fake_worker_stats() -> WorkerStats:
+        return WorkerStats(total=1)
+
+    class FakeReader:
+        async def get_summary_window(
+            self, *, minutes: int
+        ) -> api_tracking_module.ApiMetricsSummary:
+            if minutes == 5:
+                return api_tracking_module.ApiMetricsSummary(
+                    requests_24h=25,
+                    avg_latency_ms=20.0,
+                    error_rate=0.5,
+                )
+            return api_tracking_module.ApiMetricsSummary(
+                requests_24h=1440,
+                avg_latency_ms=30.0,
+                error_rate=1.5,
+            )
+
+    async def fake_reader() -> FakeReader:
+        return FakeReader()
+
+    monkeypatch.setattr(dashboard_route, "get_database", no_db)
+    monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
+    monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
+    monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
+
+    out = await dashboard_route.get_dashboard_stats(window_minutes=5)
+    assert out.runs.window_minutes == 5
+    assert out.runs.total == 0
+    assert out.runs.jobs_per_min == 0.0
+    assert out.apis.window_minutes == 5
+    assert out.apis.requests == 25
+    assert out.apis.requests_per_min == 5.0
+    assert out.apis.avg_latency_ms == 20.0
+    assert out.apis.error_rate == 0.5
 
 
 @pytest.mark.asyncio
@@ -986,7 +1047,10 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
         return WorkerStats(total=2)
 
     class FakeReader:
-        async def get_summary(self) -> api_tracking_module.ApiMetricsSummary:
+        async def get_summary_window(
+            self, *, minutes: int
+        ) -> api_tracking_module.ApiMetricsSummary:
+            _ = minutes
             return api_tracking_module.ApiMetricsSummary(
                 requests_24h=0,
                 avg_latency_ms=0.0,
@@ -1034,13 +1098,16 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
     out = await dashboard_route.get_dashboard_stats()
     assert out.top_failing_functions[0].key == "fn.fail"
     assert out.top_failing_functions[0].name == "Orders Processor"
-    assert out.top_failing_functions[0].failures_24h == 2
-    assert out.top_failing_functions[0].runs_24h == 3
+    assert out.top_failing_functions[0].failures == 2
+    assert out.top_failing_functions[0].runs == 3
     assert out.top_failing_functions[0].failure_rate == pytest.approx(66.67)
     assert out.stuck_active_jobs[0].id == "job-stuck-1"
     assert out.stuck_active_jobs[0].worker_id == "worker-a"
     assert out.oldest_queued_jobs[0].id == "job-q-1"
     assert out.oldest_queued_jobs[0].source == "stream"
+
+    filtered = await dashboard_route.get_dashboard_stats(failing_min_rate=70.0)
+    assert filtered.top_failing_functions == []
 
 
 @pytest.mark.asyncio

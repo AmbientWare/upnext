@@ -2,8 +2,9 @@
 
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 from shared.contracts import (
     ApiStats,
     DashboardStats,
@@ -26,22 +27,39 @@ from server.shared_utils import as_utc_aware
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+SUPPORTED_DASHBOARD_WINDOWS: tuple[int, ...] = (1, 5, 15, 60, 1440)
 
 
 @router.get("/stats", response_model=DashboardStats)
-async def get_dashboard_stats() -> DashboardStats:
+async def get_dashboard_stats(
+    window_minutes: Annotated[int, Query(ge=1, le=24 * 60)] = 24 * 60,
+    failing_min_rate: Annotated[float, Query(ge=0.0, le=100.0)] = 0.0,
+) -> DashboardStats:
     """
     Get aggregated dashboard statistics.
 
     Combines run stats, worker stats, API stats, and recent activity.
     """
+    if window_minutes not in SUPPORTED_DASHBOARD_WINDOWS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "window_minutes must be one of: "
+                + ", ".join(map(str, SUPPORTED_DASHBOARD_WINDOWS))
+                + ". "
+                f"Received {window_minutes}."
+            ),
+        )
+
     now = datetime.now(UTC)
-    day_ago = now - timedelta(hours=24)
+    window_ago = now - timedelta(minutes=window_minutes)
 
     # Default empty stats
     run_stats = RunStats(
-        total_24h=0,
+        total=0,
         success_rate=100.0,
+        window_minutes=window_minutes,
+        jobs_per_min=0.0,
     )
     queue_depth = await get_queue_depth_stats()
     queue_stats = QueueStats(
@@ -71,35 +89,38 @@ async def get_dashboard_stats() -> DashboardStats:
         async with db.session() as session:
             repo = JobRepository(session)
 
-            # Get stats for last 24 hours
-            stats = await repo.get_stats(start_date=day_ago)
+            stats_window = await repo.get_stats(start_date=window_ago)
 
             run_stats = RunStats(
-                total_24h=stats.total,
-                success_rate=stats.success_rate,
+                total=stats_window.total,
+                success_rate=stats_window.success_rate,
+                window_minutes=window_minutes,
+                jobs_per_min=round(stats_window.total / max(1, window_minutes), 2),
             )
 
-            function_stats = await repo.get_function_job_stats(start_date=day_ago)
+            function_stats = await repo.get_function_job_stats(start_date=window_ago)
             top_candidates: list[TopFailingFunction] = []
             for function_key, item in function_stats.items():
                 if item.runs < 1 or item.failures < 1:
                     continue
                 failure_rate = round((item.failures / item.runs) * 100, 2)
+                if failure_rate < failing_min_rate:
+                    continue
                 top_candidates.append(
                     TopFailingFunction(
                         key=function_key,
                         name=function_name_map.get(function_key, function_key),
-                        runs_24h=item.runs,
-                        failures_24h=item.failures,
+                        runs=item.runs,
+                        failures=item.failures,
                         failure_rate=failure_rate,
                         last_run_at=item.last_run_at,
                     )
                 )
             top_candidates.sort(
                 key=lambda row: (
-                    -row.failures_24h,
+                    -row.failures,
                     -row.failure_rate,
-                    -row.runs_24h,
+                    -row.runs,
                     row.name,
                 )
             )
@@ -211,7 +232,7 @@ async def get_dashboard_stats() -> DashboardStats:
     # API stats from Redis hash buckets
     try:
         reader = await get_metrics_reader()
-        api_summary = await reader.get_summary()
+        api_summary = await reader.get_summary_window(minutes=window_minutes)
     except RuntimeError:
         api_summary = ApiMetricsSummary(
             requests_24h=0,
@@ -219,9 +240,14 @@ async def get_dashboard_stats() -> DashboardStats:
             error_rate=0.0,
         )
     api_stats = ApiStats(
-        requests_24h=api_summary.requests_24h,
+        requests=api_summary.requests_24h,
         avg_latency_ms=api_summary.avg_latency_ms,
         error_rate=api_summary.error_rate,
+        window_minutes=window_minutes,
+        requests_per_min=round(
+            api_summary.requests_24h / max(1, window_minutes),
+            2,
+        ),
     )
 
     return DashboardStats(

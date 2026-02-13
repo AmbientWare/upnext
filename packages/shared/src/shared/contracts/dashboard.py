@@ -9,8 +9,10 @@ from shared.contracts.workers import WorkerStats
 class RunStats(BaseModel):
     """Run statistics."""
 
-    total_24h: int
+    total: int
     success_rate: float
+    window_minutes: int = 24 * 60
+    jobs_per_min: float = 0.0
 
 
 class QueueStats(BaseModel):
@@ -26,9 +28,11 @@ class QueueStats(BaseModel):
 class ApiStats(BaseModel):
     """API statistics."""
 
-    requests_24h: int
+    requests: int
     avg_latency_ms: float
     error_rate: float
+    window_minutes: int = 24 * 60
+    requests_per_min: float = 0.0
 
 
 class TopFailingFunction(BaseModel):
@@ -36,8 +40,8 @@ class TopFailingFunction(BaseModel):
 
     key: str
     name: str
-    runs_24h: int
-    failures_24h: int
+    runs: int
+    failures: int
     failure_rate: float
     last_run_at: str | None = None
 

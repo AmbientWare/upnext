@@ -12,6 +12,7 @@ import server.routes.apis.apis_utils as apis_utils_route
 import server.routes.artifacts.artifacts_root as artifacts_root_route
 import server.routes.artifacts.artifacts_stream as artifacts_stream_route
 import server.routes.artifacts.artifacts_utils as artifacts_utils_route
+import server.routes.events_stream as events_stream_route
 import server.routes.functions as functions_route
 import server.routes.jobs.jobs_stream as jobs_stream_route
 import server.routes.workers.workers_stream as workers_stream_route
@@ -994,6 +995,28 @@ async def test_apis_events_stream_path_not_captured_by_endpoint_detail(
         base_url="http://testserver",
     ) as client:
         response = await client.get("/api/v1/apis/events/stream")
+
+    assert response.status_code == 503
+    assert "redis unavailable" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_events_stream_path_is_registered_with_events_prefix(
+    monkeypatch,
+) -> None:
+    async def _get_redis() -> None:
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(events_stream_route, "get_redis", _get_redis)
+
+    app = FastAPI()
+    app.include_router(v1_router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.get("/api/v1/events/stream")
 
     assert response.status_code == 503
     assert "redis unavailable" in response.json()["detail"]

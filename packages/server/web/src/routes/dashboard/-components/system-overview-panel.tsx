@@ -1,16 +1,45 @@
 import { cn } from "@/lib/utils";
 import { Panel } from "@/components/shared";
-import type { DashboardStats, WorkerInfo, ApiInfo } from "@/lib/types";
+import type { DashboardStats, WorkerInfo } from "@/lib/types";
 import { useAnimatedNumber } from "@/hooks/use-animated-number";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+export type OverviewWindow = "1m" | "5m" | "15m" | "1h" | "24h";
+
+const WINDOW_OPTIONS: Array<{ value: OverviewWindow; label: string }> = [
+  { value: "1m", label: "1 Minute" },
+  { value: "5m", label: "5 Minutes" },
+  { value: "15m", label: "15 Minutes" },
+  { value: "1h", label: "1 Hour" },
+  { value: "24h", label: "24 Hours" },
+];
 
 interface SystemOverviewPanelProps {
   stats: DashboardStats | undefined;
   workers: WorkerInfo[];
-  apis: ApiInfo[];
+  window: OverviewWindow;
+  onWindowChange: (next: OverviewWindow) => void;
   className?: string;
 }
 
-export function SystemOverviewPanel({ stats, workers, apis, className }: SystemOverviewPanelProps) {
+function windowLabel(window: OverviewWindow): string {
+  const match = WINDOW_OPTIONS.find((opt) => opt.value === window);
+  return match?.label ?? "Window";
+}
+
+export function SystemOverviewPanel({
+  stats,
+  workers,
+  window,
+  onWindowChange,
+  className,
+}: SystemOverviewPanelProps) {
   const activeWorkers = workers.filter((w) => w.active);
   const activeCount = activeWorkers.length;
 
@@ -19,13 +48,14 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
   const totalCapacity = allInstances.reduce((sum, inst) => sum + inst.concurrency, 0);
   const totalActive = allInstances.reduce((sum, inst) => sum + inst.active_jobs, 0);
 
-  // Job metrics
-  const throughput = stats ? Math.round(stats.runs.total_24h / 1440) : 0;
+  // Windowed metrics
+  const throughput = stats?.runs.jobs_per_min ?? 0;
   const throughputStr = throughput >= 1000 ? `${(throughput / 1000).toFixed(1)}K` : `${throughput}`;
   const successRate = stats?.runs.success_rate ?? 0;
+  const windowText = windowLabel(window);
 
-  // API aggregates
-  const totalReqPerMin = apis.reduce((sum, a) => sum + a.requests_per_min, 0);
+  // API aggregates (same selected window)
+  const totalReqPerMin = stats?.apis.requests_per_min ?? 0;
   const avgLatency = stats?.apis.avg_latency_ms ?? 0;
   const errorRate = stats?.apis.error_rate ?? 0;
 
@@ -43,6 +73,18 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
   return (
     <Panel
       title="System Overview"
+      titleRight={(
+        <Select value={window} onValueChange={(v) => onWindowChange(v as OverviewWindow)}>
+          <SelectTrigger size="sm" className="h-6 w-[118px] text-[10px] gap-1 px-2">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {WINDOW_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
       className={className}
       contentClassName="p-5"
     >
@@ -61,7 +103,9 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
         {/* Throughput */}
         <div>
           <div className="mono text-3xl font-bold text-foreground">{animatedThroughput}</div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Jobs / Min (24h Avg)</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
+            Jobs / Min ({windowText})
+          </div>
         </div>
 
         {/* Success Rate */}
@@ -72,7 +116,9 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
           )}>
             {animatedSuccessRate}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Job Success Rate (24h)</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
+            Job Success Rate ({windowText})
+          </div>
         </div>
 
         {/* API Req/min */}
@@ -80,7 +126,9 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
           <div className="mono text-3xl font-bold text-foreground">
             {animatedApiReqs}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">API Requests / Min</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
+            API Requests / Min ({windowText})
+          </div>
         </div>
 
         {/* API Latency */}
@@ -91,7 +139,9 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
           )}>
             {animatedLatency}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">API Avg Latency (ms)</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
+            API Avg Latency (ms, {windowText})
+          </div>
         </div>
 
         {/* Error Rate */}
@@ -102,7 +152,9 @@ export function SystemOverviewPanel({ stats, workers, apis, className }: SystemO
           )}>
             {animatedErrorRate}
           </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">API Error Rate (24h)</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
+            API Error Rate ({windowText})
+          </div>
         </div>
       </div>
     </Panel>

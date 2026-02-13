@@ -173,7 +173,10 @@ class JobRepository:
         Returns:
             List of matching jobs
         """
-        query = select(JobHistory).order_by(JobHistory.created_at.desc())
+        query = select(JobHistory).order_by(
+            JobHistory.created_at.desc(),
+            JobHistory.id.desc(),
+        )
         query = self._apply_job_list_filters(
             query,
             function=function,

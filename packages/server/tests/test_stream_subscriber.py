@@ -455,6 +455,48 @@ async def test_subscribe_loop_retries_then_drains_on_shutdown(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
+async def test_subscribe_loop_skips_idle_wait_when_events_were_processed(
+    monkeypatch,
+) -> None:
+    subscriber = StreamSubscriber(
+        redis_client=object(),
+        config=StreamSubscriberConfig(
+            stream=EVENTS_STREAM,
+            group="test-loop-drain",
+            consumer_id="consumer-loop-drain",
+            poll_interval=1.0,
+        ),
+    )
+
+    calls = 0
+    wait_timeouts: list[float] = []
+    original_wait_for = stream_subscriber_module.asyncio.wait_for
+
+    async def fake_process_batch(drain: bool = False) -> int:
+        nonlocal calls
+        if drain:
+            return 0
+        calls += 1
+        if calls == 1:
+            return 1
+        subscriber._stop_event.set()  # noqa: SLF001
+        return 0
+
+    async def fake_wait_for(awaitable, timeout):  # type: ignore[no-untyped-def]
+        wait_timeouts.append(float(timeout))
+        return await original_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(subscriber, "_process_batch", fake_process_batch)
+    monkeypatch.setattr(stream_subscriber_module.asyncio, "wait_for", fake_wait_for)
+
+    await subscriber._subscribe_loop()  # noqa: SLF001
+
+    # Only the idle iteration should wait; processed iteration should continue immediately.
+    assert len(wait_timeouts) == 1
+    assert wait_timeouts[0] == pytest.approx(0.25, rel=0, abs=1e-6)
+
+
+@pytest.mark.asyncio
 async def test_process_batch_returns_processed_when_ack_fails(
     fake_redis, monkeypatch
 ) -> None:

@@ -156,7 +156,6 @@ async def test_list_jobs_filters_and_pagination(sqlite_db) -> None:
     assert rows[0].worker_id == "worker-a"
 
 
-@pytest.mark.asyncio
 async def test_hourly_trends_zero_fill_consumer_behavior(sqlite_db) -> None:
     # Insert two jobs in distinct hours and assert grouped rows are returned in hour order.
     async with sqlite_db.session() as session:

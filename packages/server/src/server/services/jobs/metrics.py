@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 from shared.contracts import DispatchReasonMetrics
 from shared.domain import Job
 from shared.keys import (
@@ -44,6 +44,10 @@ class _GroupInfo(BaseModel):
     name: str
     lag: int = Field(default=0, ge=0)
     pending: int = Field(default=0, ge=0)
+    last_delivered_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("last-delivered-id", "last_delivered_id"),
+    )
 
 
 class _WorkerHeartbeat(BaseModel):
@@ -350,9 +354,33 @@ async def get_oldest_queued_jobs(limit: int = 10) -> list[QueuedJobSnapshot]:
             function = _function_from_stream_key(stream_name)
             if function is None:
                 continue
-            pending_ids = await _pending_ids_for_stream(r, stream_key)  # type: ignore[arg-type]
+
+            group: _GroupInfo | None = None
             try:
-                events = await r.xrange(stream_key, min="-", max="+", count=50)
+                groups = await r.xinfo_groups(stream_key)
+            except Exception:
+                groups = []
+            for row in groups:
+                parsed_group = _parse_group_info(row)
+                if parsed_group is None or parsed_group.name != QUEUE_CONSUMER_GROUP:
+                    continue
+                group = parsed_group
+                break
+
+            if group is not None and group.lag <= 0:
+                continue
+
+            pending_ids = await _pending_ids_for_stream(r, stream_key)  # type: ignore[arg-type]
+            min_id = "-"
+            if (
+                group is not None
+                and group.last_delivered_id
+                and group.last_delivered_id not in {"0-0", "$"}
+            ):
+                min_id = f"({group.last_delivered_id}"
+
+            try:
+                events = await r.xrange(stream_key, min=min_id, max="+", count=200)
             except Exception:
                 events = []
             if not events:
@@ -375,6 +403,7 @@ async def get_oldest_queued_jobs(limit: int = 10) -> list[QueuedJobSnapshot]:
             job_id = _decode_map_value(payload, "job_id")
             job_function = function
             job_function_name = function
+            parsed_job: Job | None = None
             if raw_data:
                 try:
                     parsed_job = Job.from_json(_decode_text(raw_data))
@@ -388,11 +417,12 @@ async def get_oldest_queued_jobs(limit: int = 10) -> list[QueuedJobSnapshot]:
 
             if not job_id:
                 continue
+            job_id_text = _decode_text(job_id)
 
             age_seconds = max(0.0, (now - queued_at).total_seconds())
             rows.append(
                 QueuedJobSnapshot(
-                    id=_decode_text(job_id),
+                    id=job_id_text,
                     function=job_function,
                     function_name=job_function_name,
                     queued_at=queued_at,

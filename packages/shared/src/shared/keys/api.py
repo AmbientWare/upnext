@@ -17,7 +17,8 @@ API_PREFIX = "upnext:apis"
 API_INSTANCE_PREFIX = "upnext:apis:instances"
 
 # TTLs (seconds)
-MINUTE_BUCKET_TTL = 600  # 10 minutes
+# Keep enough minute resolution to support up to 1h dashboard windows.
+MINUTE_BUCKET_TTL = 7_200  # 2 hours
 HOURLY_BUCKET_TTL = 2_592_000  # 30 days
 REGISTRY_TTL = 2_592_000  # 30 days
 

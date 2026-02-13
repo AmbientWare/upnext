@@ -9,10 +9,16 @@ import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from shared.keys import function_scheduled_pattern, job_key
+
 if TYPE_CHECKING:
     from upnext.engine.queue.redis.queue import RedisQueue
 
 logger = logging.getLogger(__name__)
+
+SWEEPER_MIN_SLEEP_SECONDS = 0.1  # 100ms
+SWEEPER_MAX_SLEEP_SECONDS = 3.0  # 3s
+SWEEPER_LOCK_TTL_SECONDS = 60
 
 RELEASE_LOCK_SCRIPT = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -33,9 +39,13 @@ class Sweeper:
         sweep_interval: float,
     ) -> None:
         self._queue = queue
-        self._sweep_interval = sweep_interval
+        # Constructor keeps sweep_interval for compatibility with existing callers,
+        # but adaptive bounds are fixed constants for predictable cadence.
+        _ = sweep_interval
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        self._min_sleep_seconds = SWEEPER_MIN_SLEEP_SECONDS
+        self._max_sleep_seconds = SWEEPER_MAX_SLEEP_SECONDS
 
     async def start(self) -> None:
         """Start the background sweep loop."""
@@ -44,7 +54,11 @@ class Sweeper:
 
         self._stop_event.clear()
         self._task = asyncio.create_task(self._sweep_loop())
-        logger.debug(f"Sweeper started (interval={self._sweep_interval})")
+        logger.debug(
+            "Sweeper started (min_sleep=%.3fs, max_sleep=%.3fs)",
+            self._min_sleep_seconds,
+            self._max_sleep_seconds,
+        )
 
     async def stop(self) -> None:
         """Stop the background sweep loop."""
@@ -69,6 +83,7 @@ class Sweeper:
         lock_key = self._queue._key("sweep_lock")
 
         while not self._stop_event.is_set():
+            sleep_seconds = self._max_sleep_seconds
             try:
                 # Try to acquire lock (expires after 60s to prevent deadlock)
                 lock_token = uuid4().hex
@@ -76,19 +91,67 @@ class Sweeper:
                     lock_key,
                     lock_token,
                     nx=True,
-                    ex=60,
+                    ex=SWEEPER_LOCK_TTL_SECONDS,
                 )
 
                 if acquired:
                     try:
                         await self._do_sweep()
+                        next_due = await self._get_next_due_timestamp(client)
+                        sleep_seconds = self._compute_sleep_seconds(next_due)
                     finally:
                         await client.eval(RELEASE_LOCK_SCRIPT, 1, lock_key, lock_token)
+                else:
+                    # Another worker currently leads sweeping; retry soon.
+                    sleep_seconds = self._min_sleep_seconds
 
             except Exception as e:
                 logger.debug(f"Sweep error: {e}")
+                sleep_seconds = self._min_sleep_seconds
 
-            await asyncio.sleep(self._sweep_interval)
+            await asyncio.sleep(sleep_seconds)
+
+    def _compute_sleep_seconds(self, next_due_timestamp: float | None) -> float:
+        """Clamp sweeper sleep time to bounded adaptive window."""
+        if next_due_timestamp is None:
+            return self._max_sleep_seconds
+
+        delay = next_due_timestamp - time.time()
+        return max(self._min_sleep_seconds, min(self._max_sleep_seconds, delay))
+
+    async def _get_next_due_timestamp(self, client) -> float | None:
+        """Return earliest scheduled score across all functions, if any."""
+        earliest: float | None = None
+        cursor = 0
+        now = time.time()
+
+        while True:
+            cursor, keys = await client.scan(
+                cursor=cursor,
+                match=function_scheduled_pattern(key_prefix=self._queue._key_prefix),
+                count=100,
+            )
+
+            for scheduled_key in keys:
+                try:
+                    entries = await client.zrange(scheduled_key, 0, 0, withscores=True)
+                except Exception:
+                    continue
+                if not entries:
+                    continue
+
+                _, raw_score = entries[0]
+                score = float(raw_score)
+                if earliest is None or score < earliest:
+                    earliest = score
+                    # Due now (or overdue) should wake quickly.
+                    if earliest <= now:
+                        return earliest
+
+            if cursor == 0:
+                break
+
+        return earliest
 
     async def _do_sweep(self) -> None:
         """Move due scheduled jobs to their streams."""
@@ -100,7 +163,7 @@ class Sweeper:
         while True:
             cursor, keys = await client.scan(
                 cursor=cursor,
-                match=f"{self._queue._key_prefix}:fn:*:scheduled",
+                match=function_scheduled_pattern(key_prefix=self._queue._key_prefix),
                 count=100,
             )
 
@@ -166,8 +229,12 @@ class Sweeper:
             job_id_str = job_id.decode() if isinstance(job_id, bytes) else job_id
 
             # Get job data for inline storage
-            job_key = self._queue._key("job", function, job_id_str)
-            job_data = await client.get(job_key)
+            payload_key = job_key(
+                function,
+                job_id_str,
+                key_prefix=self._queue._key_prefix,
+            )
+            job_data = await client.get(payload_key)
 
             msg_fields: dict[str, str] = {
                 "job_id": job_id_str,

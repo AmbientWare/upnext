@@ -205,14 +205,14 @@ class StreamSubscriber:
 
         while not self._stop_event.is_set():
             try:
-                await self._process_batch()
+                processed_count = await self._process_batch()
 
                 if consecutive_failures > 0:
                     logger.info("Stream subscriber: recovered from errors")
                 consecutive_failures = 0
 
-                # If we processed a full batch, immediately check for more
-                if self._last_batch_event_count >= self._config.batch_size:
+                # Keep draining without an extra sleep while events are flowing.
+                if processed_count > 0:
                     continue
 
             except asyncio.CancelledError:
@@ -227,11 +227,10 @@ class StreamSubscriber:
                 await asyncio.sleep(backoff)
                 continue
 
-            # Wait before next poll if we didn't get a full batch
+            # Brief idle wait to avoid tight loops when no work was processed.
+            idle_wait = max(0.05, min(self._config.poll_interval / 4, 0.25))
             try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=self._config.poll_interval
-                )
+                await asyncio.wait_for(self._stop_event.wait(), timeout=idle_wait)
             except asyncio.TimeoutError:
                 pass
 
@@ -263,7 +262,7 @@ class StreamSubscriber:
         seen_event_ids: set[str] = set()
 
         # Read new events
-        block_ms = 0 if drain else int(self._config.poll_interval * 1000 / 4)
+        block_ms = 0 if drain else max(int(self._config.poll_interval * 1000), 1)
 
         if not self._config.consumer_id:
             raise ValueError("Consumer ID is required")

@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from shared.keys import (
     EVENTS_PUBSUB_CHANNEL,
@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 EVENTS_PREFIX = "/events"
 
-router = APIRouter(tags=["events"])
+router = APIRouter(prefix=EVENTS_PREFIX, tags=["events"])
 
 
 @router.get("/stream")
-async def stream_events() -> StreamingResponse:
+async def stream_events(request: Request) -> StreamingResponse:
     """Stream job events via Server-Sent Events (SSE)."""
     try:
         redis_client = await get_redis()
@@ -34,6 +34,8 @@ async def stream_events() -> StreamingResponse:
         try:
             yield "event: open\ndata: connected\n\n"
             while True:
+                if await request.is_disconnected():
+                    break
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True,
                     timeout=15.0,

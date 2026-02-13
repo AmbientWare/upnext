@@ -82,8 +82,25 @@ async function handleResponse<T>(response: Response): Promise<T> {
 // Dashboard
 // =============================================================================
 
-export async function getDashboardStats(): Promise<DashboardStats> {
-  const response = await apiFetch(`${API_BASE}/dashboard/stats`);
+export interface GetDashboardStatsParams {
+  window_minutes?: 1 | 5 | 15 | 60 | 1440;
+  failing_min_rate?: number;
+}
+
+export async function getDashboardStats(
+  params: GetDashboardStatsParams = {}
+): Promise<DashboardStats> {
+  const searchParams = new URLSearchParams();
+  if (params.window_minutes !== undefined) {
+    searchParams.set("window_minutes", String(params.window_minutes));
+  }
+  if (params.failing_min_rate !== undefined) {
+    searchParams.set("failing_min_rate", String(params.failing_min_rate));
+  }
+  const query = searchParams.toString();
+  const response = await apiFetch(
+    `${API_BASE}/dashboard/stats${query ? `?${query}` : ""}`
+  );
   return handleResponse<DashboardStats>(response);
 }
 
@@ -300,6 +317,8 @@ export async function getApiRequestEvents(
 export const queryKeys = {
   dashboard: ["dashboard"] as const,
   dashboardStats: ["dashboard", "stats"] as const,
+  dashboardStatsWithParams: (params?: GetDashboardStatsParams) =>
+    ["dashboard", "stats", params] as const,
 
   jobs: (params?: GetJobsParams) => ["jobs", params] as const,
   job: (jobId: string) => ["jobs", "job", jobId] as const,

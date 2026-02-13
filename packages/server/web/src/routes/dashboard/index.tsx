@@ -1,16 +1,18 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import {
   getDashboardStats,
   getWorkers,
-  getApis,
   queryKeys,
 } from "@/lib/upnext-api";
-import { SystemOverviewPanel } from "./-components/system-overview-panel";
+import {
+  SystemOverviewPanel,
+  type OverviewWindow,
+} from "./-components/system-overview-panel";
 import { QueueStatsPanel } from "./-components/queue-stats-panel";
 import { QueueStatsSkeleton, SystemOverviewSkeleton } from "./-components/skeletons";
-import { TrendsPanel } from "./-components/trends-panel";
-import { ApiTrendsPanel } from "./-components/api-trends-panel";
+import { CombinedTrendsPanel } from "./-components/combined-trends-panel";
 import { LiveActivityPanel } from "./-components/live-activity-panel";
 import { RunbookPanels } from "./-components/runbook-panels";
 
@@ -19,15 +21,31 @@ export const Route = createFileRoute("/dashboard/")({
 });
 
 const WORKERS_SAFETY_RESYNC_MS = 10 * 60 * 1000;
-const APIS_DASHBOARD_RESYNC_MS = 30 * 1000;
+const OVERVIEW_WINDOW_MINUTES: Record<OverviewWindow, 1 | 5 | 15 | 60 | 1440> = {
+  "1m": 1,
+  "5m": 5,
+  "15m": 15,
+  "1h": 60,
+  "24h": 1440,
+};
 
 function DataMatrixDashboard() {
   const navigate = useNavigate();
+  const [overviewWindow, setOverviewWindow] = useState<OverviewWindow>("5m");
+  const [failingMinRate, setFailingMinRate] = useState<number>(10);
+  const dashboardParams = useMemo(
+    () => ({
+      window_minutes: OVERVIEW_WINDOW_MINUTES[overviewWindow],
+      failing_min_rate: failingMinRate,
+    }),
+    [overviewWindow, failingMinRate]
+  );
 
   const { data: dashboardStats, isPending: isDashboardPending } = useQuery({
-    queryKey: queryKeys.dashboardStats,
-    queryFn: getDashboardStats,
-    refetchInterval: 30000,
+    queryKey: queryKeys.dashboardStatsWithParams(dashboardParams),
+    queryFn: () => getDashboardStats(dashboardParams),
+    // Safety fallback when SSE is degraded; normal updates are event-driven.
+    refetchInterval: 5_000,
   });
 
   const { data: workersData, isPending: isWorkersPending } = useQuery({
@@ -36,16 +54,9 @@ function DataMatrixDashboard() {
     refetchInterval: WORKERS_SAFETY_RESYNC_MS,
   });
 
-  const { data: apisData, isPending: isApisPending } = useQuery({
-    queryKey: queryKeys.apis,
-    queryFn: getApis,
-    refetchInterval: APIS_DASHBOARD_RESYNC_MS,
-  });
-
   const workers = workersData?.workers ?? [];
-  const apis = apisData?.apis ?? [];
 
-  const isOverviewPending = isDashboardPending || isWorkersPending || isApisPending;
+  const isOverviewPending = isDashboardPending || isWorkersPending;
 
   return (
     <div className="p-4 flex flex-col gap-3 h-full min-h-0 overflow-auto">
@@ -67,25 +78,27 @@ function DataMatrixDashboard() {
           <SystemOverviewPanel
             stats={dashboardStats}
             workers={workers}
-            apis={apis}
+            window={overviewWindow}
+            onWindowChange={setOverviewWindow}
             className="shrink-0"
           />
         )}
       </div>
 
-      {/* Trends Charts */}
-      <div className="flex gap-3 h-56 shrink-0">
-        <TrendsPanel className="flex-1" />
-        <ApiTrendsPanel className="flex-1" />
-      </div>
+      {/* Trends + Runbook */}
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)] gap-3 h-[360px] min-h-0 shrink-0">
+        <CombinedTrendsPanel className="h-full" />
 
-      <RunbookPanels
-        stats={dashboardStats}
-        isPending={isDashboardPending}
-        className="shrink-0"
-        onFunctionClick={(name) => navigate({ to: "/functions/$name", params: { name } })}
-        onJobClick={(jobId) => navigate({ to: "/jobs/$jobId", params: { jobId } })}
-      />
+        <RunbookPanels
+          stats={dashboardStats}
+          isPending={isDashboardPending}
+          failingMinRate={failingMinRate}
+          onFailingMinRateChange={setFailingMinRate}
+          className="h-full"
+          onFunctionClick={(name) => navigate({ to: "/functions/$name", params: { name } })}
+          onJobClick={(jobId) => navigate({ to: "/jobs/$jobId", params: { jobId } })}
+        />
+      </div>
 
       <LiveActivityPanel
         onJobClick={(job) => navigate({ to: "/jobs/$jobId", params: { jobId: job.id } })}

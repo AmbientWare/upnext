@@ -47,6 +47,11 @@ class _RedisStub:
         return self.pubsub_instance
 
 
+class _RequestStub:
+    async def is_disconnected(self) -> bool:
+        return False
+
+
 @pytest.mark.asyncio
 async def test_stream_events_returns_503_when_redis_unavailable(monkeypatch) -> None:
     async def fail_get_redis():  # type: ignore[no-untyped-def]
@@ -55,7 +60,7 @@ async def test_stream_events_returns_503_when_redis_unavailable(monkeypatch) -> 
     monkeypatch.setattr(events_stream_route, "get_redis", fail_get_redis)
 
     with pytest.raises(HTTPException, match="redis unavailable") as exc:
-        await events_stream_route.stream_events()
+        await events_stream_route.stream_events(_RequestStub())
 
     assert exc.value.status_code == 503
 
@@ -75,7 +80,7 @@ async def test_stream_events_emits_frames_and_cleans_pubsub(monkeypatch) -> None
 
     monkeypatch.setattr(events_stream_route, "get_redis", fake_get_redis)
 
-    response = await events_stream_route.stream_events()
+    response = await events_stream_route.stream_events(_RequestStub())
     assert response.media_type == "text/event-stream"
     assert response.headers["Cache-Control"] == "no-cache"
     assert response.headers["Connection"] == "keep-alive"

@@ -381,8 +381,10 @@ export interface ApiRequestSnapshotEvent {
 // =============================================================================
 
 export interface RunStats {
-  total_24h: number;
+  total: number;
   success_rate: number;
+  window_minutes: number;
+  jobs_per_min: number;
 }
 
 export interface QueueStats {
@@ -394,16 +396,18 @@ export interface QueueStats {
 }
 
 export interface ApiStats {
-  requests_24h: number;
+  requests: number;
   avg_latency_ms: number;
   error_rate: number;
+  window_minutes: number;
+  requests_per_min: number;
 }
 
 export interface TopFailingFunction {
   key: string;
   name: string;
-  runs_24h: number;
-  failures_24h: number;
+  runs: number;
+  failures: number;
   failure_rate: number;
   last_run_at: string | null;
 }

@@ -269,6 +269,48 @@ describe("EventStreamProvider", () => {
     expect(list?.jobs[0].progress).toBe(0.9);
   });
 
+  it("inserts terminal job events even when job.started was missed", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { gcTime: Infinity } },
+    });
+    const jobsKey = queryKeys.jobs({ limit: 50 });
+    client.setQueryData(jobsKey, emptyList());
+
+    renderWithQueryClient(client, (
+      <EventStreamProvider>
+        <div />
+      </EventStreamProvider>
+    ));
+
+    const jobHandler = getJobMessageHandler();
+    expect(jobHandler).toBeDefined();
+
+    act(() => {
+      jobHandler?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "job.completed",
+            job_id: "job-terminal",
+            function: "fn.terminal",
+            function_name: "Terminal",
+            root_id: "job-terminal",
+            attempt: 1,
+            duration_ms: 42,
+            completed_at: "2026-02-08T10:00:01Z",
+          }),
+        })
+      );
+    });
+    await flushQueue();
+
+    const list = client.getQueryData<JobListResponse>(jobsKey);
+    expect(list?.jobs.map((j) => j.id)).toEqual(["job-terminal"]);
+    expect(list?.jobs[0].status).toBe("complete");
+    expect(list?.jobs[0].duration_ms).toBe(42);
+    expect(list?.jobs[0].function).toBe("fn.terminal");
+    expect(list?.jobs[0].function_name).toBe("Terminal");
+  });
+
   it("keeps non-progress events under heavy progress backpressure", async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { gcTime: Infinity } },

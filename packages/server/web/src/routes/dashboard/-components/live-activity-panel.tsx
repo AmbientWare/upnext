@@ -13,7 +13,6 @@ import {
   LiveWindowControls,
   getTimeWindowBounds,
   LIVE_LIST_LIMIT,
-  LIVE_REFRESH_INTERVAL_MS,
   type TimeWindowPreset,
 } from "@/components/shared";
 import { Button } from "@/components/ui/button";
@@ -45,6 +44,7 @@ const jobStatusOptions = [
 
 const RETRYABLE_STATUSES = new Set(["failed", "cancelled"]);
 const CANCELLABLE_STATUSES = new Set(["pending", "queued", "active", "retrying"]);
+const LIVE_POLL_FALLBACK_MS = 5_000;
 
 function toTimestamp(value?: string | null): number {
   if (!value) return 0;
@@ -128,7 +128,8 @@ export function LiveActivityPanel({
   const { data: jobsData, isPending: isJobsLoading } = useQuery({
     queryKey: jobsQueryKey,
     queryFn: () => getJobs(jobsQueryParams),
-    refetchInterval: live ? LIVE_REFRESH_INTERVAL_MS : false,
+    // Stream provider applies event-level updates; keep slow polling as safety fallback.
+    refetchInterval: live ? LIVE_POLL_FALLBACK_MS : false,
     staleTime: live ? 0 : Number.POSITIVE_INFINITY,
   });
 
@@ -141,7 +142,8 @@ export function LiveActivityPanel({
   const { data: apiEventsData, isPending: isApiLoading } = useQuery({
     queryKey: apiEventsQueryKey,
     queryFn: () => getApiRequestEvents(apiEventsQueryParams),
-    refetchInterval: live ? LIVE_REFRESH_INTERVAL_MS : false,
+    // Stream provider applies event-level updates; keep slow polling as safety fallback.
+    refetchInterval: live ? LIVE_POLL_FALLBACK_MS : false,
     staleTime: live ? 0 : Number.POSITIVE_INFINITY,
   });
 

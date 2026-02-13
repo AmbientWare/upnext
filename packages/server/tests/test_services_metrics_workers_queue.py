@@ -413,6 +413,67 @@ async def test_oldest_queued_jobs_excludes_claimed_stream_messages(
 
 
 @pytest.mark.asyncio
+async def test_oldest_queued_jobs_reads_from_unread_group_head(
+    redis_text_client,
+    monkeypatch,
+) -> None:
+    stream_key = "upnext:fn:fn.stream:stream"
+    await redis_text_client.xgroup_create(stream_key, "workers", id="0", mkstream=True)
+
+    historical_1 = Job(
+        id="job-historical-1",
+        function="fn.stream",
+        function_name="Stream Fn",
+        scheduled_at=datetime.now(UTC) - timedelta(minutes=20),
+    )
+    historical_2 = Job(
+        id="job-historical-2",
+        function="fn.stream",
+        function_name="Stream Fn",
+        scheduled_at=datetime.now(UTC) - timedelta(minutes=10),
+    )
+    current = Job(
+        id="job-current-queued",
+        function="fn.stream",
+        function_name="Stream Fn",
+        scheduled_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    hist_1_id = await redis_text_client.xadd(
+        stream_key,
+        {"job_id": historical_1.id, "data": historical_1.to_json()},
+    )
+    hist_2_id = await redis_text_client.xadd(
+        stream_key,
+        {"job_id": historical_2.id, "data": historical_2.to_json()},
+    )
+
+    consumed = await redis_text_client.xreadgroup(
+        groupname="workers",
+        consumername="consumer-1",
+        streams={stream_key: ">"},
+        count=2,
+    )
+    assert consumed
+
+    await redis_text_client.xack(stream_key, "workers", hist_1_id, hist_2_id)
+
+    await redis_text_client.xadd(
+        stream_key,
+        {"job_id": current.id, "data": current.to_json()},
+    )
+
+    async def fake_get_redis() -> FakeRedis:
+        return redis_text_client
+
+    monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
+
+    rows = await queue_service_module.get_oldest_queued_jobs(limit=10)
+    assert rows
+    assert rows[0].id == "job-current-queued"
+
+
+@pytest.mark.asyncio
 async def test_queue_service_parsing_handles_malformed_payloads(monkeypatch) -> None:
     class _MalformedRedis:
         async def scan_iter(self, match: str, count: int = 100):  # noqa: ARG002

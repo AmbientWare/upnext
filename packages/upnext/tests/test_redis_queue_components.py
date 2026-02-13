@@ -11,7 +11,11 @@ from upnext.engine.queue.redis.constants import CompletedJob
 from upnext.engine.queue.redis.fetcher import Fetcher
 from upnext.engine.queue.redis.finisher import Finisher
 from upnext.engine.queue.redis.queue import RedisQueue
-from upnext.engine.queue.redis.sweeper import Sweeper
+from upnext.engine.queue.redis.sweeper import (
+    SWEEPER_MAX_SLEEP_SECONDS,
+    SWEEPER_MIN_SLEEP_SECONDS,
+    Sweeper,
+)
 
 
 @dataclass
@@ -194,3 +198,35 @@ async def test_sweeper_fallback_moves_due_job_to_stream(fake_redis) -> None:
     client = await queue._ensure_connected()  # noqa: SLF001
     score = await client.zscore(queue._scheduled_key(job.function), job.id)  # noqa: SLF001
     assert score is None
+
+
+@pytest.mark.asyncio
+async def test_sweeper_sleep_uses_max_when_no_jobs(fake_redis, monkeypatch) -> None:
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-sweeper-sleep-none")
+    sweeper = Sweeper(queue=queue, sweep_interval=1.0)
+    monkeypatch.setattr("upnext.engine.queue.redis.sweeper.time.time", lambda: 100.0)
+
+    sleep = sweeper._compute_sleep_seconds(None)  # noqa: SLF001
+    assert sleep == SWEEPER_MAX_SLEEP_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_sweeper_sleep_clamps_to_min_for_due_jobs(fake_redis, monkeypatch) -> None:
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-sweeper-sleep-min")
+    sweeper = Sweeper(queue=queue, sweep_interval=1.0)
+    monkeypatch.setattr("upnext.engine.queue.redis.sweeper.time.time", lambda: 100.0)
+
+    sleep = sweeper._compute_sleep_seconds(99.0)  # noqa: SLF001
+    assert sleep == SWEEPER_MIN_SLEEP_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_sweeper_sleep_clamps_to_max_for_far_future(
+    fake_redis, monkeypatch
+) -> None:
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-sweeper-sleep-max")
+    sweeper = Sweeper(queue=queue, sweep_interval=1.0)
+    monkeypatch.setattr("upnext.engine.queue.redis.sweeper.time.time", lambda: 100.0)
+
+    sleep = sweeper._compute_sleep_seconds(120.0)  # noqa: SLF001
+    assert sleep == SWEEPER_MAX_SLEEP_SECONDS

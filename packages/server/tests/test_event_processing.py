@@ -181,6 +181,53 @@ async def test_job_completed_stale_event_does_not_override_terminal_state(
 
 
 @pytest.mark.asyncio
+async def test_terminal_events_backfill_created_at_when_started_was_missed(
+    sqlite_db,
+) -> None:
+    completed_at = datetime.now(UTC)
+    failed_at = completed_at + timedelta(seconds=1)
+
+    completed_applied = await process_event(
+        JobCompletedEvent.model_validate(
+            {
+                "job_id": "job-terminal-created-1",
+                "function": "task_key",
+                "function_name": "task_name",
+                "root_id": "job-terminal-created-1",
+                "result": {"ok": True},
+                "attempt": 1,
+                "completed_at": completed_at,
+            }
+        )
+    )
+    failed_applied = await process_event(
+        JobFailedEvent.model_validate(
+            {
+                "job_id": "job-terminal-created-2",
+                "function": "task_key",
+                "function_name": "task_name",
+                "root_id": "job-terminal-created-2",
+                "error": "boom",
+                "attempt": 1,
+                "max_retries": 0,
+                "will_retry": False,
+                "failed_at": failed_at,
+            }
+        )
+    )
+    assert completed_applied is True
+    assert failed_applied is True
+
+    async with sqlite_db.session() as session:
+        completed = await session.get(JobHistory, "job-terminal-created-1")
+        failed = await session.get(JobHistory, "job-terminal-created-2")
+        assert completed is not None
+        assert failed is not None
+        assert as_utc_aware(completed.created_at) == completed_at
+        assert as_utc_aware(failed.created_at) == failed_at
+
+
+@pytest.mark.asyncio
 async def test_retrying_event_ignores_stale_payload_and_accepts_newer_payload(
     sqlite_db,
 ) -> None:

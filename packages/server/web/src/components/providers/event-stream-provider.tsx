@@ -50,19 +50,21 @@ const API_REQUEST_EVENTS_STREAM_URL = env.VITE_API_REQUEST_EVENTS_STREAM_URL;
 const WORKERS_STREAM_URL = env.VITE_WORKERS_STREAM_URL;
 
 /** Minimum interval between dashboard stats refetches (ms). */
-const STATS_THROTTLE_MS = 5_000;
+const STATS_THROTTLE_MS = 1_000;
 /** Minimum interval between function detail refetches triggered by SSE (ms). */
 const FUNCTION_THROTTLE_MS = 3_000;
-/** Apply streamed events with a tiny delay for stable, ordered UI updates. */
-const EVENT_STEP_MS = 40;
-/** Use a faster cadence when backlog grows to avoid UI lag. */
-const EVENT_BURST_STEP_MS = 8;
 /** Backlog level considered a burst. */
 const BURST_QUEUE_THRESHOLD = 50;
+/** Event apply batch size during normal load. */
+const NORMAL_DRAIN_BATCH_SIZE = 24;
+/** Event apply batch size during burst load. */
+const BURST_DRAIN_BATCH_SIZE = 128;
 /** Hard cap for queued stream events to avoid unbounded memory growth. */
 const MAX_QUEUE_LENGTH = 2_000;
 /** Minimum interval between reconnect-driven cache resync invalidations. */
 const RESYNC_RECONNECT_THROTTLE_MS = 15_000;
+/** Minimum interval between jobs-list fallback resyncs when progress arrives before job rows. */
+const JOBS_RESYNC_THROTTLE_MS = 1_000;
 const STREAM_IDLE_TIMEOUT_MS = 0;
 const FALLBACK_RESYNC_MS = 15_000;
 const FALLBACK_FAILURE_GRACE_MS = 12_000;
@@ -108,6 +110,24 @@ interface JobEvent {
   message?: string;
 }
 
+function deriveStartedAt(
+  completedAt: string | undefined,
+  durationMs: number | undefined
+): string | null {
+  if (!completedAt || !Number.isFinite(durationMs ?? NaN)) {
+    return null;
+  }
+  const completedTs = Date.parse(completedAt);
+  if (!Number.isFinite(completedTs)) {
+    return null;
+  }
+  const startedTs = completedTs - Math.max(durationMs ?? 0, 0);
+  if (!Number.isFinite(startedTs)) {
+    return null;
+  }
+  return new Date(startedTs).toISOString();
+}
+
 type ApiStreamEvent =
   | ApisSnapshotEvent
   | ApiSnapshotEvent
@@ -141,8 +161,17 @@ function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
         duration_ms: null,
       };
     case "job.completed":
+      const startedAt = deriveStartedAt(event.completed_at, event.duration_ms);
       return {
         id: job_id,
+        function: event.function ?? "",
+        function_name: event.function_name ?? event.function ?? "",
+        worker_id: event.worker_id ?? null,
+        parent_id: event.parent_id ?? null,
+        root_id: event.root_id ?? job_id,
+        attempts: event.attempt ?? 1,
+        created_at: startedAt ?? event.completed_at ?? null,
+        started_at: startedAt,
         status: "complete",
         duration_ms: event.duration_ms ?? null,
         completed_at: event.completed_at ?? null,
@@ -151,6 +180,14 @@ function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
     case "job.failed":
       return {
         id: job_id,
+        function: event.function ?? "",
+        function_name: event.function_name ?? event.function ?? "",
+        worker_id: event.worker_id ?? null,
+        parent_id: event.parent_id ?? null,
+        root_id: event.root_id ?? job_id,
+        attempts: event.attempt ?? 1,
+        max_retries: event.max_retries ?? 0,
+        created_at: event.failed_at ?? null,
         status: "failed",
         error: event.error ?? null,
         completed_at: event.failed_at ?? null,
@@ -158,6 +195,11 @@ function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
     case "job.retrying":
       return {
         id: job_id,
+        function: event.function ?? "",
+        function_name: event.function_name ?? event.function ?? "",
+        worker_id: event.worker_id ?? null,
+        parent_id: event.parent_id ?? null,
+        root_id: event.root_id ?? job_id,
         status: "retrying",
         attempts: event.current_attempt ?? 1,
         error: event.error ?? null,
@@ -165,6 +207,9 @@ function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
     case "job.progress":
       return {
         id: job_id,
+        worker_id: event.worker_id ?? null,
+        parent_id: event.parent_id ?? null,
+        root_id: event.root_id ?? job_id,
         progress: event.progress ?? 0,
       };
     default:
@@ -189,32 +234,33 @@ function patchExistingJob(
 
 function createJobFromPatch(patch: Partial<Job> & { id: string }): Job {
   const jobType = patch.job_type ?? "task";
+  const status = patch.status ?? "active";
   return {
     id: patch.id,
     function: patch.function ?? "",
     function_name: patch.function_name ?? patch.function ?? "",
     job_type: jobType,
     source: patch.source ?? { type: "task" },
-    status: "active",
+    status,
     created_at: patch.created_at ?? null,
-    scheduled_at: null,
+    scheduled_at: patch.scheduled_at ?? null,
     started_at: patch.started_at ?? null,
-    completed_at: null,
+    completed_at: patch.completed_at ?? null,
     attempts: patch.attempts ?? 1,
     max_retries: patch.max_retries ?? 0,
-    timeout: null,
+    timeout: patch.timeout ?? null,
     worker_id: patch.worker_id ?? null,
     parent_id: patch.parent_id ?? null,
     root_id: patch.root_id ?? patch.id,
-    progress: 0,
-    kwargs: {},
-    checkpoint: null,
-    checkpoint_at: null,
-    dlq_replayed_from: null,
-    dlq_failed_at: null,
-    result: null,
-    error: null,
-    duration_ms: null,
+    progress: patch.progress ?? (status === "complete" ? 1 : 0),
+    kwargs: patch.kwargs ?? {},
+    checkpoint: patch.checkpoint ?? null,
+    checkpoint_at: patch.checkpoint_at ?? null,
+    dlq_replayed_from: patch.dlq_replayed_from ?? null,
+    dlq_failed_at: patch.dlq_failed_at ?? null,
+    result: patch.result ?? null,
+    error: patch.error ?? null,
+    duration_ms: patch.duration_ms ?? null,
   };
 }
 
@@ -236,15 +282,22 @@ function forEachJobsListQuery(
 }
 
 /** Update existing jobs in matching job-list caches only. */
-function updateExistingJob(
+function updateExistingJobAndReturnFound(
   queryClient: QueryClient,
   patch: Partial<Job> & { id: string }
-) {
+) : boolean {
+  let found = false;
   forEachJobsListQuery(queryClient, (queryKey) => {
     queryClient.setQueryData<JobListResponse>(queryKey, (old) =>
-      patchExistingJob(old, patch)
+      {
+        if (old?.jobs.some((item) => item.id === patch.id)) {
+          found = true;
+        }
+        return patchExistingJob(old, patch);
+      }
     );
   });
+  return found;
 }
 
 /** Insert a new job into matching job list caches only. */
@@ -403,6 +456,7 @@ export function EventStreamProvider({
   const lastStatsInvalidation = useRef(0);
   const lastFunctionInvalidation = useRef<Record<string, number>>({});
   const lastReconnectResync = useRef(0);
+  const lastJobsListResync = useRef(0);
   const eventQueue = useRef<JobEvent[]>([]);
   const eventTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fallbackResyncTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -552,11 +606,32 @@ export function EventStreamProvider({
       const patchWithId = patch as Partial<Job> & { id: string };
 
       if (payload.type === "job.started") {
-        // New job — insert only into caches whose function filter matches
+        // New job — insert only into caches whose function filter matches.
         insertNewJob(queryClient, patchWithId);
+      } else if (payload.type === "job.progress") {
+        const updated = updateExistingJobAndReturnFound(queryClient, patchWithId);
+        if (!updated) {
+          const now = Date.now();
+          if (now - lastJobsListResync.current >= JOBS_RESYNC_THROTTLE_MS) {
+            lastJobsListResync.current = now;
+            queryClient.invalidateQueries({ queryKey: ["jobs"] });
+          }
+        }
       } else {
-        // Update existing job across matching job-list caches only
-        updateExistingJob(queryClient, patchWithId);
+        const updated = updateExistingJobAndReturnFound(queryClient, patchWithId);
+        if (updated) {
+          // Update existing job across matching job-list caches only.
+          // Already applied above.
+        } else {
+          // If job.started was missed due reconnect/window changes, still
+          // surface terminal/state events so live tables continue to move.
+          insertNewJob(queryClient, patchWithId);
+          const now = Date.now();
+          if (now - lastJobsListResync.current >= JOBS_RESYNC_THROTTLE_MS) {
+            lastJobsListResync.current = now;
+            queryClient.invalidateQueries({ queryKey: ["jobs"] });
+          }
+        }
       }
       updateJobDetailCache(queryClient, patchWithId);
       updateTimelineCaches(queryClient, patchWithId, payload);
@@ -589,7 +664,9 @@ export function EventStreamProvider({
     if (eventQueue.current.length === 0) return;
 
     const batchSize =
-      eventQueue.current.length > BURST_QUEUE_THRESHOLD ? 8 : 1;
+      eventQueue.current.length > BURST_QUEUE_THRESHOLD
+        ? BURST_DRAIN_BATCH_SIZE
+        : NORMAL_DRAIN_BATCH_SIZE;
     for (let i = 0; i < batchSize; i += 1) {
       const next = eventQueue.current.shift();
       if (!next) break;
@@ -597,11 +674,8 @@ export function EventStreamProvider({
     }
 
     if (eventQueue.current.length > 0) {
-      const delay =
-        eventQueue.current.length > BURST_QUEUE_THRESHOLD
-          ? EVENT_BURST_STEP_MS
-          : EVENT_STEP_MS;
-      eventTimer.current = setTimeout(drainQueueImpl, delay);
+      // Keep draining immediately to avoid visible chunking in live tables.
+      eventTimer.current = setTimeout(drainQueueImpl, 0);
     }
   }, [applyStreamEvent]);
 
@@ -682,6 +756,11 @@ export function EventStreamProvider({
       }
 
       if (payload.type === "api.request") {
+        const now = Date.now();
+        if (now - lastStatsInvalidation.current > STATS_THROTTLE_MS) {
+          lastStatsInvalidation.current = now;
+          queryClient.invalidateQueries({ queryKey: queryKeys.dashboardStats });
+        }
         forEachApiRequestEventsQuery(queryClient, (queryKey, params) => {
           if (params?.api_name && params.api_name !== payload.request.api_name) {
             return;
