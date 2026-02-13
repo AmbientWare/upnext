@@ -1,5 +1,4 @@
-import { cn } from "@/lib/utils";
-import { Panel } from "@/components/shared";
+import { MetricTile, Panel } from "@/components/shared";
 import type { DashboardStats, WorkerInfo } from "@/lib/types";
 import { useAnimatedNumber } from "@/hooks/use-animated-number";
 import {
@@ -43,18 +42,15 @@ export function SystemOverviewPanel({
   const activeWorkers = workers.filter((w) => w.active);
   const activeCount = activeWorkers.length;
 
-  // Worker aggregates (from live instances)
   const allInstances = activeWorkers.flatMap((w) => w.instances);
   const totalCapacity = allInstances.reduce((sum, inst) => sum + inst.concurrency, 0);
   const totalActive = allInstances.reduce((sum, inst) => sum + inst.active_jobs, 0);
 
-  // Windowed metrics
   const throughput = stats?.runs.jobs_per_min ?? 0;
   const throughputStr = throughput >= 1000 ? `${(throughput / 1000).toFixed(1)}K` : `${throughput}`;
   const successRate = stats?.runs.success_rate ?? 0;
   const windowText = windowLabel(window);
 
-  // API aggregates (same selected window)
   const totalReqPerMin = stats?.apis.requests_per_min ?? 0;
   const avgLatency = stats?.apis.avg_latency_ms ?? 0;
   const errorRate = stats?.apis.error_rate ?? 0;
@@ -75,7 +71,7 @@ export function SystemOverviewPanel({
       title="System Overview"
       titleRight={(
         <Select value={window} onValueChange={(v) => onWindowChange(v as OverviewWindow)}>
-          <SelectTrigger size="sm" className="h-6 w-[118px] text-[10px] gap-1 px-2">
+          <SelectTrigger size="sm" className="h-6 text-[10px] gap-1 px-2">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -86,76 +82,39 @@ export function SystemOverviewPanel({
         </Select>
       )}
       className={className}
-      contentClassName="p-5"
+      contentClassName="px-3 py-2.5"
     >
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-6">
-        {/* Workers - with load bar */}
-        <div>
-          <div className={cn("mono text-3xl font-bold", activeCount > 0 ? "text-foreground" : "text-muted-foreground")}>
-            {animatedWorkers}
-          </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Active Workers</div>
-          <div className="mono text-xs text-muted-foreground mt-1">
-            Utilization {animatedUtilActive}/{animatedUtilCapacity}
-          </div>
-        </div>
-
-        {/* Throughput */}
-        <div>
-          <div className="mono text-3xl font-bold text-foreground">{animatedThroughput}</div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
-            Jobs / Min ({windowText})
-          </div>
-        </div>
-
-        {/* Success Rate */}
-        <div>
-          <div className={cn(
-            "mono text-3xl font-bold",
-            successRate >= 99 ? "text-emerald-400" : successRate >= 95 ? "text-amber-400" : "text-red-400"
-          )}>
-            {animatedSuccessRate}
-          </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
-            Job Success Rate ({windowText})
-          </div>
-        </div>
-
-        {/* API Req/min */}
-        <div>
-          <div className="mono text-3xl font-bold text-foreground">
-            {animatedApiReqs}
-          </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
-            API Requests / Min ({windowText})
-          </div>
-        </div>
-
-        {/* API Latency */}
-        <div>
-          <div className={cn(
-            "mono text-3xl font-bold",
-            avgLatency < 100 ? "text-emerald-400" : avgLatency < 500 ? "text-amber-400" : "text-red-400"
-          )}>
-            {animatedLatency}
-          </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
-            API Avg Latency (ms, {windowText})
-          </div>
-        </div>
-
-        {/* Error Rate */}
-        <div>
-          <div className={cn(
-            "mono text-3xl font-bold",
-            errorRate < 1 ? "text-emerald-400" : errorRate < 5 ? "text-amber-400" : "text-red-400"
-          )}>
-            {animatedErrorRate}
-          </div>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mt-1">
-            API Error Rate ({windowText})
-          </div>
-        </div>
+      <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
+        <MetricTile
+          label="Active Workers"
+          value={animatedWorkers}
+          tone={activeCount > 0 ? "text-foreground" : "text-muted-foreground"}
+          sub={<>Utilization {animatedUtilActive}/{animatedUtilCapacity}</>}
+        />
+        <MetricTile
+          label={`Jobs / Min (${windowText})`}
+          value={animatedThroughput}
+        />
+        <MetricTile
+          label={`Job Success (${windowText})`}
+          value={animatedSuccessRate}
+          tone={successRate >= 99 ? "text-emerald-400" : successRate >= 95 ? "text-amber-400" : "text-red-400"}
+        />
+        <MetricTile
+          label={`API Req / Min (${windowText})`}
+          value={animatedApiReqs}
+        />
+        <MetricTile
+          label={`API Latency (${windowText})`}
+          value={animatedLatency}
+          sub="ms"
+          tone={avgLatency < 100 ? "text-emerald-400" : avgLatency < 500 ? "text-amber-400" : "text-red-400"}
+        />
+        <MetricTile
+          label={`API Errors (${windowText})`}
+          value={animatedErrorRate}
+          tone={errorRate < 1 ? "text-emerald-400" : errorRate < 5 ? "text-amber-400" : "text-red-400"}
+        />
       </div>
     </Panel>
   );

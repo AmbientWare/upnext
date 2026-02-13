@@ -17,9 +17,12 @@ function RootLayout() {
 
   const streamSubscriptions = useMemo<EventStreamSubscriptions>(() => {
     if (path.startsWith("/dashboard")) {
-      // Keep dashboard stream count below browser connection limits.
-      // Prioritize live activity API events stream; API summaries can refresh via polling.
-      return { jobs: true, apis: false, apiEvents: true, workers: true };
+      // Dashboard no longer hosts full live activity tables.
+      // Keep only worker snapshots live for utilization cards.
+      return { jobs: false, apis: false, apiEvents: false, workers: true };
+    }
+    if (path.startsWith("/activity")) {
+      return { jobs: true, apis: false, apiEvents: true, workers: false };
     }
     if (path.startsWith("/workers")) {
       return { jobs: false, apis: false, apiEvents: false, workers: true };
@@ -39,6 +42,7 @@ function RootLayout() {
   // Get page title from current path
   const getPageTitle = () => {
     if (path.startsWith("/dashboard")) return "Dashboard";
+    if (path.startsWith("/activity")) return "Activity";
     if (path.startsWith("/workers")) return "Workers";
     if (path.startsWith("/apis")) return "APIs";
     if (path.startsWith("/functions")) return "Functions";

@@ -62,7 +62,7 @@ export function RunbookPanels({
   onFunctionClick,
   onJobClick,
 }: RunbookPanelsProps) {
-  const [activeTab, setActiveTab] = useState<RunbookTab>("failing");
+  const [activeTab, setActiveTab] = useState<RunbookTab>("queued");
   const failing = stats?.top_failing_functions ?? [];
   const oldest = stats?.oldest_queued_jobs ?? [];
   const stuck = stats?.stuck_active_jobs ?? [];
@@ -101,14 +101,14 @@ export function RunbookPanels({
         contentClassName="flex-1 min-h-0 overflow-hidden p-0"
         titleCenter={(
           <TabsList variant="line" className="h-8">
-            <TabsTrigger value="failing" className="text-xs">Failing ({failing.length})</TabsTrigger>
             <TabsTrigger value="queued" className="text-xs">Queued ({oldest.length})</TabsTrigger>
+            <TabsTrigger value="failing" className="text-xs">Failing ({failing.length})</TabsTrigger>
             <TabsTrigger value="stuck" className="text-xs">Stuck ({stuck.length})</TabsTrigger>
           </TabsList>
         )}
         titleRight={activeTab === "failing" ? failingControls : null}
       >
-        <div className="border-b border-border" />
+        <div className="border-b border-input/60" />
 
         <TabsContent value="failing" className="h-full min-h-0 m-0">
           {isPending ? (
@@ -121,7 +121,7 @@ export function RunbookPanels({
                 <button
                   key={item.key}
                   type="button"
-                  className="w-full text-left px-3 py-2 border-b border-border/60 hover:bg-accent/40 last:border-b-0"
+                  className="w-full text-left px-3 py-2 border-b border-input/60 hover:bg-accent/40 last:border-b-0"
                   onClick={() => onFunctionClick?.(item.key)}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -149,7 +149,7 @@ export function RunbookPanels({
                 <button
                   key={`${item.source}:${item.id}`}
                   type="button"
-                  className="w-full text-left px-3 py-2 border-b border-border/60 hover:bg-accent/40 last:border-b-0"
+                  className="w-full text-left px-3 py-2 border-b border-input/60 hover:bg-accent/40 last:border-b-0"
                   onClick={() => onJobClick?.(item.id)}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -176,7 +176,7 @@ export function RunbookPanels({
                 <button
                   key={item.id}
                   type="button"
-                  className="w-full text-left px-3 py-2 border-b border-border/60 hover:bg-accent/40 last:border-b-0"
+                  className="w-full text-left px-3 py-2 border-b border-input/60 hover:bg-accent/40 last:border-b-0"
                   onClick={() => onJobClick?.(item.id)}
                 >
                   <div className="flex items-center justify-between gap-2">

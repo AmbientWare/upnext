@@ -24,7 +24,7 @@ export function Panel({
       {title && (
         <div
           className={cn(
-            "matrix-panel-header px-3 py-2",
+            "matrix-panel-header px-3 py-1.5 min-h-11",
             titleCenter ? "grid grid-cols-[1fr_auto_1fr] items-center gap-2" : "flex items-center justify-between"
           )}
         >

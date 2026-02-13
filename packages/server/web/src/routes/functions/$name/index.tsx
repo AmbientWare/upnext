@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import type { DateRange } from "react-day-picker";
@@ -16,6 +16,11 @@ import {
 import type { FunctionType } from "@/lib/types";
 import {
   Panel,
+  MetricPill,
+  BackLink,
+  StatusDot,
+  TypeBadge,
+  DetailPageLayout,
   JobsTablePanel,
   LiveWindowControls,
   getTimeWindowBounds,
@@ -25,8 +30,6 @@ import {
 } from "@/components/shared";
 import { FunctionDetailSkeleton } from "./-components/skeletons";
 import {
-  ArrowLeft,
-  Circle,
   Clock,
   Repeat,
   Timer,
@@ -39,7 +42,6 @@ import {
   X,
 } from "lucide-react";
 import { ConfigItem } from "./-components/config-item";
-import { MetricCard } from "./-components/metric-card";
 import { JobTrendsPanel } from "./-components/job-trends-panel";
 import { Button } from "@/components/ui/button";
 
@@ -49,16 +51,10 @@ export const Route = createFileRoute("/functions/$name/")({
 
 const SAFETY_RESYNC_MS = 10 * 60 * 1000;
 
-const typeStyles: Record<FunctionType, string> = {
-  task: "bg-blue-500/20 text-blue-400",
-  cron: "bg-violet-500/20 text-violet-400",
-  event: "bg-amber-500/20 text-amber-400",
-};
-
-const typeLabels: Record<FunctionType, string> = {
-  task: "Task",
-  cron: "Cron Job",
-  event: "Event Handler",
+const typeConfig: Record<FunctionType, { label: string; color: "blue" | "violet" | "amber" }> = {
+  task: { label: "Task", color: "blue" },
+  cron: { label: "Cron", color: "violet" },
+  event: { label: "Event", color: "amber" },
 };
 
 const RETRYABLE_STATUSES = new Set(["failed", "cancelled"]);
@@ -82,11 +78,9 @@ function FunctionDetailPage() {
     if (jobsLive) {
       return { function: decodedName, limit: LIVE_LIST_LIMIT };
     }
-
     if (!jobsWindow) {
       return { function: decodedName };
     }
-
     return {
       function: decodedName,
       after: jobsWindow.from.toISOString(),
@@ -98,7 +92,6 @@ function FunctionDetailPage() {
     ? queryKeys.jobs(jobsQueryParams)
     : (["jobs", "window", jobsQueryParams] as const);
 
-  // Data fetching
   const { data: fn, isPending: isFunctionPending } = useQuery({
     queryKey: queryKeys.function(decodedName),
     queryFn: () => getFunction(decodedName),
@@ -160,53 +153,110 @@ function FunctionDetailPage() {
     );
   }
 
-  return (
-    <div className="p-4 flex flex-col gap-3 h-full overflow-auto xl:overflow-hidden">
-      {/* Back link + header */}
-      <div className="shrink-0 flex flex-col gap-2">
-        <Link
-          to="/functions"
-          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors w-fit"
-        >
-          <ArrowLeft className="w-3 h-3" />
-          Back to Functions
-        </Link>
+  const dispatchTotal =
+    fn.dispatch_reasons.paused +
+    fn.dispatch_reasons.rate_limited +
+    fn.dispatch_reasons.no_capacity +
+    fn.dispatch_reasons.cancelled +
+    fn.dispatch_reasons.retrying;
 
-        <div className="flex items-center gap-3">
-          <Circle
-            className={cn(
-              "w-2.5 h-2.5 shrink-0",
-              fn.active ? "fill-emerald-400 text-emerald-400" : "fill-muted-foreground/60 text-muted-foreground/60"
+  return (
+    <DetailPageLayout>
+      {/* ─── Header (compact) ─── */}
+      <div className="shrink-0 space-y-1.5">
+        <BackLink to="/functions" label="Functions" />
+
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <StatusDot active={fn.active} />
+            <h2 className="mono text-lg font-semibold text-foreground truncate">{fn.name}</h2>
+            <TypeBadge label={typeConfig[fn.type].label} color={typeConfig[fn.type].color} />
+            {!fn.active && (
+              <span className="text-[10px] text-muted-foreground/60 uppercase">Inactive</span>
             )}
+            {fn.paused && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium uppercase shrink-0">
+                Paused
+              </span>
+            )}
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={togglePauseMutation.isPending}
+              onClick={() => togglePauseMutation.mutate(fn.paused)}
+            >
+              {fn.paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+              {fn.paused ? "Resume" : "Pause"}
+            </Button>
+          </div>
+
+          {fn.last_run_at && (
+            <span className="text-[11px] text-muted-foreground shrink-0 hidden sm:inline">
+              Last run {formatTimeAgo(new Date(fn.last_run_at))}
+              {fn.last_run_status && (
+                <span
+                  className={cn(
+                    "ml-1",
+                    fn.last_run_status === "complete"
+                      ? "text-emerald-400"
+                      : fn.last_run_status === "failed"
+                        ? "text-red-400"
+                        : "text-muted-foreground"
+                  )}
+                >
+                  · {fn.last_run_status}
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+
+        {/* Metrics strip */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <MetricPill label="Runs 24h" value={formatNumber(fn.runs_24h)} />
+          <MetricPill
+            label="Success"
+            value={`${fn.success_rate.toFixed(1)}%`}
+            tone={
+              fn.success_rate >= 99
+                ? "text-emerald-400"
+                : fn.success_rate >= 95
+                  ? "text-amber-400"
+                  : "text-red-400"
+            }
           />
-          <h2 className="mono text-lg font-semibold text-foreground">{fn.name}</h2>
-          <span className={cn("text-[10px] px-2 py-0.5 rounded font-medium uppercase", typeStyles[fn.type])}>
-            {fn.type}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {fn.active ? "Active" : "Inactive"}
-          </span>
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={togglePauseMutation.isPending}
-            onClick={() => togglePauseMutation.mutate(fn.paused)}
-            className="ml-1"
-          >
-            {fn.paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-            {fn.paused ? "Resume" : "Pause"}
-          </Button>
+          <MetricPill label="Avg" value={formatDuration(fn.avg_duration_ms)} />
+          <MetricPill
+            label="P95"
+            value={fn.p95_duration_ms != null ? formatDuration(fn.p95_duration_ms) : "\u2014"}
+          />
+          <MetricPill
+            label="Wait"
+            value={fn.avg_wait_ms != null ? formatDuration(fn.avg_wait_ms) : "\u2014"}
+          />
+          <MetricPill
+            label="P95 Wait"
+            value={fn.p95_wait_ms != null ? formatDuration(fn.p95_wait_ms) : "\u2014"}
+          />
+          <MetricPill label="Backlog" value={formatNumber(fn.queue_backlog)} />
+          {dispatchTotal > 0 && (
+            <MetricPill label="Blocked" value={formatNumber(dispatchTotal)} tone="text-amber-400" />
+          )}
         </div>
       </div>
 
-      {/* Configuration + Metrics row */}
-      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-3 shrink-0">
-        <Panel title={typeLabels[fn.type] + " Configuration"} className="flex-1" contentClassName="p-4">
-          <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+      {/* ─── Config + Trends (config determines row height) ─── */}
+      <div className="shrink-0 flex flex-col xl:flex-row gap-3">
+        <Panel
+          title={typeConfig[fn.type].label + " Configuration"}
+          className="xl:w-80 xl:shrink-0"
+          contentClassName="px-3 py-2.5"
+        >
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
             {fn.type === "task" && (
               <>
                 <ConfigItem icon={Timer} label="Timeout" value={fn.timeout != null ? `${fn.timeout}s` : null} />
-                <ConfigItem icon={Repeat} label="Max Retries" value={fn.max_retries != null ? String(fn.max_retries) : null} />
+                <ConfigItem icon={Repeat} label="Retries" value={fn.max_retries != null ? String(fn.max_retries) : null} />
                 <ConfigItem icon={Clock} label="Retry Delay" value={fn.retry_delay != null ? `${fn.retry_delay}s` : null} />
               </>
             )}
@@ -227,89 +277,92 @@ function FunctionDetailPage() {
               <>
                 <ConfigItem icon={Radio} label="Pattern" value={fn.pattern} mono />
                 <ConfigItem icon={Timer} label="Timeout" value={fn.timeout != null ? `${fn.timeout}s` : null} />
-                <ConfigItem icon={Repeat} label="Max Retries" value={fn.max_retries != null ? String(fn.max_retries) : null} />
+                <ConfigItem icon={Repeat} label="Retries" value={fn.max_retries != null ? String(fn.max_retries) : null} />
                 <ConfigItem icon={Clock} label="Retry Delay" value={fn.retry_delay != null ? `${fn.retry_delay}s` : null} />
               </>
             )}
+          </div>
 
-            {/* Workers */}
-            <div className="col-span-2">
-              <div className="flex items-center gap-1.5 mb-1">
-                <Users className="w-3 h-3 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Workers</span>
-              </div>
-              {(fn.workers ?? []).length > 0 ? (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {(fn.workers ?? []).map((w) => (
-                    <span key={w} className="text-[10px] px-1.5 py-0.5 rounded bg-muted border border-input text-muted-foreground mono">
-                      {w}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-xs text-muted-foreground/60">{"\u2014"}</span>
-              )}
+          {/* Workers */}
+          <div className="mt-2.5 pt-2.5 border-t border-input/60">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Users className="w-3 h-3 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Workers</span>
             </div>
+            {(fn.workers ?? []).length > 0 ? (
+              <div className="flex items-center gap-1 flex-wrap">
+                {(fn.workers ?? []).map((w) => (
+                  <span
+                    key={w}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-muted border border-input text-muted-foreground mono"
+                  >
+                    {w}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs text-muted-foreground/60">{"\u2014"}</span>
+            )}
           </div>
+
+          {/* Dispatch blocks — only when non-zero */}
+          {dispatchTotal > 0 && (
+            <div className="mt-2.5 pt-2.5 border-t border-input/60">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                Dispatch Blocks
+              </span>
+              <div className="mt-1 flex items-center gap-3 flex-wrap text-[11px]">
+                {fn.dispatch_reasons.paused > 0 && (
+                  <span className="text-amber-400/80 flex items-center gap-0.5">
+                    <Pause className="w-3 h-3" />
+                    {fn.dispatch_reasons.paused} paused
+                  </span>
+                )}
+                {fn.dispatch_reasons.rate_limited > 0 && (
+                  <span className="text-amber-400/80 flex items-center gap-0.5">
+                    <Clock className="w-3 h-3" />
+                    {fn.dispatch_reasons.rate_limited} rate limited
+                  </span>
+                )}
+                {fn.dispatch_reasons.no_capacity > 0 && (
+                  <span className="text-amber-400/80 flex items-center gap-0.5">
+                    <Users className="w-3 h-3" />
+                    {fn.dispatch_reasons.no_capacity} no capacity
+                  </span>
+                )}
+                {fn.dispatch_reasons.cancelled > 0 && (
+                  <span className="text-zinc-400 flex items-center gap-0.5">
+                    <X className="w-3 h-3" />
+                    {fn.dispatch_reasons.cancelled} cancelled
+                  </span>
+                )}
+                {fn.dispatch_reasons.retrying > 0 && (
+                  <span className="text-orange-400 flex items-center gap-0.5">
+                    <RotateCcw className="w-3 h-3" />
+                    {fn.dispatch_reasons.retrying} retrying
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </Panel>
 
-        <Panel title="Metrics (24H)" className="flex-1" contentClassName="p-4">
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-4">
-            <MetricCard label="Runs" value={formatNumber(fn.runs_24h)} />
-            <MetricCard
-              label="Success Rate"
-              value={`${fn.success_rate.toFixed(1)}%`}
-              color={fn.success_rate >= 99 ? "text-emerald-400" : fn.success_rate >= 95 ? "text-amber-400" : "text-red-400"}
-            />
-            <MetricCard label="Avg Duration" value={formatDuration(fn.avg_duration_ms)} />
-            <MetricCard
-              label="P95 Duration"
-              value={fn.p95_duration_ms != null ? formatDuration(fn.p95_duration_ms) : "\u2014"}
-            />
-            <MetricCard
-              label="Avg Queue Wait"
-              value={fn.avg_wait_ms != null ? formatDuration(fn.avg_wait_ms) : "\u2014"}
-            />
-            <MetricCard
-              label="P95 Queue Wait"
-              value={fn.p95_wait_ms != null ? formatDuration(fn.p95_wait_ms) : "\u2014"}
-            />
-            <MetricCard label="Queue Backlog" value={formatNumber(fn.queue_backlog)} />
-            <MetricCard
-              label="Dispatch Blocks"
-              value={formatNumber(
-                fn.dispatch_reasons.paused +
-                  fn.dispatch_reasons.rate_limited +
-                  fn.dispatch_reasons.no_capacity +
-                  fn.dispatch_reasons.cancelled +
-                  fn.dispatch_reasons.retrying
-              )}
-            />
-            <MetricCard
-              label="Last Run"
-              value={fn.last_run_at ? formatTimeAgo(new Date(fn.last_run_at)) : "\u2014"}
-              sub={fn.last_run_status ?? undefined}
-              animate={false}
+        <div className="h-56 xl:h-auto xl:flex-1 xl:min-w-0 relative">
+          <div className="absolute inset-0">
+            <JobTrendsPanel
+              functionName={decodedName}
+              className="h-full flex flex-col overflow-hidden"
             />
           </div>
-          <div className="mt-4 grid grid-cols-2 lg:grid-cols-5 gap-2">
-            <ConfigItem icon={Pause} label="Paused" value={String(fn.dispatch_reasons.paused)} />
-            <ConfigItem icon={Clock} label="Rate Limited" value={String(fn.dispatch_reasons.rate_limited)} />
-            <ConfigItem icon={Users} label="No Capacity" value={String(fn.dispatch_reasons.no_capacity)} />
-            <ConfigItem icon={X} label="Cancelled" value={String(fn.dispatch_reasons.cancelled)} />
-            <ConfigItem icon={RotateCcw} label="Retrying" value={String(fn.dispatch_reasons.retrying)} />
-          </div>
-        </Panel>
+        </div>
       </div>
 
-      {/* Job Trends chart */}
-      <JobTrendsPanel functionName={decodedName} />
-
-      {/* Recent Jobs */}
+      {/* ─── Recent Jobs ─── */}
       <JobsTablePanel
         jobs={jobs}
         hideFunction
         showFilters
+        className="flex-1 min-h-0 flex flex-col overflow-hidden"
         renderActions={(job) => (
           <div className="inline-flex items-center gap-1">
             {RETRYABLE_STATUSES.has(job.status) ? (
@@ -351,6 +404,6 @@ function FunctionDetailPage() {
         isLoading={isJobsPending}
         onJobClick={(job) => navigate({ to: "/jobs/$jobId", params: { jobId: job.id } })}
       />
-    </div>
+    </DetailPageLayout>
   );
 }

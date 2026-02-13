@@ -1,4 +1,5 @@
 import { Inbox } from "lucide-react";
+import { useEffect, useRef, type UIEvent } from "react";
 
 import type { ApiRequestEvent } from "@/lib/types";
 import { cn, formatDateTime, formatTimeAgo } from "@/lib/utils";
@@ -24,11 +25,16 @@ export interface ApiRequestsTableProps {
   events: ApiRequestEvent[];
   isLoading?: boolean;
   hideApiName?: boolean;
+  hasMore?: boolean;
+  isFetchingMore?: boolean;
+  onLoadMore?: () => void;
   className?: string;
   emptyTitle?: string;
   emptyDescription?: string;
   onApiClick?: (apiName: string) => void;
 }
+
+const SCROLL_THRESHOLD_PX = 120;
 
 function ApiRequestsTableSkeleton({ hideApiName }: { hideApiName?: boolean }) {
   return (
@@ -90,11 +96,51 @@ export function ApiRequestsTable({
   events,
   isLoading = false,
   hideApiName = false,
+  hasMore = false,
+  isFetchingMore = false,
+  onLoadMore,
   className,
   emptyTitle = "No API requests yet",
   emptyDescription = "Live request events will appear here once traffic arrives.",
   onApiClick,
 }: ApiRequestsTableProps) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRowRef = useRef<HTMLTableRowElement | null>(null);
+
+  const maybeLoadMore = () => {
+    if (!onLoadMore || !hasMore || isFetchingMore) return;
+    onLoadMore();
+  };
+
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget;
+    const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (distanceToBottom <= SCROLL_THRESHOLD_PX) {
+      maybeLoadMore();
+    }
+  };
+
+  useEffect(() => {
+    if (!hasMore || !onLoadMore || !loadMoreRowRef.current) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry?.isIntersecting) {
+          maybeLoadMore();
+        }
+      },
+      {
+        root: scrollContainerRef.current,
+        rootMargin: "0px 0px 200px 0px",
+        threshold: 0.01,
+      }
+    );
+
+    observer.observe(loadMoreRowRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, isFetchingMore, onLoadMore]);
+
   return (
     <div className={cn("flex flex-col h-full overflow-hidden", className)}>
       {isLoading ? (
@@ -110,7 +156,7 @@ export function ApiRequestsTable({
           <div className="text-xs text-muted-foreground/80">{emptyDescription}</div>
         </div>
       ) : (
-        <div className="flex-1 overflow-auto">
+        <div ref={scrollContainerRef} className="flex-1 overflow-auto" onScroll={handleScroll}>
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="text-[10px] text-muted-foreground uppercase tracking-wider border-input hover:bg-transparent">
@@ -174,6 +220,16 @@ export function ApiRequestsTable({
                   </TableRow>
                 );
               })}
+              {(isFetchingMore || hasMore) ? (
+                <TableRow ref={loadMoreRowRef} className="border-border hover:bg-transparent">
+                  <TableCell
+                    colSpan={hideApiName ? 6 : 7}
+                    className="py-2 text-center text-[11px] text-muted-foreground"
+                  >
+                    {isFetchingMore ? "Loading more..." : "Scroll to load more"}
+                  </TableCell>
+                </TableRow>
+              ) : null}
             </TableBody>
           </Table>
         </div>

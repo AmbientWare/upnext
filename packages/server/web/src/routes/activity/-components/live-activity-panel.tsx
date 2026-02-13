@@ -1,10 +1,21 @@
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DateRange } from "react-day-picker";
 import { RotateCcw, X } from "lucide-react";
 import { toast } from "sonner";
 
-import { cancelJob, getApiRequestEvents, getJobs, queryKeys, retryJob } from "@/lib/upnext-api";
+import {
+  cancelJob,
+  getApis,
+  getApiRequestEvents,
+  getFunctions,
+  getJobs,
+  getWorkers,
+  queryKeys,
+  retryJob,
+  type GetApiRequestEventsParams,
+  type GetJobsParams,
+} from "@/lib/upnext-api";
 import type { Job } from "@/lib/types";
 import {
   Panel,
@@ -45,20 +56,15 @@ const jobStatusOptions = [
 const RETRYABLE_STATUSES = new Set(["failed", "cancelled"]);
 const CANCELLABLE_STATUSES = new Set(["pending", "queued", "active", "retrying"]);
 const LIVE_POLL_FALLBACK_MS = 5_000;
+const WINDOW_PAGE_SIZE = 100;
 
-function toTimestamp(value?: string | null): number {
-  if (!value) return 0;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function jobTime(job: Job): number {
-  return Math.max(
-    toTimestamp(job.created_at),
-    toTimestamp(job.scheduled_at),
-    toTimestamp(job.started_at),
-    toTimestamp(job.completed_at)
-  );
+function parseRouteFilter(route: string): { method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; path?: string } {
+  if (route === "all") return {};
+  const [methodPart, ...pathParts] = route.split(" ");
+  const method = methodPart?.toUpperCase() as "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  const path = pathParts.join(" ").trim();
+  if (!method || !path) return {};
+  return { method, path };
 }
 
 export function LiveActivityPanel({
@@ -108,131 +114,223 @@ export function LiveActivityPanel({
     return getTimeWindowBounds(windowPreset, dateRange);
   }, [dateRange, live, windowPreset]);
 
-  const jobsQueryParams = useMemo(() => {
-    if (live) {
-      return { limit: LIVE_LIST_LIMIT };
-    }
-    if (!bounds) {
-      return {};
-    }
+  const { data: functionsData } = useQuery({
+    queryKey: queryKeys.functions(),
+    queryFn: () => getFunctions(),
+    staleTime: 60_000,
+  });
+
+  const { data: workersData } = useQuery({
+    queryKey: queryKeys.workers,
+    queryFn: () => getWorkers(),
+    staleTime: 15_000,
+  });
+
+  const { data: apisData } = useQuery({
+    queryKey: queryKeys.apis,
+    queryFn: () => getApis(),
+    staleTime: 30_000,
+  });
+
+  const jobsFilters = useMemo<GetJobsParams>(() => {
     return {
+      function: jobFunctionFilter === "all" ? undefined : jobFunctionFilter,
+      worker_id: jobWorkerFilter === "all" ? undefined : jobWorkerFilter,
+      status: jobStatusFilter === "all" ? undefined : [jobStatusFilter],
+    };
+  }, [jobFunctionFilter, jobStatusFilter, jobWorkerFilter]);
+
+  const jobsLiveParams = useMemo<GetJobsParams>(
+    () => ({ ...jobsFilters, limit: LIVE_LIST_LIMIT }),
+    [jobsFilters]
+  );
+
+  const jobsWindowParams = useMemo<GetJobsParams>(() => {
+    if (!bounds) return jobsFilters;
+    return {
+      ...jobsFilters,
       after: bounds.from.toISOString(),
       before: bounds.to.toISOString(),
     };
-  }, [bounds, live]);
+  }, [bounds, jobsFilters]);
 
-  const jobsQueryKey = live
-    ? queryKeys.jobs(jobsQueryParams)
-    : (["dashboard", "live-activity", "jobs-window", jobsQueryParams] as const);
-
-  const { data: jobsData, isPending: isJobsLoading } = useQuery({
-    queryKey: jobsQueryKey,
-    queryFn: () => getJobs(jobsQueryParams),
-    // Stream provider applies event-level updates; keep slow polling as safety fallback.
+  const { data: liveJobsData, isPending: isLiveJobsLoading } = useQuery({
+    queryKey: queryKeys.jobs(jobsLiveParams),
+    queryFn: () => getJobs(jobsLiveParams),
     refetchInterval: live ? LIVE_POLL_FALLBACK_MS : false,
     staleTime: live ? 0 : Number.POSITIVE_INFINITY,
+    enabled: live,
   });
 
-  const apiEventsQueryParams = live ? ({ limit: LIVE_LIST_LIMIT } as const) : ({} as const);
+  const {
+    data: windowJobsData,
+    isPending: isWindowJobsLoading,
+    hasNextPage: jobsHasNextPage,
+    fetchNextPage: fetchNextJobsPage,
+    isFetchingNextPage: isFetchingNextJobsPage,
+  } = useInfiniteQuery({
+    queryKey: ["activity", "jobs-window", jobsWindowParams],
+    queryFn: ({ pageParam }) =>
+      getJobs({
+        ...jobsWindowParams,
+        limit: WINDOW_PAGE_SIZE,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage.has_more) return undefined;
+      return allPages.reduce((sum, page) => sum + page.jobs.length, 0);
+    },
+    enabled: !live && Boolean(bounds),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
 
-  const apiEventsQueryKey = live
-    ? queryKeys.apiRequestEvents(apiEventsQueryParams)
-    : (["dashboard", "live-activity", "api-events-window", apiEventsQueryParams] as const);
+  const routeFilter = useMemo(() => parseRouteFilter(apiRouteFilter), [apiRouteFilter]);
+  const apiStatusNumber = useMemo(
+    () => (apiStatusFilter === "all" ? undefined : Number(apiStatusFilter)),
+    [apiStatusFilter]
+  );
 
-  const { data: apiEventsData, isPending: isApiLoading } = useQuery({
-    queryKey: apiEventsQueryKey,
-    queryFn: () => getApiRequestEvents(apiEventsQueryParams),
-    // Stream provider applies event-level updates; keep slow polling as safety fallback.
+  const apiFilters = useMemo<GetApiRequestEventsParams>(() => {
+    return {
+      api_name: apiNameFilter === "all" ? undefined : apiNameFilter,
+      method: routeFilter.method,
+      path: routeFilter.path,
+      status: Number.isFinite(apiStatusNumber) ? apiStatusNumber : undefined,
+      instance_id: apiInstanceFilter === "all" ? undefined : apiInstanceFilter,
+    };
+  }, [apiInstanceFilter, apiNameFilter, apiStatusNumber, routeFilter.method, routeFilter.path]);
+
+  const apiLiveParams = useMemo<GetApiRequestEventsParams>(
+    () => ({ ...apiFilters, limit: LIVE_LIST_LIMIT }),
+    [apiFilters]
+  );
+
+  const apiWindowParams = useMemo<GetApiRequestEventsParams>(() => {
+    if (!bounds) return apiFilters;
+    return {
+      ...apiFilters,
+      after: bounds.from.toISOString(),
+      before: bounds.to.toISOString(),
+    };
+  }, [apiFilters, bounds]);
+
+  const { data: liveApiEventsData, isPending: isLiveApiLoading } = useQuery({
+    queryKey: queryKeys.apiRequestEvents(apiLiveParams),
+    queryFn: () => getApiRequestEvents(apiLiveParams),
     refetchInterval: live ? LIVE_POLL_FALLBACK_MS : false,
     staleTime: live ? 0 : Number.POSITIVE_INFINITY,
+    enabled: live,
   });
 
-  const jobsInWindow = useMemo(() => {
-    const sorted = [...(jobsData?.jobs ?? [])].sort((a, b) => jobTime(b) - jobTime(a));
-    if (live) {
-      return sorted.slice(0, LIVE_LIST_LIMIT);
-    }
-    return sorted;
-  }, [jobsData?.jobs, live]);
+  const {
+    data: windowApiEventsData,
+    isPending: isWindowApiLoading,
+    hasNextPage: apiHasNextPage,
+    fetchNextPage: fetchNextApiEventsPage,
+    isFetchingNextPage: isFetchingNextApiEventsPage,
+  } = useInfiniteQuery({
+    queryKey: ["activity", "api-events-window", apiWindowParams],
+    queryFn: ({ pageParam }) =>
+      getApiRequestEvents({
+        ...apiWindowParams,
+        limit: WINDOW_PAGE_SIZE,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage.has_more) return undefined;
+      return allPages.reduce((sum, page) => sum + page.events.length, 0);
+    },
+    enabled: !live && Boolean(bounds),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+  const jobs = useMemo(() => {
+    const rows = live
+      ? (liveJobsData?.jobs ?? [])
+      : (windowJobsData?.pages.flatMap((page) => page.jobs) ?? []);
+    return rows;
+  }, [live, liveJobsData?.jobs, windowJobsData?.pages]);
+
+  const jobsTotal = useMemo(() => {
+    if (live) return liveJobsData?.total ?? jobs.length;
+    return windowJobsData?.pages[0]?.total ?? 0;
+  }, [jobs.length, live, liveJobsData?.total, windowJobsData?.pages]);
+
+  const apiEvents = useMemo(() => {
+    const rows = live
+      ? (liveApiEventsData?.events ?? [])
+      : (windowApiEventsData?.pages.flatMap((page) => page.events) ?? []);
+    return rows;
+  }, [live, liveApiEventsData?.events, windowApiEventsData?.pages]);
+
+  const apiEventsTotal = useMemo(() => {
+    if (live) return liveApiEventsData?.total ?? apiEvents.length;
+    return windowApiEventsData?.pages[0]?.total ?? 0;
+  }, [apiEvents.length, live, liveApiEventsData?.total, windowApiEventsData?.pages]);
 
   const jobWorkerOptions = useMemo(() => {
     const workers = new Set<string>();
-    for (const job of jobsInWindow) {
+    for (const worker of workersData?.workers ?? []) {
+      for (const instance of worker.instances ?? []) {
+        if (instance.id) workers.add(instance.id);
+      }
+    }
+    for (const job of jobs) {
       if (job.worker_id) workers.add(job.worker_id);
     }
     return [...workers].sort((a, b) => a.localeCompare(b));
-  }, [jobsInWindow]);
+  }, [jobs, workersData?.workers]);
 
   const jobFunctionOptions = useMemo(() => {
-    const functions = new Set<string>();
-    for (const job of jobsInWindow) {
-      const functionName = job.function_name || job.function;
-      if (functionName) functions.add(functionName);
+    const labelsByKey = new Map<string, string>();
+    for (const fn of functionsData?.functions ?? []) {
+      labelsByKey.set(fn.key, fn.name);
     }
-    return [...functions].sort((a, b) => a.localeCompare(b));
-  }, [jobsInWindow]);
-
-  const filteredJobs = useMemo(() => {
-    return jobsInWindow.filter((job) => {
-      if (jobStatusFilter !== "all" && job.status !== jobStatusFilter) return false;
-      if (jobWorkerFilter !== "all" && (job.worker_id ?? "") !== jobWorkerFilter) return false;
-      if (jobFunctionFilter !== "all" && (job.function_name || job.function) !== jobFunctionFilter) return false;
-      return true;
-    });
-  }, [jobFunctionFilter, jobStatusFilter, jobWorkerFilter, jobsInWindow]);
-
-  const apiEventsInWindow = useMemo(() => {
-    const sorted = [...(apiEventsData?.events ?? [])].sort((a, b) => toTimestamp(b.at) - toTimestamp(a.at));
-    if (live) {
-      return sorted.slice(0, LIVE_LIST_LIMIT);
+    for (const job of jobs) {
+      if (job.function) {
+        labelsByKey.set(job.function, job.function_name || job.function);
+      }
     }
-    if (!bounds) {
-      return sorted;
-    }
-    return sorted.filter((event) => {
-      const at = toTimestamp(event.at);
-      return at >= bounds.from.getTime() && at <= bounds.to.getTime();
-    });
-  }, [apiEventsData?.events, bounds, live]);
+    return [...labelsByKey.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [functionsData?.functions, jobs]);
 
   const apiNameOptions = useMemo(() => {
-    return [...new Set(apiEventsInWindow.map((event) => event.api_name))].sort((a, b) =>
-      a.localeCompare(b)
-    );
-  }, [apiEventsInWindow]);
+    const names = new Set<string>();
+    for (const api of apisData?.apis ?? []) {
+      names.add(api.name);
+    }
+    for (const event of apiEvents) {
+      names.add(event.api_name);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [apiEvents, apisData?.apis]);
 
   const apiRouteOptions = useMemo(() => {
-    return [...new Set(apiEventsInWindow.map((event) => `${event.method} ${event.path}`))].sort((a, b) =>
+    return [...new Set(apiEvents.map((event) => `${event.method} ${event.path}`))].sort((a, b) =>
       a.localeCompare(b)
     );
-  }, [apiEventsInWindow]);
+  }, [apiEvents]);
 
   const apiStatusOptions = useMemo(() => {
-    return [...new Set(apiEventsInWindow.map((event) => String(event.status)))].sort((a, b) =>
+    return [...new Set(apiEvents.map((event) => String(event.status)))].sort((a, b) =>
       Number(a) - Number(b)
     );
-  }, [apiEventsInWindow]);
+  }, [apiEvents]);
 
   const apiInstanceOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const event of apiEventsInWindow) {
+    for (const event of apiEvents) {
       set.add(event.instance_id ?? "__none__");
     }
     return [...set].sort((a, b) => a.localeCompare(b));
-  }, [apiEventsInWindow]);
+  }, [apiEvents]);
 
-  const filteredApiRequestEvents = useMemo(() => {
-    return apiEventsInWindow.filter((event) => {
-      if (apiNameFilter !== "all" && event.api_name !== apiNameFilter) return false;
-      if (apiRouteFilter !== "all" && `${event.method} ${event.path}` !== apiRouteFilter) return false;
-      if (apiStatusFilter !== "all" && String(event.status) !== apiStatusFilter) return false;
-      if (apiInstanceFilter !== "all") {
-        if (apiInstanceFilter === "__none__") return !event.instance_id;
-        return event.instance_id === apiInstanceFilter;
-      }
-      return true;
-    });
-  }, [apiEventsInWindow, apiInstanceFilter, apiNameFilter, apiRouteFilter, apiStatusFilter]);
+  const isJobsLoading = live ? isLiveJobsLoading : isWindowJobsLoading;
+  const isApiLoading = live ? isLiveApiLoading : isWindowApiLoading;
 
   const jobsFilterControls = (
     <div className="flex items-center gap-1.5 flex-wrap justify-end">
@@ -264,14 +362,14 @@ export function LiveActivityPanel({
       </Select>
 
       <Select value={jobFunctionFilter} onValueChange={setJobFunctionFilter}>
-        <SelectTrigger size="sm" className="h-7 w-[160px] bg-muted border-input text-xs">
+        <SelectTrigger size="sm" className="h-7 w-[180px] bg-muted border-input text-xs">
           <SelectValue placeholder="Function" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All Functions</SelectItem>
-          {jobFunctionOptions.map((functionName) => (
-            <SelectItem key={functionName} value={functionName}>
-              {functionName}
+          {jobFunctionOptions.map((functionOption) => (
+            <SelectItem key={functionOption.value} value={functionOption.value}>
+              {functionOption.label}
             </SelectItem>
           ))}
         </SelectContent>
@@ -305,7 +403,7 @@ export function LiveActivityPanel({
       </Select>
 
       <Select value={apiRouteFilter} onValueChange={setApiRouteFilter}>
-        <SelectTrigger size="sm" className="h-7 w-[170px] bg-muted border-input text-xs">
+        <SelectTrigger size="sm" className="h-7 w-[190px] bg-muted border-input text-xs">
           <SelectValue placeholder="Route" />
         </SelectTrigger>
         <SelectContent>
@@ -358,27 +456,48 @@ export function LiveActivityPanel({
   );
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full min-h-0">
-      <Panel
-        title="Live Activity"
-        className={className ?? "flex-1 min-h-0 flex flex-col overflow-hidden"}
-        contentClassName="flex-1 min-h-0 overflow-hidden p-0"
-        titleCenter={
+    <Tabs
+      value={activeTab}
+      onValueChange={setActiveTab}
+      className={`${className ?? "h-full min-h-0 flex flex-col"} gap-3`}
+    >
+      <div className="shrink-0 space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           <TabsList variant="line" className="h-8">
-            <TabsTrigger value="jobs" className="text-xs">Jobs ({filteredJobs.length})</TabsTrigger>
+            <TabsTrigger value="jobs" className="text-xs">
+              {live ? `Jobs (Latest ${LIVE_LIST_LIMIT})` : `Jobs (${jobs.length}/${jobsTotal})`}
+            </TabsTrigger>
             <TabsTrigger value="api-requests" className="text-xs">
-              API Events ({filteredApiRequestEvents.length})
+              {live
+                ? `API Events (Latest ${LIVE_LIST_LIMIT})`
+                : `API Events (${apiEvents.length}/${apiEventsTotal})`}
             </TabsTrigger>
           </TabsList>
-        }
-        titleRight={activeTab === "jobs" ? jobsFilterControls : apiFilterControls}
-      >
-        <div className="border-b border-border" />
+          <div className="min-w-0 lg:flex-1">
+            {activeTab === "jobs" ? jobsFilterControls : apiFilterControls}
+          </div>
+        </div>
+      </div>
 
+      <Panel
+        className="flex-1 min-h-0 overflow-hidden"
+        contentClassName="h-full min-h-0 overflow-hidden p-0"
+      >
         <TabsContent value="jobs" className="h-full min-h-0 m-0">
           <JobsTable
-            jobs={filteredJobs}
+            jobs={jobs}
             isLoading={isJobsLoading}
+            hasMore={!live && Boolean(jobsHasNextPage)}
+            isFetchingMore={!live && isFetchingNextJobsPage}
+            onLoadMore={
+              live
+                ? undefined
+                : () => {
+                    if (jobsHasNextPage && !isFetchingNextJobsPage) {
+                      void fetchNextJobsPage();
+                    }
+                  }
+            }
             onJobClick={onJobClick}
             renderActions={(job) => (
               <div className="inline-flex items-center gap-1">
@@ -415,8 +534,19 @@ export function LiveActivityPanel({
 
         <TabsContent value="api-requests" className="h-full min-h-0 m-0">
           <ApiRequestsTable
-            events={filteredApiRequestEvents}
+            events={apiEvents}
             isLoading={isApiLoading}
+            hasMore={!live && Boolean(apiHasNextPage)}
+            isFetchingMore={!live && isFetchingNextApiEventsPage}
+            onLoadMore={
+              live
+                ? undefined
+                : () => {
+                    if (apiHasNextPage && !isFetchingNextApiEventsPage) {
+                      void fetchNextApiEventsPage();
+                    }
+                  }
+            }
             onApiClick={onApiClick}
             className="h-full"
             emptyDescription="No API events match your current filters."

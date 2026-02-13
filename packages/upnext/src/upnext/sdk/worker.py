@@ -462,7 +462,7 @@ class Worker:
         *,
         name: str | None = None,
         timeout: float = 30 * 60,  # 30 minutes
-        missed_run_policy: MissedRunPolicy = MissedRunPolicy.CATCH_UP,
+        missed_run_policy: MissedRunPolicy = MissedRunPolicy.LATEST_ONLY,
         max_catch_up_seconds: float | None = None,
     ) -> Callable[[F], F]:
         """

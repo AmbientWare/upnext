@@ -294,7 +294,7 @@ export function CombinedTrendsPanel({ className }: CombinedTrendsPanelProps) {
         )}
         titleRight={activeTab === "jobs" ? jobsControls : apisControls}
       >
-        <div className="border-b border-border" />
+        <div className="border-b border-input/60" />
 
         <TabsContent value="jobs" className="h-full min-h-0 m-0 p-3">
           <div className="h-full min-h-0">

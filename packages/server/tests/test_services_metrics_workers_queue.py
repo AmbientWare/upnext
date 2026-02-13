@@ -251,6 +251,16 @@ async def test_queue_service_reads_depth_from_stream_groups(
         count=2,
     )
 
+    now_ts = datetime.now(UTC).timestamp()
+    await redis_text_client.zadd(
+        "upnext:fn:fn.a:scheduled",
+        {"job-a-due": now_ts - 10, "job-a-future": now_ts + 30},
+    )
+    await redis_text_client.zadd(
+        "upnext:fn:fn.b:scheduled",
+        {"job-b-due": now_ts - 15, "job-b-future": now_ts + 45},
+    )
+
     async def fake_get_redis() -> FakeRedis:
         return redis_text_client
 
@@ -268,9 +278,12 @@ async def test_queue_service_reads_depth_from_stream_groups(
     stats = await queue_service_module.get_queue_depth_stats()
     assert stats.waiting == 3
     assert stats.claimed == 3
+    assert stats.scheduled_due == 2
+    assert stats.scheduled_future == 2
+    assert stats.backlog == 8
     assert stats.running == 3
     assert stats.capacity == 5
-    assert stats.total == 6
+    assert stats.total == 13
 
     function_stats = await queue_service_module.get_function_queue_depth_stats()
     assert function_stats["fn.a"].waiting == 2
@@ -310,6 +323,9 @@ async def test_queue_service_returns_zero_stats_when_redis_unavailable(
     stats = await queue_service_module.get_queue_depth_stats()
     assert stats.waiting == 0
     assert stats.claimed == 0
+    assert stats.scheduled_due == 0
+    assert stats.scheduled_future == 0
+    assert stats.backlog == 0
     assert stats.running == 0
     assert stats.capacity == 0
     assert stats.total == 0
@@ -510,6 +526,9 @@ async def test_queue_service_parsing_handles_malformed_payloads(monkeypatch) -> 
     queue_stats = await queue_service_module.get_queue_depth_stats()
     assert queue_stats.waiting == 0
     assert queue_stats.claimed == 0
+    assert queue_stats.scheduled_due == 0
+    assert queue_stats.scheduled_future == 0
+    assert queue_stats.backlog == 0
 
     function_stats = await queue_service_module.get_function_queue_depth_stats()
     assert function_stats["fn.bad"].waiting == 0
@@ -543,6 +562,9 @@ async def test_queue_service_parses_bytes_keyed_group_payloads(monkeypatch) -> N
     queue_stats = await queue_service_module.get_queue_depth_stats()
     assert queue_stats.waiting == 2
     assert queue_stats.claimed == 1
+    assert queue_stats.scheduled_due == 0
+    assert queue_stats.scheduled_future == 0
+    assert queue_stats.backlog == 3
 
     function_stats = await queue_service_module.get_function_queue_depth_stats()
     assert function_stats["fn.bytes"].waiting == 2

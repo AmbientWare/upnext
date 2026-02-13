@@ -13,7 +13,6 @@ import {
 import { QueueStatsPanel } from "./-components/queue-stats-panel";
 import { QueueStatsSkeleton, SystemOverviewSkeleton } from "./-components/skeletons";
 import { CombinedTrendsPanel } from "./-components/combined-trends-panel";
-import { LiveActivityPanel } from "./-components/live-activity-panel";
 import { RunbookPanels } from "./-components/runbook-panels";
 
 export const Route = createFileRoute("/dashboard/")({
@@ -59,8 +58,8 @@ function DataMatrixDashboard() {
   const isOverviewPending = isDashboardPending || isWorkersPending;
 
   return (
-    <div className="p-4 flex flex-col gap-3 h-full min-h-0 overflow-auto">
-      <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] items-stretch gap-3 shrink-0">
+    <div className="p-4 flex flex-col gap-3 h-full min-h-0 overflow-auto xl:overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] items-stretch gap-3 shrink-0">
         {/* Queue Stats */}
         {isOverviewPending ? (
           <QueueStatsSkeleton />
@@ -86,7 +85,7 @@ function DataMatrixDashboard() {
       </div>
 
       {/* Trends + Runbook */}
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)] gap-3 h-[360px] min-h-0 shrink-0">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)] gap-3 flex-1 min-h-[380px]">
         <CombinedTrendsPanel className="h-full" />
 
         <RunbookPanels
@@ -99,11 +98,6 @@ function DataMatrixDashboard() {
           onJobClick={(jobId) => navigate({ to: "/jobs/$jobId", params: { jobId } })}
         />
       </div>
-
-      <LiveActivityPanel
-        onJobClick={(job) => navigate({ to: "/jobs/$jobId", params: { jobId: job.id } })}
-        onApiClick={(apiName) => navigate({ to: "/apis/$name", params: { name: apiName } })}
-      />
     </div>
   );
 }

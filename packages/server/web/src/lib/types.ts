@@ -339,6 +339,7 @@ export interface ApiRequestEvent {
 export interface ApiRequestEventsResponse {
   events: ApiRequestEvent[];
   total: number;
+  has_more: boolean;
 }
 
 export interface ApiTrendHour {
@@ -391,6 +392,9 @@ export interface QueueStats {
   running: number;
   waiting: number;
   claimed: number;
+  scheduled_due: number;
+  scheduled_future: number;
+  backlog: number;
   capacity: number;
   total: number;
 }

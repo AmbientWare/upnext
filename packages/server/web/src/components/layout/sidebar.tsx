@@ -1,9 +1,10 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Code2, Server, Globe } from "lucide-react";
+import { Activity, LayoutDashboard, Code2, Server, Globe } from "lucide-react";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Activity", href: "/activity", icon: Activity },
   { label: "APIs", href: "/apis", icon: Globe },
   { label: "Workers", href: "/workers", icon: Server },
   { label: "Functions", href: "/functions", icon: Code2 },

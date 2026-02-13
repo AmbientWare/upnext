@@ -436,7 +436,8 @@ function upsertApiRequestEventList(
   const events = [nextEvent, ...old.events].slice(0, Math.max(maxEvents, 1));
   return {
     events,
-    total: events.length,
+    total: Math.max(old.total + 1, events.length),
+    has_more: old.has_more || old.total + 1 > events.length,
   };
 }
 

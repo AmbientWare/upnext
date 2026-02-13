@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getApis, queryKeys } from "@/lib/upnext-api";
 import { Search, X, Cloud } from "lucide-react";
-import { useAnimatedNumber } from "@/hooks/use-animated-number";
 import { ApisTableSkeleton } from "./-components/skeletons";
 import { ApisTable } from "./-components/apis-table";
 import {
@@ -49,25 +48,6 @@ function ApisPage() {
 
     return apis;
   }, [allApis, search, statusFilter]);
-
-  // Calculate totals
-  const totals = useMemo(() => {
-    return filteredApis.reduce(
-      (acc, api) => ({
-        requestsPerMin: acc.requestsPerMin + api.requests_per_min,
-        avgLatency: acc.avgLatency + api.avg_latency_ms,
-      }),
-      { requestsPerMin: 0, avgLatency: 0 }
-    );
-  }, [filteredApis]);
-
-  const avgLatency = filteredApis.length > 0 ? Math.round(totals.avgLatency / filteredApis.length) : 0;
-  const requestsPerMin = Math.round(totals.requestsPerMin);
-  const animatedRequestsValue = useAnimatedNumber(requestsPerMin);
-  const animatedLatency = useAnimatedNumber(avgLatency);
-  const animatedRequests = Number.isNaN(Number(animatedRequestsValue))
-    ? animatedRequestsValue
-    : Number(animatedRequestsValue).toLocaleString();
 
   const hasNonDefaultFilters = search || statusFilter !== STATUS_DEFAULT;
 
@@ -118,15 +98,6 @@ function ApisPage() {
 
           <span className="text-xs text-muted-foreground mono lg:text-right">
             {filteredApis.length} of {allApis.length} APIs
-          </span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-          <span className="text-muted-foreground">
-            Total: <span className="mono text-muted-foreground">{animatedRequests} req/min</span>
-          </span>
-          <span className="text-muted-foreground">
-            Avg Latency: <span className="mono text-muted-foreground">{animatedLatency}ms</span>
           </span>
         </div>
       </div>

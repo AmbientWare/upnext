@@ -395,6 +395,7 @@ describe("EventStreamProvider", () => {
       {
         events: [],
         total: 0,
+        has_more: false,
       }
     );
     client.setQueryData<WorkersListResponse>(queryKeys.workers, {
@@ -565,10 +566,12 @@ describe("EventStreamProvider", () => {
     client.setQueryData<ApiRequestEventsResponse>(liveApiEventsKey, {
       events: [],
       total: 0,
+      has_more: false,
     });
     client.setQueryData<ApiRequestEventsResponse>(windowApiEventsKey, {
       events: [],
       total: 0,
+      has_more: false,
     });
 
     renderWithQueryClient(client, (

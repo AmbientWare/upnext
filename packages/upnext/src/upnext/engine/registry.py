@@ -5,8 +5,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from shared.patterns import matches_event_pattern
 from shared.contracts.common import MissedRunPolicy
+from shared.patterns import matches_event_pattern
 
 from upnext.engine.queue.redis.rate_limit import parse_rate_limit
 
@@ -104,7 +104,7 @@ class CronDefinition:
     func: Callable[..., Any]
     is_async: bool
     timeout: float = 30 * 60  # 30 minutes
-    missed_run_policy: MissedRunPolicy = MissedRunPolicy.CATCH_UP
+    missed_run_policy: MissedRunPolicy = MissedRunPolicy.LATEST_ONLY
     max_catch_up_seconds: float | None = None
 
     def __post_init__(self) -> None:
@@ -315,7 +315,7 @@ class Registry:
         schedule: str,
         func: Callable[..., Any],
         timeout: float = 30 * 60,  # 30 minutes
-        missed_run_policy: MissedRunPolicy = MissedRunPolicy.CATCH_UP,
+        missed_run_policy: MissedRunPolicy = MissedRunPolicy.LATEST_ONLY,
         max_catch_up_seconds: float | None = None,
     ) -> CronDefinition:
         """Register a cron job."""

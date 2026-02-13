@@ -88,6 +88,7 @@ class ApiRequestEventsResponse(BaseModel):
 
     events: list[ApiRequestEvent]
     total: int
+    has_more: bool = False
 
 
 class ApiOverview(BaseModel):

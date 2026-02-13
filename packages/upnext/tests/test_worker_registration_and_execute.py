@@ -132,6 +132,16 @@ async def test_worker_writes_cron_policy_fields(fake_redis, monkeypatch) -> None
         await worker.stop(timeout=0.1)
 
 
+def test_worker_cron_default_policy_is_latest_only() -> None:
+    worker = Worker(name="cron-default-policy")
+
+    @worker.cron("* * * * *", name="default_tick")
+    async def default_tick() -> None:
+        return None
+
+    assert worker.crons[0].missed_run_policy == MissedRunPolicy.LATEST_ONLY
+
+
 def test_worker_profile_defaults_shape_queue_tuning(fake_redis, monkeypatch) -> None:
     monkeypatch.setattr(
         "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis

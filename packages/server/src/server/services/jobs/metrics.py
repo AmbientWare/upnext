@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -78,6 +79,9 @@ class QueueDepthStats:
     running: int
     waiting: int
     claimed: int
+    scheduled_due: int
+    scheduled_future: int
+    backlog: int
     capacity: int
     total: int
 
@@ -215,9 +219,12 @@ async def get_queue_depth_stats() -> QueueDepthStats:
 
     - waiting: sum of stream consumer-group lag (not yet claimed)
     - claimed: sum of consumer-group pending (claimed, not acked)
+    - scheduled_due: sum of scheduled jobs due now/past in ZSETs
+    - scheduled_future: sum of scheduled jobs due in the future in ZSETs
+    - backlog: waiting + claimed + scheduled_due
     - running: sum of worker heartbeat active_jobs (currently executing)
     - capacity: sum of worker heartbeat concurrency
-    - total: running + waiting
+    - total: running + backlog + scheduled_future
     """
     try:
         r = await get_redis()
@@ -239,6 +246,23 @@ async def get_queue_depth_stats() -> QueueDepthStats:
                 claimed += group.pending
                 break
 
+        scheduled_due = 0
+        scheduled_future = 0
+        now_score = str(time.time())
+        future_min = f"({now_score}"
+        async for scheduled_key in r.scan_iter(
+            match=function_scheduled_pattern(),
+            count=100,
+        ):
+            try:
+                scheduled_due += int(await r.zcount(scheduled_key, "-inf", now_score))
+                scheduled_future += int(
+                    await r.zcount(scheduled_key, future_min, "+inf")
+                )
+            except Exception:
+                continue
+
+        backlog = waiting + claimed + scheduled_due
         running = 0
         capacity = 0
         async for worker_key in r.scan_iter(match=worker_instance_pattern(), count=100):
@@ -252,12 +276,24 @@ async def get_queue_depth_stats() -> QueueDepthStats:
             running=running,
             waiting=waiting,
             claimed=claimed,
+            scheduled_due=scheduled_due,
+            scheduled_future=scheduled_future,
+            backlog=backlog,
             capacity=capacity,
-            total=running + waiting,
+            total=running + backlog + scheduled_future,
         )
     except Exception as e:
         logger.debug("Could not get queue depth stats: %s", e)
-        return QueueDepthStats(running=0, waiting=0, claimed=0, capacity=0, total=0)
+        return QueueDepthStats(
+            running=0,
+            waiting=0,
+            claimed=0,
+            scheduled_due=0,
+            scheduled_future=0,
+            backlog=0,
+            capacity=0,
+            total=0,
+        )
 
 
 def _function_from_stream_key(stream_key: str) -> str | None:

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode, type UIEvent } from "react";
 import { Inbox } from "lucide-react";
 import { cn, formatDateTime, formatDuration, formatTimeAgo } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
@@ -22,8 +22,13 @@ export interface JobsTableProps {
   isLoading?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
+  hasMore?: boolean;
+  isFetchingMore?: boolean;
+  onLoadMore?: () => void;
   className?: string;
 }
+
+const SCROLL_THRESHOLD_PX = 120;
 
 function JobsTableSkeleton({
   hideFunction,
@@ -106,8 +111,48 @@ export function JobsTable({
   isLoading = false,
   emptyTitle = "No jobs yet",
   emptyDescription = "Jobs will show up here as workers report progress.",
+  hasMore = false,
+  isFetchingMore = false,
+  onLoadMore,
   className,
 }: JobsTableProps) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRowRef = useRef<HTMLTableRowElement | null>(null);
+
+  const maybeLoadMore = () => {
+    if (!onLoadMore || !hasMore || isFetchingMore) return;
+    onLoadMore();
+  };
+
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget;
+    const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (distanceToBottom <= SCROLL_THRESHOLD_PX) {
+      maybeLoadMore();
+    }
+  };
+
+  useEffect(() => {
+    if (!hasMore || !onLoadMore || !loadMoreRowRef.current) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry?.isIntersecting) {
+          maybeLoadMore();
+        }
+      },
+      {
+        root: scrollContainerRef.current,
+        rootMargin: "0px 0px 200px 0px",
+        threshold: 0.01,
+      }
+    );
+
+    observer.observe(loadMoreRowRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, isFetchingMore, onLoadMore]);
+
   return (
     <div className={cn("flex flex-col h-full overflow-hidden", className)}>
       {isLoading ? (
@@ -123,7 +168,7 @@ export function JobsTable({
           <div className="text-xs text-muted-foreground/80">{emptyDescription}</div>
         </div>
       ) : (
-        <div className="flex-1 overflow-auto">
+        <div ref={scrollContainerRef} className="flex-1 overflow-auto" onScroll={handleScroll}>
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="text-[10px] text-muted-foreground uppercase tracking-wider border-input hover:bg-transparent">
@@ -198,6 +243,16 @@ export function JobsTable({
                   </TableRow>
                 );
               })}
+              {(isFetchingMore || hasMore) ? (
+                <TableRow ref={loadMoreRowRef} className="border-border hover:bg-transparent">
+                  <TableCell
+                    colSpan={renderActions ? (hideFunction ? 9 : 10) : (hideFunction ? 8 : 9)}
+                    className="py-2 text-center text-[11px] text-muted-foreground"
+                  >
+                    {isFetchingMore ? "Loading more..." : "Scroll to load more"}
+                  </TableCell>
+                </TableRow>
+              ) : null}
             </TableBody>
           </Table>
         </div>

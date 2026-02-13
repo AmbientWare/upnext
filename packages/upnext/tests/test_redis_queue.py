@@ -637,7 +637,7 @@ async def test_reschedule_cron_reclaims_stale_window_reservation(
 
 
 @pytest.mark.asyncio
-async def test_cron_startup_reconciliation_enqueues_catchup_when_cursor_is_stale(
+async def test_cron_startup_reconciliation_defaults_to_latest_only_when_cursor_is_stale(
     queue: RedisQueue,
 ) -> None:
     now = time.time()
@@ -688,10 +688,10 @@ async def test_cron_startup_reconciliation_enqueues_catchup_when_cursor_is_stale
         else reconciled_job_raw
     )
     assert reconciled_job.startup_reconciled is True
-    assert reconciled_job.startup_policy == "catch_up"
+    assert reconciled_job.startup_policy == "latest_only"
     reconciled_window = float(reconciled_job.cron_window_at or 0.0)
     assert reconciled_window <= now
-    assert reconciled_window >= stale_next_run - 0.001
+    assert reconciled_window > stale_next_run + 60
 
     cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.reconcile")  # noqa: SLF001
     assert cursor_raw is not None

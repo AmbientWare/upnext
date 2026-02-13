@@ -17,6 +17,11 @@ from shared.keys import API_REQUESTS_STREAM
 from server.config import get_settings
 from server.routes.apis.apis_root import get_api, get_api_trends, list_apis
 from server.routes.apis.apis_utils import parse_api_request_event
+from server.services.apis.request_events import (
+    iter_api_request_rows,
+    stream_id_ceil,
+    stream_id_floor,
+)
 from server.services.redis import get_redis
 
 api_stream_router = APIRouter(tags=["apis"])
@@ -94,38 +99,81 @@ async def stream_api_trends(
 @api_stream_router.get("/events", response_model=ApiRequestEventsResponse)
 async def list_api_request_events(
     api_name: str | None = Query(None, description="Optional API name filter"),
+    method: str | None = Query(None, description="Optional HTTP method filter"),
+    path: str | None = Query(None, description="Optional API path filter"),
+    status: int | None = Query(None, description="Optional status code filter"),
+    instance_id: str | None = Query(None, description="Optional instance filter"),
+    after: datetime | None = Query(None, description="Filter by event time after"),
+    before: datetime | None = Query(None, description="Filter by event time before"),
     limit: int | None = Query(
         None,
         ge=1,
         le=2000,
         description="Maximum number of recent request events",
     ),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
 ) -> ApiRequestEventsResponse:
     """List recent API request events from the Redis request stream."""
     api_name_filter = api_name if isinstance(api_name, str) and api_name else None
+    method_filter = method.upper() if isinstance(method, str) and method else None
+    path_filter = path if isinstance(path, str) and path else None
+    status_filter = status if isinstance(status, int) else None
+    instance_filter = (
+        instance_id if isinstance(instance_id, str) and instance_id else None
+    )
+    after_filter = after if isinstance(after, datetime) else None
+    before_filter = before if isinstance(before, datetime) else None
     limit_value = limit if isinstance(limit, int) else None
+    offset_value = offset if isinstance(offset, int) else 0
     try:
         redis_client = await get_redis()
     except RuntimeError:
-        return ApiRequestEventsResponse(events=[], total=0)
+        return ApiRequestEventsResponse(events=[], total=0, has_more=False)
 
     default_limit = max(get_settings().api_request_events_default_limit, 1)
     effective_limit = min(max(limit_value or default_limit, 1), 2000)
-    read_count = min(max(effective_limit * 4, effective_limit), 5000)
+    effective_offset = max(offset_value, 0)
+    read_count = min(max(effective_limit * 4, 500), 5000)
+    max_id = stream_id_ceil(before_filter) if before_filter is not None else "+"
+    min_id = stream_id_floor(after_filter) if after_filter is not None else "-"
 
-    rows = await redis_client.xrevrange(API_REQUESTS_STREAM, count=read_count)
     events: list[ApiRequestEvent] = []
-    for event_id, row in rows:
-        parsed = parse_api_request_event(str(event_id), row)
+    total_matching = 0
+
+    async for event_id, row in iter_api_request_rows(
+        redis_client,
+        max_id=max_id,
+        min_id=min_id,
+        count=read_count,
+    ):
+        parsed = parse_api_request_event(event_id, row)
         if parsed is None:
             continue
         if api_name_filter and parsed.api_name != api_name_filter:
             continue
-        events.append(parsed)
-        if len(events) >= effective_limit:
-            break
+        if method_filter and parsed.method != method_filter:
+            continue
+        if path_filter and parsed.path != path_filter:
+            continue
+        if status_filter is not None and parsed.status != status_filter:
+            continue
+        if instance_filter:
+            if instance_filter == "__none__":
+                if parsed.instance_id:
+                    continue
+            elif parsed.instance_id != instance_filter:
+                continue
 
-    return ApiRequestEventsResponse(events=events, total=len(events))
+        total_matching += 1
+        if total_matching <= effective_offset:
+            continue
+        if len(events) < effective_limit:
+            events.append(parsed)
+
+    has_more = (effective_offset + len(events)) < total_matching
+    return ApiRequestEventsResponse(
+        events=events, total=total_matching, has_more=has_more
+    )
 
 
 @api_stream_router.get("/events/stream")

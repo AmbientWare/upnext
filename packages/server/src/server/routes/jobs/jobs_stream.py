@@ -74,12 +74,12 @@ async def stream_job_trends(
     request: Request,
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     function: str | None = Query(None, description="Filter by function key"),
-    func_type: FunctionType | None = Query(None, description="Filter by function type"),
+    type: FunctionType | None = Query(None, description="Filter by function type"),
 ) -> StreamingResponse:
     """Stream realtime job trends snapshots via Server-Sent Events (SSE)."""
     hours_window = hours if isinstance(hours, int) else 24
     function_filter = function if isinstance(function, str) and function else None
-    func_type_filter = func_type if isinstance(func_type, FunctionType) else None
+    func_type_filter = type if isinstance(type, FunctionType) else None
     try:
         redis_client = await get_redis()
     except RuntimeError as e:

@@ -1,14 +1,14 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
 import { getApi, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { ApiEndpoint, ApiSnapshotEvent } from "@/lib/types";
-import { MetricTile, Panel } from "@/components/shared";
-import { cn, formatNumber } from "@/lib/utils";
+import { BackLink, DetailPageLayout, MetricPill, StatusDot, TypeBadge } from "@/components/shared";
+import { formatNumber } from "@/lib/utils";
 
 import { ApiLiveRequestsPanel } from "./-components/api-live-requests-panel";
 import { RouteTreePanel, type RouteNode } from "./-components/route-tree-panel";
@@ -128,52 +128,73 @@ function ApiDetailPage() {
   const api = data.api;
 
   return (
-    <div className="p-4 h-full overflow-auto xl:overflow-hidden flex flex-col gap-4">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-wrap">
-          <Link to="/apis" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Back to APIs
-          </Link>
-          <span className="text-muted-foreground/60">/</span>
-          <h2 className="text-lg font-semibold text-foreground truncate">{api.name}</h2>
-          <span className={cn("w-2 h-2 rounded-full", api.active ? "bg-emerald-400" : "bg-muted-foreground/50")} />
+    <DetailPageLayout>
+      {/* ─── Header (compact) ─── */}
+      <div className="shrink-0 space-y-1.5">
+        <BackLink to="/apis" label="APIs" />
+
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <StatusDot active={api.active} />
+            <h2 className="mono text-lg font-semibold text-foreground truncate">{api.name}</h2>
+            <TypeBadge label="API" color="emerald" />
+            {!api.active && (
+              <span className="text-[10px] text-muted-foreground/60 uppercase">Inactive</span>
+            )}
+            {api.docs_url ? (
+              <a
+                href={api.docs_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border border-input text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              >
+                Docs
+                <ExternalLink className="w-2.5 h-2.5" />
+              </a>
+            ) : null}
+          </div>
         </div>
 
-        {api.docs_url ? (
-          <a
-            href={api.docs_url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex w-fit items-center gap-1 text-xs px-2.5 py-1.5 rounded border border-input text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            Open FastAPI Docs
-            <ExternalLink className="w-3 h-3" />
-          </a>
-        ) : null}
-      </div>
-
-      <Panel title="API Overview" className="shrink-0" contentClassName="p-3 sm:p-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2.5">
-          <MetricTile label="Requests (24h)" value={formatNumber(api.requests_24h)} />
-          <MetricTile label="Req / Min" value={api.requests_per_min.toFixed(1)} />
-          <MetricTile label="Avg Latency" value={`${Math.round(api.avg_latency_ms)}ms`} />
-          <MetricTile label="Success Rate" value={`${api.success_rate.toFixed(1)}%`} tone="text-emerald-400" />
-          <MetricTile label="Error Rate" value={`${api.error_rate.toFixed(1)}%`} tone="text-red-400" />
-          <MetricTile label="4xx Rate" value={`${api.client_error_rate.toFixed(1)}%`} tone="text-amber-400" />
-          <MetricTile label="5xx Rate" value={`${api.server_error_rate.toFixed(1)}%`} tone="text-red-400" />
-          <MetricTile label="Endpoints / Instances" value={`${api.endpoint_count} / ${api.instance_count}`} />
+        {/* Metrics strip */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <MetricPill label="Req 24h" value={formatNumber(api.requests_24h)} />
+          <MetricPill label="Req/min" value={api.requests_per_min.toFixed(1)} />
+          <MetricPill label="Avg Latency" value={`${Math.round(api.avg_latency_ms)}ms`} />
+          <MetricPill
+            label="Success"
+            value={`${api.success_rate.toFixed(1)}%`}
+            tone={
+              api.success_rate >= 99
+                ? "text-emerald-400"
+                : api.success_rate >= 95
+                  ? "text-amber-400"
+                  : "text-red-400"
+            }
+          />
+          <MetricPill
+            label="4xx"
+            value={`${api.client_error_rate.toFixed(1)}%`}
+            tone={api.client_error_rate > 5 ? "text-amber-400" : undefined}
+          />
+          <MetricPill
+            label="5xx"
+            value={`${api.server_error_rate.toFixed(1)}%`}
+            tone={api.server_error_rate > 1 ? "text-red-400" : undefined}
+          />
+          <MetricPill label="Endpoints" value={String(api.endpoint_count)} />
+          <MetricPill label="Instances" value={String(api.instance_count)} />
         </div>
-      </Panel>
-
-      <div className="flex flex-col gap-3 flex-1 min-h-0">
-        <RouteTreePanel
-          totalEndpoints={data.total_endpoints}
-          routeTree={tree}
-          className="h-[40%] min-h-[260px]"
-        />
-        <ApiLiveRequestsPanel apiName={api.name} className="flex-1 min-h-[260px] flex flex-col overflow-hidden" />
       </div>
-    </div>
+
+      {/* ─── Route Tree ─── */}
+      <RouteTreePanel
+        totalEndpoints={data.total_endpoints}
+        routeTree={tree}
+        className="shrink-0 max-h-[40%]"
+      />
+
+      {/* ─── Live Requests ─── */}
+      <ApiLiveRequestsPanel apiName={api.name} className="flex-1 min-h-0 flex flex-col overflow-hidden" />
+    </DetailPageLayout>
   );
 }

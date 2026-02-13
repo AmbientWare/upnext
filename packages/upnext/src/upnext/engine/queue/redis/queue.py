@@ -2227,7 +2227,7 @@ class RedisQueue(BaseQueue):
     ) -> tuple[MissedRunPolicy, float | None]:
         config = await self._read_function_config(function)
         if config is None:
-            return (MissedRunPolicy.CATCH_UP, None)
+            return (MissedRunPolicy.LATEST_ONLY, None)
         max_window = config.max_catch_up_seconds
         if max_window is not None and max_window <= 0:
             logger.warning(
@@ -2237,7 +2237,7 @@ class RedisQueue(BaseQueue):
             )
             max_window = None
         return (
-            config.missed_run_policy or MissedRunPolicy.CATCH_UP,
+            config.missed_run_policy or MissedRunPolicy.LATEST_ONLY,
             max_window,
         )
 

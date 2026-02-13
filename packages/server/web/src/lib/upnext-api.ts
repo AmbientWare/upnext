@@ -295,7 +295,14 @@ export async function getApi(name: string): Promise<ApiPageResponse> {
 
 export interface GetApiRequestEventsParams {
   api_name?: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path?: string;
+  status?: number;
+  instance_id?: string;
+  after?: string;
+  before?: string;
   limit?: number;
+  offset?: number;
 }
 
 export async function getApiRequestEvents(
@@ -303,7 +310,14 @@ export async function getApiRequestEvents(
 ): Promise<ApiRequestEventsResponse> {
   const searchParams = new URLSearchParams();
   if (params.api_name) searchParams.set("api_name", params.api_name);
+  if (params.method) searchParams.set("method", params.method);
+  if (params.path) searchParams.set("path", params.path);
+  if (params.status !== undefined) searchParams.set("status", String(params.status));
+  if (params.instance_id) searchParams.set("instance_id", params.instance_id);
+  if (params.after) searchParams.set("after", params.after);
+  if (params.before) searchParams.set("before", params.before);
   if (params.limit !== undefined) searchParams.set("limit", String(params.limit));
+  if (params.offset !== undefined) searchParams.set("offset", String(params.offset));
 
   const query = searchParams.toString();
   const response = await apiFetch(`${API_BASE}/apis/events${query ? `?${query}` : ""}`);

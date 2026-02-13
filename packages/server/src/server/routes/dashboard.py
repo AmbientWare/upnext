@@ -66,6 +66,9 @@ async def get_dashboard_stats(
         running=queue_depth.running,
         waiting=queue_depth.waiting,
         claimed=queue_depth.claimed,
+        scheduled_due=queue_depth.scheduled_due,
+        scheduled_future=queue_depth.scheduled_future,
+        backlog=queue_depth.backlog,
         capacity=queue_depth.capacity,
         total=queue_depth.total,
     )

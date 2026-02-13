@@ -21,6 +21,9 @@ class QueueStats(BaseModel):
     running: int
     waiting: int
     claimed: int
+    scheduled_due: int = 0
+    scheduled_future: int = 0
+    backlog: int = 0
     capacity: int
     total: int
 

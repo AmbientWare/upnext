@@ -812,8 +812,11 @@ async def test_dashboard_returns_defaults_when_database_unavailable(
         running = 3
         waiting = 0
         claimed = 3
+        scheduled_due = 0
+        scheduled_future = 0
+        backlog = 3
         capacity = 10
-        total = 3
+        total = 6
 
     async def fake_queue_depth() -> _QueueDepth:
         return _QueueDepth()
@@ -847,8 +850,11 @@ async def test_dashboard_returns_defaults_when_database_unavailable(
     assert out.queue.running == 3
     assert out.queue.waiting == 0
     assert out.queue.claimed == 3
+    assert out.queue.scheduled_due == 0
+    assert out.queue.scheduled_future == 0
+    assert out.queue.backlog == 3
     assert out.queue.capacity == 10
-    assert out.queue.total == 3
+    assert out.queue.total == 6
     assert out.recent_runs == []
 
 
@@ -884,8 +890,11 @@ async def test_dashboard_includes_queue_depth_when_database_available(
         running = 4
         waiting = 1
         claimed = 5
+        scheduled_due = 2
+        scheduled_future = 1
+        backlog = 8
         capacity = 8
-        total = 5
+        total = 13
 
     async def fake_queue_depth() -> _QueueDepth:
         return _QueueDepth()
@@ -916,8 +925,11 @@ async def test_dashboard_includes_queue_depth_when_database_available(
     assert out.queue.running == 4
     assert out.queue.waiting == 1
     assert out.queue.claimed == 5
+    assert out.queue.scheduled_due == 2
+    assert out.queue.scheduled_future == 1
+    assert out.queue.backlog == 8
     assert out.queue.capacity == 8
-    assert out.queue.total == 5
+    assert out.queue.total == 13
 
 
 @pytest.mark.asyncio
@@ -929,8 +941,11 @@ async def test_dashboard_window_stats_use_requested_minutes(monkeypatch) -> None
         running = 1
         waiting = 0
         claimed = 1
+        scheduled_due = 0
+        scheduled_future = 0
+        backlog = 1
         capacity = 10
-        total = 1
+        total = 2
 
     async def fake_queue_depth() -> _QueueDepth:
         return _QueueDepth()
@@ -1031,8 +1046,11 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
         running = 1
         waiting = 2
         claimed = 0
+        scheduled_due = 1
+        scheduled_future = 4
+        backlog = 3
         capacity = 4
-        total = 3
+        total = 8
 
     class _Settings:
         dashboard_top_failing_limit = 5

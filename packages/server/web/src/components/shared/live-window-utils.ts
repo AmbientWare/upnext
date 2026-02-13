@@ -9,18 +9,6 @@ interface TimeWindowBounds {
   to: Date;
 }
 
-function normalizeToDayStart(date: Date): Date {
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-  return normalized;
-}
-
-function normalizeToDayEnd(date: Date): Date {
-  const normalized = new Date(date);
-  normalized.setHours(23, 59, 59, 999);
-  return normalized;
-}
-
 export function getTimeWindowBounds(
   preset: TimeWindowPreset,
   dateRange: DateRange | undefined
@@ -45,14 +33,21 @@ export function getTimeWindowBounds(
     return null;
   }
 
-  const from = normalizeToDayStart(dateRange.from);
-  const to = normalizeToDayEnd(dateRange.to ? dateRange.to : dateRange.from);
-
+  const from = new Date(dateRange.from);
+  const to = new Date(dateRange.to ? dateRange.to : dateRange.from);
+  if (to.getTime() < from.getTime()) {
+    return { from: to, to: from };
+  }
   return { from, to };
 }
 
-function formatDateShort(date: Date): string {
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+function formatDateTimeShort(date: Date): string {
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export function formatTimeWindowLabel(
@@ -65,9 +60,7 @@ export function formatTimeWindowLabel(
   if (preset === "24h") return "24h";
   if (!dateRange?.from) return "Custom";
 
-  if (!dateRange.to) {
-    return formatDateShort(dateRange.from);
-  }
-
-  return `${formatDateShort(dateRange.from)} - ${formatDateShort(dateRange.to)}`;
+  const fromLabel = formatDateTimeShort(dateRange.from);
+  const toLabel = formatDateTimeShort(dateRange.to ? dateRange.to : dateRange.from);
+  return `${fromLabel} - ${toLabel}`;
 }
