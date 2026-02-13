@@ -9,15 +9,15 @@ from typing import Any, cast
 import pytest
 import upnext
 from fastapi import APIRouter
-from shared.api import API_INSTANCE_PREFIX
-from shared.models import Job, JobStatus
-from upnext.config import get_settings
+from shared.domain.jobs import Job, JobStatus
+from shared.keys.api import API_INSTANCE_PREFIX
+from upnext.config import ThroughputMode, get_settings
 from upnext.engine import cron as cron_module
 from upnext.engine.cron import calculate_next_cron_run, calculate_next_cron_timestamp
 from upnext.engine.event_router import Event, get_event_router
 from upnext.engine.queue.base import BaseQueue
 from upnext.sdk.api import Api
-from upnext.sdk.task import Future
+from upnext.sdk.task import Future, TaskExecutionError
 from upnext.sdk.worker import Worker
 
 
@@ -26,10 +26,11 @@ class _FutureQueue:
     job: Job | None = None
     timeout_calls: list[float | None] = field(default_factory=list)
     cancelled_job_id: str | None = None
+    terminal_status: str = JobStatus.COMPLETE.value
 
     async def subscribe_job(self, job_id: str, timeout: float | None = None) -> str:
         self.timeout_calls.append(timeout)
-        return JobStatus.COMPLETE.value
+        return self.terminal_status
 
     async def get_job(self, job_id: str) -> Job | None:
         return self.job
@@ -97,6 +98,25 @@ async def test_future_result_raises_when_completed_job_is_missing() -> None:
         await future.result(timeout=1)
 
 
+@pytest.mark.asyncio
+async def test_future_result_raises_task_execution_error_for_failed_job() -> None:
+    failed_job = Job(
+        id="job-failed-1",
+        function="task-key",
+        function_name="task-name",
+        status=JobStatus.FAILED,
+        error="boom",
+        root_id="job-failed-1",
+    )
+    queue = _FutureQueue(job=failed_job, terminal_status=JobStatus.FAILED.value)
+    future = Future[int](failed_job.id, queue=cast(BaseQueue, queue))
+
+    with pytest.raises(TaskExecutionError, match="boom") as exc:
+        await future.result(timeout=1)
+    assert exc.value.job_id == failed_job.id
+    assert exc.value.status == JobStatus.FAILED.value
+
+
 def test_settings_environment_flags_and_cache(monkeypatch) -> None:
     get_settings.cache_clear()
     monkeypatch.setenv("UPNEXT_ENV", "production")
@@ -111,6 +131,29 @@ def test_settings_environment_flags_and_cache(monkeypatch) -> None:
     development = get_settings()
     assert development.is_production is False
     assert development.is_development is True
+    get_settings.cache_clear()
+
+
+def test_settings_runtime_profile_defaults(monkeypatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.delenv("UPNEXT_QUEUE_RUNTIME_PROFILE", raising=False)
+    settings = get_settings()
+    assert settings.queue_runtime_profile == ThroughputMode.SAFE
+    assert settings.default_worker_prefetch(concurrency=32) == 1
+    assert settings.default_queue_batch_size() == 100
+    assert settings.default_queue_inbox_size(prefetch=1) == 1000
+    assert settings.default_queue_flush_interval_seconds() == 0.005
+    assert settings.default_queue_stream_maxlen() == 0
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_QUEUE_RUNTIME_PROFILE", ThroughputMode.THROUGHPUT.value)
+    throughput = get_settings()
+    assert throughput.queue_runtime_profile == ThroughputMode.THROUGHPUT
+    assert throughput.default_worker_prefetch(concurrency=32) == 32
+    assert throughput.default_queue_batch_size() == 200
+    assert throughput.default_queue_inbox_size(prefetch=32) == 2000
+    assert throughput.default_queue_flush_interval_seconds() == 0.02
+    assert throughput.default_queue_stream_maxlen() == 200_000
     get_settings.cache_clear()
 
 

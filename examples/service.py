@@ -355,7 +355,7 @@ async def timeline_demo_cron():
     cron_artifact = {
         "run_label": run_label,
         "status": result.status,
-        "flow_job_id": result.job_id,
+        "job_id": result.job_id,
         "saved_at": datetime.now().isoformat(),
     }
     await upnext.create_artifact(
@@ -363,7 +363,7 @@ async def timeline_demo_cron():
         data=cron_artifact,
     )
     logger.info(
-        "Timeline demo finished: status=%s root_child_job=%s",
+        "Timeline demo finished: status=%s job_id=%s",
         result.status,
         result.job_id,
     )

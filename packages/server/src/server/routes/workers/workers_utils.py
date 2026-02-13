@@ -1,8 +1,11 @@
 from collections.abc import Mapping
 
-from server.routes._shared import get_stream_json_object, get_stream_text_field
+from pydantic import ValidationError
+from shared.contracts import WorkerSignalStreamEvent
 
-WORKER_SIGNAL_TYPES = frozenset(
+from server.shared_utils import get_stream_json_object, get_stream_text_field
+
+STREAMABLE_WORKER_EVENTS = frozenset(
     {
         "worker.heartbeat",
         "worker.definition.updated",
@@ -13,9 +16,16 @@ WORKER_SIGNAL_TYPES = frozenset(
 
 def parse_worker_signal_type(data: Mapping[str | bytes, object]) -> str | None:
     payload = get_stream_json_object(data)
-    if payload:
-        signal_type = payload.get("type")
-        if isinstance(signal_type, str) and signal_type:
-            return signal_type
+    if payload is not None:
+        try:
+            return WorkerSignalStreamEvent.model_validate(payload).type
+        except ValidationError:
+            return None
 
-    return get_stream_text_field(data, "type")
+    signal_type = get_stream_text_field(data, "type")
+    if not signal_type:
+        return None
+    try:
+        return WorkerSignalStreamEvent.model_validate({"type": signal_type}).type
+    except ValidationError:
+        return None

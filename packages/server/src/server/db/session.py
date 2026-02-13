@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from server.db.models import Base
+from server.db.tables import Base
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

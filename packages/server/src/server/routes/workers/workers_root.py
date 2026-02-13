@@ -3,13 +3,9 @@
 import logging
 
 from fastapi import APIRouter, HTTPException
-from shared.schemas import (
-    WorkerInfo,
-    WorkerInstance,
-    WorkersListResponse,
-)
+from shared.contracts import WorkerInfo, WorkerInstance, WorkersListResponse
 
-from server.services.workers import (
+from server.services.registry import (
     get_worker_definitions,
     get_worker_instance,
     list_worker_instances,

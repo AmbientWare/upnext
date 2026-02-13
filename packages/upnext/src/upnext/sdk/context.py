@@ -1,10 +1,18 @@
 import logging
+import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Self
 
-from shared.models import Job
+from shared.domain import Job
+
+from upnext.types import (
+    CheckpointCommand,
+    CommandQueueLike,
+    ProgressCommand,
+    SendLogCommand,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +22,7 @@ class Context:
     """
     Execution context passed to every job handler.
 
-    Provides access to job metadata and methods for progress tracking,
+    Provides methods for progress tracking,
     heartbeats, checkpointing, and event emission.
 
     Example:
@@ -51,8 +59,11 @@ class Context:
     function_name: str = ""
 
     # internal
-    _metadata: dict[str, Any] = field(default_factory=dict)
-    _cmd_queue: Any = field(default=None, repr=False)
+    _cmd_queue: CommandQueueLike | None = field(default=None, repr=False)
+    _cancelled: bool = field(default=False, repr=False)
+    _last_progress: float | None = field(default=None, repr=False)
+    _last_progress_at: float = field(default=0.0, repr=False)
+    _last_progress_message: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_job(cls, job: Job) -> Self:
@@ -79,8 +90,6 @@ class Context:
         else:
             root_id = job.id
 
-        metadata = dict(job.metadata)
-
         return cls(
             job_id=job.id,
             job_key=job.key,
@@ -92,13 +101,17 @@ class Context:
             timeout=job.timeout,
             function=job.function,
             function_name=job.function_name,
-            _metadata=metadata,
         )
 
     @property
     def log(self) -> logging.Logger:
         """Get logger for this job (recreated lazily, not stored — keeps Context picklable)."""
         return logging.getLogger(f"upnext.job.{self.job_id}")
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Best-effort cooperative cancellation flag for user code."""
+        return self._cancelled
 
     def set_progress(self, progress: float, message: str | None = None) -> None:
         """
@@ -122,35 +135,30 @@ class Context:
             )
 
         if self._cmd_queue is not None:
-            self._cmd_queue.put(("set_progress", self.job_id, progress, message))
+            # Coalesce noisy progress updates before they hit queue/Redis/DB paths.
+            now = time.monotonic()
+            min_delta = 0.01
+            min_interval_seconds = 0.2
+            is_terminal_progress = progress >= 1.0
+            changed_message = message != self._last_progress_message
+            changed_progress = (
+                self._last_progress is None
+                or abs(progress - self._last_progress) >= min_delta
+            )
+            interval_elapsed = (now - self._last_progress_at) >= min_interval_seconds
+            if not (
+                is_terminal_progress
+                or changed_message
+                or changed_progress
+                or interval_elapsed
+            ):
+                return
 
-    def set_metadata(self, key: str, value: Any) -> None:
-        """
-        Store arbitrary metadata with the job.
-
-        Metadata is persisted and visible in the dashboard.
-        Sync-safe: works in async, threaded, and process-pool tasks.
-
-        Args:
-            key: Metadata key
-            value: Metadata value (must be JSON-serializable)
-        """
-        self._metadata[key] = value
-        if self._cmd_queue is not None:
-            self._cmd_queue.put(("set_metadata", self.job_id, key, value))
-
-    def get_metadata(self, key: str, default: Any = None) -> Any:
-        """
-        Retrieve metadata from local cache.
-
-        Args:
-            key: Metadata key
-            default: Default value if key not found
-
-        Returns:
-            Metadata value or default
-        """
-        return self._metadata.get(key, default)
+            self._last_progress = progress
+            self._last_progress_at = now
+            self._last_progress_message = message
+            cmd: ProgressCommand = ("set_progress", self.job_id, progress, message)
+            self._cmd_queue.put(cmd)
 
     def checkpoint(self, state: dict[str, Any]) -> None:
         """
@@ -164,7 +172,8 @@ class Context:
             state: State to save (must be JSON-serializable)
         """
         if self._cmd_queue is not None:
-            self._cmd_queue.put(("checkpoint", self.job_id, state))
+            cmd: CheckpointCommand = ("checkpoint", self.job_id, state)
+            self._cmd_queue.put(cmd)
 
     def send_log(
         self,
@@ -185,7 +194,8 @@ class Context:
             **extra: Additional context to include
         """
         if self._cmd_queue is not None:
-            self._cmd_queue.put(("send_log", self.job_id, level, message, extra))
+            cmd: SendLogCommand = ("send_log", self.job_id, level, message, extra)
+            self._cmd_queue.put(cmd)
 
 
 # ContextVar for tracking the current execution context

@@ -7,10 +7,10 @@ from uuid import uuid4
 import pytest
 import redis.asyncio as redis
 import server.db.session as session_module
-import server.services.event_processing as event_processing_module
-from server.db.models import JobHistory
+import server.services.events.processing as event_processing_module
 from server.db.session import init_database
-from server.services.stream_subscriber import StreamSubscriber, StreamSubscriberConfig
+from server.db.tables import JobHistory
+from server.services.events import StreamSubscriber, StreamSubscriberConfig
 from upnext.engine.status import StatusPublisher, StatusPublisherConfig
 
 pytestmark = pytest.mark.integration

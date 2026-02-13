@@ -1,8 +1,20 @@
+from enum import StrEnum
 from functools import lru_cache
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shared import __version__
+from shared._version import __version__
+
+
+class Environments(StrEnum):
+    DEV = "dev"
+    PROD = "prod"
+
+    def is_production(self) -> bool:
+        return self == self.PROD
+
+    def is_development(self) -> bool:
+        return self == self.DEV
 
 
 class Settings(BaseSettings):
@@ -17,12 +29,15 @@ class Settings(BaseSettings):
 
     redis_url: str | None = None
     database_url: str | None = None
-    env: Literal["dev", "prod"] = "dev"
+    env: Environments = Environments.DEV
     host: str = "0.0.0.0"
     port: int = 8080
     debug: bool = False
     api_docs_url_template: str = "http://{host}:{port}/docs"
     api_request_events_default_limit: int = 200
+    cors_allow_origins: str = "*"
+    cors_allow_credentials: bool = False
+    readiness_require_redis: bool = False
 
     # Artifact storage
     artifact_storage_backend: Literal["local", "s3"] = "local"
@@ -36,6 +51,8 @@ class Settings(BaseSettings):
     event_subscriber_batch_size: int = 100
     event_subscriber_poll_interval_ms: int = 2000
     event_subscriber_stale_claim_ms: int = 30000
+    event_subscriber_invalid_stream: str = "upnext:status:events:invalid"
+    event_subscriber_invalid_stream_maxlen: int = 10_000
 
     # Cleanup service tuning.
     cleanup_retention_days: int = 30
@@ -56,6 +73,7 @@ class Settings(BaseSettings):
     event_progress_min_interval_ms: int = 250
     event_progress_min_delta: float = 0.02
     event_progress_force_interval_ms: int = 2000
+    event_progress_state_max_entries: int = 10000
 
     # Operational alert hook settings.
     alert_webhook_url: str | None = None
@@ -66,6 +84,7 @@ class Settings(BaseSettings):
     alert_p95_duration_ms_threshold: float = 30_000.0
     alert_p95_wait_ms_threshold: float = 10_000.0
     alert_queue_backlog_threshold: int = 100
+    alert_poll_interval_seconds: float = 60.0
 
     # Runbook dashboard panel settings.
     dashboard_top_failing_limit: int = 5
@@ -77,11 +96,11 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        return self.env == "prod"
+        return self.env.is_production()
 
     @property
     def is_development(self) -> bool:
-        return self.env == "dev"
+        return self.env.is_development()
 
     @property
     def effective_database_url(self) -> str:
@@ -94,6 +113,13 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         """Check if using SQLite database."""
         return self.effective_database_url.startswith("sqlite")
+
+    @property
+    def cors_allow_origins_list(self) -> list[str]:
+        """Parse comma-delimited CORS origins into a list."""
+        origins = [origin.strip() for origin in self.cors_allow_origins.split(",")]
+        cleaned = [origin for origin in origins if origin]
+        return cleaned or ["*"]
 
 
 @lru_cache

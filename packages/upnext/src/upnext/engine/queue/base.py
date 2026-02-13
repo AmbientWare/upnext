@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from shared.models import Job, JobStatus
-from shared.schemas import DispatchReason
+from shared.contracts import DispatchReason
+from shared.domain import CronSource, Job, JobStatus
 
 
 class BaseQueue(ABC):
@@ -198,17 +198,18 @@ class BaseQueue(ABC):
         """
         pass
 
-    async def update_job_metadata(
+    async def update_job_checkpoint(
         self,
         job_id: str,
-        metadata: dict[str, Any],
+        state: dict[str, Any],
+        checkpointed_at: str,
     ) -> None:
         """
-        Update job metadata (merge with existing).
+        Persist the latest checkpoint state for a job.
 
-        Default: no-op. Override to persist metadata.
+        Default: no-op. Override to persist checkpoint state.
         """
-        pass
+        _ = (job_id, state, checkpointed_at)
 
     async def is_cancelled(self, job_id: str) -> bool:  # noqa: ARG002
         """
@@ -405,17 +406,28 @@ class BaseQueue(ABC):
         Returns:
             New job ID
         """
+        schedule = job.schedule
+        if not schedule:
+            raise ValueError(f"Cron job '{job.id}' is missing schedule")
+
         new_job = Job(
             function=job.function,
             function_name=job.function_name,
             kwargs=job.kwargs,
             key=f"cron:{job.function}",
             status=JobStatus.PENDING,
-            schedule=job.schedule,
             timeout=job.timeout,
-            metadata=dict(job.metadata or {}),
+            source=CronSource(
+                schedule=schedule,
+                cron_window_at=job.cron_window_at,
+                startup_reconciled=job.startup_reconciled,
+                startup_policy=job.startup_policy,
+            ),
+            checkpoint=job.checkpoint,
+            checkpoint_at=job.checkpoint_at,
+            dlq_replayed_from=job.dlq_replayed_from,
+            dlq_failed_at=job.dlq_failed_at,
         )
-        new_job.metadata.setdefault("cron", True)
 
         delay = max(0.0, next_run_at - time.time())
         return await self.enqueue(new_job, delay=delay)

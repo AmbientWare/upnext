@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
-from shared.models import Job, JobStatus
-from shared.schemas import DispatchReason
+from shared.domain.jobs import CronSource, Job, JobStatus
+from shared.contracts import DispatchReason
 from upnext.engine.job_processor import JobProcessor
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.registry import Registry
@@ -20,7 +20,9 @@ class _QueueRecorder:
     retried: list[tuple[str, float]] = field(default_factory=list)
     rescheduled: list[str] = field(default_factory=list)
     progresses: list[tuple[str, float]] = field(default_factory=list)
-    metadata_updates: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    checkpoint_updates: list[tuple[str, dict[str, Any], str]] = field(
+        default_factory=list
+    )
     dispatch_reasons: list[tuple[str, DispatchReason, str | None]] = field(
         default_factory=list
     )
@@ -44,8 +46,10 @@ class _QueueRecorder:
     async def update_progress(self, job_id: str, progress: float) -> None:
         self.progresses.append((job_id, progress))
 
-    async def update_job_metadata(self, job_id: str, metadata: dict[str, Any]) -> None:
-        self.metadata_updates.append((job_id, metadata))
+    async def update_job_checkpoint(
+        self, job_id: str, state: dict[str, Any], checkpointed_at: str
+    ) -> None:
+        self.checkpoint_updates.append((job_id, state, checkpointed_at))
 
     async def get_job(self, job_id: str) -> Job | None:
         return None
@@ -79,7 +83,11 @@ class _StatusRecorder:
         max_retries: int,
         root_id: str,
         parent_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        source: dict[str, Any] | None = None,
+        checkpoint: dict[str, Any] | None = None,
+        checkpoint_at: str | None = None,
+        dlq_replayed_from: str | None = None,
+        dlq_failed_at: str | None = None,
         scheduled_at: datetime | None = None,
         queue_wait_ms: float | None = None,
     ) -> None:
@@ -87,7 +95,11 @@ class _StatusRecorder:
         self.started.append(
             {
                 "job_id": job_id,
-                "metadata": dict(metadata or {}),
+                "source": source,
+                "checkpoint": checkpoint,
+                "checkpoint_at": checkpoint_at,
+                "dlq_replayed_from": dlq_replayed_from,
+                "dlq_failed_at": dlq_failed_at,
                 "scheduled_at": scheduled_at,
                 "queue_wait_ms": queue_wait_ms,
             }
@@ -138,6 +150,39 @@ class _StatusRecorder:
         self, job_id: str, level: str, message: str, **extra: Any
     ) -> None:
         self.logs.append(job_id)
+
+
+@dataclass
+class _FlakyStatusRecorder(_StatusRecorder):
+    fail_methods: set[str] = field(default_factory=set)
+
+    def _should_fail(self, method_name: str) -> bool:
+        return method_name in self.fail_methods
+
+    async def record_job_started(self, *args: Any, **kwargs: Any) -> None:
+        if self._should_fail("record_job_started"):
+            raise RuntimeError("status unavailable")
+        await super().record_job_started(*args, **kwargs)
+
+    async def record_job_completed(self, job_id: str, *args: Any, **kwargs: Any) -> None:
+        if self._should_fail("record_job_completed"):
+            raise RuntimeError("status unavailable")
+        await super().record_job_completed(job_id, *args, **kwargs)
+
+    async def record_job_failed(self, job_id: str, *args: Any, **kwargs: Any) -> None:
+        if self._should_fail("record_job_failed"):
+            raise RuntimeError("status unavailable")
+        await super().record_job_failed(job_id, *args, **kwargs)
+
+    async def record_job_retrying(self, *args: Any, **kwargs: Any) -> None:
+        if self._should_fail("record_job_retrying"):
+            raise RuntimeError("status unavailable")
+        await super().record_job_retrying(*args, **kwargs)
+
+    async def record_job_progress(self, *args: Any, **kwargs: Any) -> None:
+        if self._should_fail("record_job_progress"):
+            raise RuntimeError("status unavailable")
+        await super().record_job_progress(*args, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -195,7 +240,6 @@ async def test_context_commands_are_drained_to_backend() -> None:
     async def task() -> str:
         ctx = get_current_context()
         ctx.set_progress(40)
-        ctx.set_metadata("phase", "download")
         ctx.checkpoint({"offset": 10})
         ctx.send_log("info", "hello")
         return "done"
@@ -215,10 +259,9 @@ async def test_context_commands_are_drained_to_backend() -> None:
 
         assert result == "done"
         assert queue.progresses == [(job.id, 0.4)]
-        assert queue.metadata_updates == [
-            (job.id, {"phase": "download"}),
-            (job.id, {"_checkpoint": {"offset": 10}}),
-        ]
+        assert len(queue.checkpoint_updates) == 1
+        assert queue.checkpoint_updates[0][0] == job.id
+        assert queue.checkpoint_updates[0][1] == {"offset": 10}
         assert status.progress == [(job.id, 0.4)]
         assert status.checkpoints == [job.id]
         assert status.logs == [job.id]
@@ -343,8 +386,7 @@ async def test_cron_jobs_reschedule_on_success_and_terminal_failure() -> None:
             function_name="task",
             kwargs={},
             root_id="cron-success",
-            schedule="* * * * *",
-            metadata={"cron": True},
+            source=CronSource(schedule="* * * * *"),
         )
         success_job.mark_started("worker")
 
@@ -355,8 +397,7 @@ async def test_cron_jobs_reschedule_on_success_and_terminal_failure() -> None:
             function_name="task",
             kwargs={},
             root_id="cron-failed",
-            schedule="* * * * *",
-            metadata={"cron": True},
+            source=CronSource(schedule="* * * * *"),
         )
         failed_job.mark_started("worker")
         failed_job.attempts = 2
@@ -472,6 +513,43 @@ class _PausedQueue:
 
 
 @dataclass
+class _CooperativeCancelQueue:
+    job: Job | None
+    finished: list[tuple[str, JobStatus, Any, str | None]] = field(default_factory=list)
+    cancel_checks: int = 0
+
+    async def dequeue(self, functions: list[str], *, timeout: float = 5.0) -> Job | None:  # noqa: ARG002
+        current = self.job
+        self.job = None
+        return current
+
+    async def is_cancelled(self, job_id: str) -> bool:  # noqa: ARG002
+        self.cancel_checks += 1
+        return self.cancel_checks >= 2
+
+    async def is_function_paused(self, function: str) -> bool:  # noqa: ARG002
+        return False
+
+    async def finish(
+        self,
+        job: Job,
+        status: JobStatus,
+        result: Any = None,
+        error: str | None = None,
+    ) -> None:
+        self.finished.append((job.id, status, result, error))
+
+    async def record_dispatch_reason(
+        self,
+        function: str,  # noqa: ARG002
+        reason: DispatchReason,  # noqa: ARG002
+        *,
+        job_id: str | None = None,  # noqa: ARG002
+    ) -> None:
+        return None
+
+
+@dataclass
 class _SingleJobQueue:
     job: Job | None
     finished: list[tuple[str, JobStatus, Any, str | None]] = field(default_factory=list)
@@ -532,7 +610,31 @@ async def test_process_one_retries_jobs_for_paused_functions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_one_records_queue_wait_metadata_on_started_event() -> None:
+async def test_process_one_exposes_cooperative_cancellation_flag() -> None:
+    registry = Registry()
+
+    async def task() -> str:
+        ctx = get_current_context()
+        for _ in range(50):
+            if ctx.is_cancelled:
+                return "cancelled"
+            await asyncio.sleep(0.01)
+        return "not-cancelled"
+
+    registry.register_task("task_key", task)
+    job = Job(function="task_key", function_name="task")
+    queue = _CooperativeCancelQueue(job=job)
+    processor = JobProcessor(queue=cast(BaseQueue, queue), registry=registry)
+
+    try:
+        await processor._process_one()  # noqa: SLF001
+        assert queue.finished == [(job.id, JobStatus.COMPLETE, "cancelled", None)]
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_process_one_records_queue_wait_fields_on_started_event() -> None:
     registry = Registry()
     status = _StatusRecorder()
 
@@ -540,11 +642,7 @@ async def test_process_one_records_queue_wait_metadata_on_started_event() -> Non
         return "ok"
 
     registry.register_task("task_key", task)
-    job = Job(
-        function="task_key",
-        function_name="task",
-        metadata={"source": "test"},
-    )
+    job = Job(function="task_key", function_name="task")
     job.scheduled_at = datetime.now(UTC) - timedelta(seconds=2)
 
     queue = _SingleJobQueue(job=job)
@@ -560,13 +658,176 @@ async def test_process_one_records_queue_wait_metadata_on_started_event() -> Non
         assert len(status.started) == 1
         started = status.started[0]
         assert started["job_id"] == job.id
-        started_metadata = started["metadata"]
-        assert started_metadata["source"] == "test"
         assert started["scheduled_at"] == job.scheduled_at
         assert started["queue_wait_ms"] is not None
         assert float(started["queue_wait_ms"]) >= 1500.0
-        assert "queued_at" not in started_metadata
-        assert "queue_wait_ms" not in started_metadata
+        assert started["source"] == {"type": "task"}
+        assert started["checkpoint"] is None
         assert queue.finished == [(job.id, JobStatus.COMPLETE, "ok", None)]
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@dataclass
+class _IdleQueue:
+    started: bool = False
+    closed: bool = False
+
+    async def start(self, functions: list[str] | None = None) -> None:  # noqa: ARG002
+        self.started = True
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def dequeue(
+        self,
+        functions: list[str],  # noqa: ARG002
+        *,
+        timeout: float = 5.0,  # noqa: ARG002
+    ) -> Job | None:
+        await asyncio.sleep(0.05)
+        return None
+
+
+@dataclass
+class _ClosableStatusBuffer:
+    close_calls: int = 0
+    timeout_args: list[float] = field(default_factory=list)
+
+    async def close(self, *, timeout_seconds: float = 2.0) -> None:
+        self.close_calls += 1
+        self.timeout_args.append(timeout_seconds)
+
+
+@pytest.mark.asyncio
+async def test_start_flushes_status_buffer_on_shutdown() -> None:
+    queue = _IdleQueue()
+    status = _ClosableStatusBuffer()
+    processor = JobProcessor(
+        queue=cast(BaseQueue, queue),
+        registry=Registry(),
+        concurrency=1,
+        status_buffer=status,
+        status_flush_timeout_seconds=1.5,
+        handle_signals=False,
+    )
+
+    task = asyncio.create_task(processor.start())
+    await asyncio.sleep(0.1)
+    await processor.stop(timeout=1.0)
+    await task
+
+    assert queue.started is True
+    assert queue.closed is True
+    assert status.close_calls == 1
+    assert status.timeout_args == [1.5]
+
+
+@pytest.mark.asyncio
+async def test_process_one_completes_when_status_started_event_fails() -> None:
+    registry = Registry()
+    status = _FlakyStatusRecorder(fail_methods={"record_job_started"})
+
+    async def task() -> str:
+        return "ok"
+
+    registry.register_task("task_key", task)
+    job = Job(function="task_key", function_name="task")
+    queue = _SingleJobQueue(job=job)
+    processor = JobProcessor(
+        queue=cast(BaseQueue, queue),
+        registry=registry,
+        status_buffer=status,
+    )
+
+    try:
+        await processor._process_one()  # noqa: SLF001
+        assert queue.finished == [(job.id, JobStatus.COMPLETE, "ok", None)]
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_handle_success_keeps_terminal_state_when_status_completed_fails() -> None:
+    queue = _QueueRecorder()
+    status = _FlakyStatusRecorder(fail_methods={"record_job_completed"})
+    registry = Registry()
+
+    async def task() -> str:
+        return "ok"
+
+    task_def = registry.register_task("task_key", task)
+    processor = JobProcessor(
+        queue=cast(BaseQueue, queue),
+        registry=registry,
+        status_buffer=status,
+    )
+
+    try:
+        job = Job(function="task_key", function_name="task", kwargs={}, root_id="job-1")
+        job.mark_started("worker")
+        await processor._handle_success(job, task_def, "ok", duration_ms=1)  # noqa: SLF001
+        assert queue.finished == [(job.id, JobStatus.COMPLETE, "ok", None)]
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_retries_when_status_retrying_event_fails() -> None:
+    queue = _QueueRecorder()
+    status = _FlakyStatusRecorder(fail_methods={"record_job_retrying"})
+    registry = Registry()
+
+    async def task() -> None:
+        return None
+
+    task_def = registry.register_task(
+        "task_key",
+        task,
+        retries=2,
+        retry_delay=1,
+        retry_backoff=2,
+    )
+    processor = JobProcessor(
+        queue=cast(BaseQueue, queue),
+        registry=registry,
+        status_buffer=status,
+    )
+
+    try:
+        job = Job(function="task_key", function_name="task", kwargs={}, root_id="job-r")
+        job.mark_started("worker")
+        job.attempts = 1
+        await processor._handle_failure(job, task_def, RuntimeError("boom"))  # noqa: SLF001
+        assert queue.retried == [(job.id, 1)]
+        assert queue.dispatch_reasons == [
+            ("task_key", DispatchReason.RETRYING, job.id)
+        ]
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_finishes_when_status_failed_event_fails() -> None:
+    queue = _QueueRecorder()
+    status = _FlakyStatusRecorder(fail_methods={"record_job_failed"})
+    registry = Registry()
+
+    async def task() -> None:
+        return None
+
+    task_def = registry.register_task("task_key", task, retries=0)
+    processor = JobProcessor(
+        queue=cast(BaseQueue, queue),
+        registry=registry,
+        status_buffer=status,
+    )
+
+    try:
+        job = Job(function="task_key", function_name="task", kwargs={}, root_id="job-f")
+        job.mark_started("worker")
+        job.attempts = 2
+        await processor._handle_failure(job, task_def, RuntimeError("fatal"))  # noqa: SLF001
+        assert queue.finished == [(job.id, JobStatus.FAILED, None, "fatal")]
     finally:
         processor._sync_pool.shutdown(wait=False)  # noqa: SLF001

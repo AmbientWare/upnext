@@ -1,6 +1,6 @@
+import base64
 import json
 import logging
-import base64
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -8,13 +8,11 @@ from typing import Any
 
 from pydantic import ValidationError
 from shared.artifacts import ArtifactType
-from shared.events import ARTIFACT_EVENTS_STREAM
-from shared.schemas import (
-    ArtifactStreamEvent,
-)
+from shared.contracts import ArtifactStreamEvent
+from shared.keys import ARTIFACT_EVENTS_STREAM
 
-from server.routes._shared import get_stream_json_object
-from server.services import get_redis
+from server.services.redis import get_redis
+from server.shared_utils import get_stream_json_object
 
 logger = logging.getLogger(__name__)
 

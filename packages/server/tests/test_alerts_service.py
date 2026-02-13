@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-import server.services.alerts as alerts_module
+import server.services.operations.alerts as alerts_module
 from fakeredis.aioredis import FakeRedis
-from shared.schemas import FunctionInfo, FunctionType
+from shared.contracts import FunctionInfo, FunctionType
 
 
 @dataclass

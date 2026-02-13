@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import pytest
-from shared.models import Job
-from shared.schemas import MissedRunPolicy
+from shared.domain.jobs import Job
+from shared.contracts import MissedRunPolicy
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.registry import Registry
 from upnext.sdk.worker import Worker
@@ -158,9 +158,9 @@ async def test_event_handle_enqueues_handlers_and_exposes_configs() -> None:
     assert queue.jobs[0].function_name == "notify"
     assert queue.jobs[1].function_name == "audit"
     assert all(job.kwargs == {"order_id": "ord-1"} for job in queue.jobs)
-    assert all(job.metadata.get("event_pattern") == "order.created" for job in queue.jobs)
-    assert queue.jobs[0].metadata.get("event_handler_name") == "notify"
-    assert queue.jobs[1].metadata.get("event_handler_name") == "audit"
+    assert all(job.event_pattern == "order.created" for job in queue.jobs)
+    assert queue.jobs[0].event_handler_name == "notify"
+    assert queue.jobs[1].event_handler_name == "audit"
 
     assert order_created.handler_names == ["notify", "audit"]
     assert len(order_created.handler_keys) == 2
@@ -177,6 +177,23 @@ async def test_event_handle_enqueues_handlers_and_exposes_configs() -> None:
     assert worker._registry.get_task(order_created.handler_keys[0]) is not None  # noqa: SLF001
     assert "handlers=2" in repr(order_created)
     assert notify.__name__ == "notify"
+
+
+def test_event_handle_rejects_duplicate_handler_names() -> None:
+    worker = Worker(name="event-worker")
+    order_created = worker.event("order.created")
+
+    @order_created.on(name="notify")
+    async def notify_first(order_id: str) -> None:
+        return None
+
+    with pytest.raises(ValueError, match="already registered"):
+
+        @order_created.on(name="notify")
+        async def notify_second(order_id: str) -> None:  # pragma: no cover
+            return None
+
+    assert notify_first.__name__ == "notify_first"
 
 
 @pytest.mark.asyncio

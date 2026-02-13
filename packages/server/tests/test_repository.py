@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from server.db.repository import JobRepository
+from server.db.repositories import JobRepository
 
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:

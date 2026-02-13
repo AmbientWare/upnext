@@ -2,7 +2,7 @@
 
 import asyncio
 
-from shared import __version__
+from shared._version import __version__
 from shared.artifacts import ArtifactType
 
 from upnext.engine import run_services

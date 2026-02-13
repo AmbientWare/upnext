@@ -8,7 +8,9 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from shared.models import JobStatus
+from shared.domain import JobStatus
+from shared.keys import job_status_channel
+
 from upnext.engine.queue.redis.constants import CompletedJob
 
 if TYPE_CHECKING:
@@ -110,8 +112,9 @@ class Finisher:
         async with client.pipeline(transaction=False) as pipe:
             for completed in batch:
                 job = completed.job
-                msg_id = job.metadata.get("_stream_msg_id") if job.metadata else None
-                stream_key = job.metadata.get("_stream_key") if job.metadata else None
+                claim = self._queue._pop_stream_claim(job.id)
+                msg_id = claim.msg_id if claim else None
+                stream_key = claim.stream_key if claim else None
                 if not stream_key:
                     stream_key = self._queue._stream_key(job.function)
 
@@ -129,7 +132,7 @@ class Finisher:
                         self._queue._job_key(job),
                         self._queue._job_index_key(job.id),
                         self._queue._dedup_key(job.function),
-                        f"upnext:job:{job.id}",
+                        job_status_channel(job.id),
                         self._queue._consumer_group,
                         msg_id or "",
                         job.to_json(),
@@ -150,7 +153,10 @@ class Finisher:
                     pipe.delete(self._queue._job_index_key(job.id))
                     if job.key:
                         pipe.srem(self._queue._dedup_key(job.function), job.key)
-                    pipe.publish(f"upnext:job:{job.id}", completed.status.value)
+                    pipe.publish(
+                        job_status_channel(job.id),
+                        completed.status.value,
+                    )
                 if completed.status == JobStatus.FAILED:
                     dlq_stream_key = self._queue._dlq_stream_key(job.function)
                     dlq_payload = self._queue._dlq_payload(job, completed.error)

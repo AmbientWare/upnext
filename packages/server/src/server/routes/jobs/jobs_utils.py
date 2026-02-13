@@ -1,9 +1,11 @@
 from collections.abc import Mapping
-from datetime import datetime
 
-from server.routes._shared import get_stream_json_object
+from shared.contracts import JobHistoryResponse
 
-TREND_TRIGGER_EVENTS = frozenset(
+from server.db.tables import JobHistory
+from server.shared_utils import get_stream_json_object
+
+STREAMABLE_EVENTS = frozenset(
     {
         "job.started",
         "job.completed",
@@ -21,10 +23,6 @@ def extract_stream_function_key(data: Mapping[str | bytes, object]) -> str | Non
     return str(function) if function else None
 
 
-def calculate_duration_ms(
-    started_at: datetime | None, completed_at: datetime | None
-) -> float | None:
-    """Calculate job duration in milliseconds."""
-    if started_at and completed_at:
-        return (completed_at - started_at).total_seconds() * 1000
-    return None
+def job_history_to_response(job: JobHistory) -> JobHistoryResponse:
+    """Convert a JobHistory row into API response shape."""
+    return JobHistoryResponse.model_validate(job)

@@ -26,8 +26,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from shared.api import API_PREFIX, HOURLY_BUCKET_TTL, MINUTE_BUCKET_TTL, REGISTRY_TTL
-from shared.events import API_REQUESTS_STREAM
+from shared.keys import (
+    API_REQUESTS_STREAM,
+    HOURLY_BUCKET_TTL,
+    MINUTE_BUCKET_TTL,
+    REGISTRY_TTL,
+    api_endpoints_key,
+    api_hourly_bucket_key,
+    api_minute_bucket_key,
+    api_registry_key,
+)
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
@@ -170,10 +178,10 @@ class ApiTrackingMiddleware(BaseHTTPMiddleware):
         hour_key = now.strftime("%Y-%m-%dT%H")
         endpoint_key = f"{method.upper()}:{path}"
 
-        minute_hash = f"{API_PREFIX}:{self.api_name}:{endpoint_key}:m:{minute_key}"
-        hourly_hash = f"{API_PREFIX}:{self.api_name}:{endpoint_key}:h:{hour_key}"
-        registry_key = f"{API_PREFIX}:registry"
-        endpoints_key = f"{API_PREFIX}:{self.api_name}:endpoints"
+        minute_hash = api_minute_bucket_key(self.api_name, endpoint_key, minute_key)
+        hourly_hash = api_hourly_bucket_key(self.api_name, endpoint_key, hour_key)
+        registry_key = api_registry_key()
+        endpoints_key = api_endpoints_key(self.api_name)
 
         status_field = _status_bucket(status)
         is_error = 1 if status >= 400 else 0

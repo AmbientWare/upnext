@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter
-from shared.schemas import (
+from shared.contracts import (
     ApiStats,
     DashboardStats,
     OldestQueuedJob,
@@ -16,28 +16,16 @@ from shared.schemas import (
 )
 
 from server.config import get_settings
-from server.db.repository import JobRepository
+from server.db.repositories import JobRepository
 from server.db.session import get_database
-from server.services import (
-    get_function_definitions,
-    get_oldest_queued_jobs,
-    get_queue_depth_stats,
-    get_worker_stats,
-)
-from server.services.api_tracking import get_metrics_reader
+from server.services.apis import ApiMetricsSummary, get_metrics_reader
+from server.services.jobs import get_oldest_queued_jobs, get_queue_depth_stats
+from server.services.registry import get_function_definitions, get_worker_stats
+from server.shared_utils import as_utc_aware
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
-
-
-def _as_utc_aware(value: datetime | None) -> datetime | None:
-    """Normalize DB datetimes to UTC-aware before arithmetic."""
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
 
 
 @router.get("/stats", response_model=DashboardStats)
@@ -87,8 +75,8 @@ async def get_dashboard_stats() -> DashboardStats:
             stats = await repo.get_stats(start_date=day_ago)
 
             run_stats = RunStats(
-                total_24h=stats["total"],
-                success_rate=stats["success_rate"],
+                total_24h=stats.total,
+                success_rate=stats.success_rate,
             )
 
             function_stats = await repo.get_function_job_stats(start_date=day_ago)
@@ -125,7 +113,7 @@ async def get_dashboard_stats() -> DashboardStats:
                 limit=max(0, settings.dashboard_stuck_active_limit),
             )
             for stuck in stuck_rows:
-                started_at = _as_utc_aware(stuck.started_at)
+                started_at = as_utc_aware(stuck.started_at)
                 if started_at is None:
                     continue
                 age_seconds = max(0.0, (now - started_at).total_seconds())
@@ -225,11 +213,15 @@ async def get_dashboard_stats() -> DashboardStats:
         reader = await get_metrics_reader()
         api_summary = await reader.get_summary()
     except RuntimeError:
-        api_summary = {"requests_24h": 0, "avg_latency_ms": 0, "error_rate": 0}
+        api_summary = ApiMetricsSummary(
+            requests_24h=0,
+            avg_latency_ms=0.0,
+            error_rate=0.0,
+        )
     api_stats = ApiStats(
-        requests_24h=api_summary["requests_24h"],
-        avg_latency_ms=api_summary["avg_latency_ms"],
-        error_rate=api_summary["error_rate"],
+        requests_24h=api_summary.requests_24h,
+        avg_latency_ms=api_summary.avg_latency_ms,
+        error_rate=api_summary.error_rate,
     )
 
     return DashboardStats(

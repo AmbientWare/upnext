@@ -1,146 +1,35 @@
 """Job history routes."""
 
-import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from shared.models import Job, JobStatus
-from shared.queue import QUEUE_KEY_PREFIX
-from shared.schemas import (
+from shared.contracts import (
     FunctionType,
+    JobCancelResponse,
     JobHistoryResponse,
     JobListResponse,
+    JobRetryResponse,
     JobStatsResponse,
     JobTrendHour,
     JobTrendsResponse,
 )
+from shared.domain import JobStatus
 
-from server.db.repository import JobRepository
-from server.config import get_settings
+from server.db.repositories import JobHourlyTrendRow, JobRepository
 from server.db.session import get_database
 from server.routes.jobs.jobs_utils import (
-    calculate_duration_ms,
+    job_history_to_response,
+)
+from server.services.jobs import (
+    DuplicateIdempotencyKeyError,
+    cancel_job,
+    load_job,
+    manual_retry,
 )
 from server.services.redis import get_redis
-from server.services.workers import get_function_definitions
-
-logger = logging.getLogger(__name__)
+from server.services.registry import get_function_definitions
 
 router = APIRouter(tags=["jobs"])
-
-
-def _queue_key(*parts: str) -> str:
-    return ":".join([QUEUE_KEY_PREFIX, *parts])
-
-
-def _stream_key(function: str) -> str:
-    return _queue_key("fn", function, "stream")
-
-
-def _scheduled_key(function: str) -> str:
-    return _queue_key("fn", function, "scheduled")
-
-
-def _dedup_key(function: str) -> str:
-    return _queue_key("fn", function, "dedup")
-
-
-def _job_index_key(job_id: str) -> str:
-    return _queue_key("job_index", job_id)
-
-
-def _result_key(job_id: str) -> str:
-    return _queue_key("result", job_id)
-
-
-def _cancel_marker_key(job_id: str) -> str:
-    return _queue_key("cancelled", job_id)
-
-
-def _decode_str(value: Any) -> str:
-    return value.decode() if isinstance(value, bytes) else str(value)
-
-
-async def _find_job_key_by_id(redis_client: Any, job_id: str) -> str | None:
-    index_key = _job_index_key(job_id)
-    indexed_job_key = await redis_client.get(index_key)
-    if indexed_job_key:
-        job_key = _decode_str(indexed_job_key)
-        if await redis_client.exists(job_key):
-            return job_key
-        await redis_client.delete(index_key)
-
-    cursor = 0
-    match = f"{QUEUE_KEY_PREFIX}:job:*:{job_id}"
-    while True:
-        cursor, keys = await redis_client.scan(cursor=cursor, match=match, count=100)
-        for key in keys:
-            job_key = _decode_str(key)
-            if await redis_client.exists(job_key):
-                ttl = await redis_client.ttl(job_key)
-                if ttl and ttl > 0:
-                    await redis_client.setex(index_key, int(ttl), job_key)
-                else:
-                    await redis_client.set(index_key, job_key)
-                return job_key
-        if int(cursor) == 0:
-            break
-
-    return None
-
-
-async def _load_job(redis_client: Any, job_id: str) -> tuple[Job | None, str | None]:
-    result_data = await redis_client.get(_result_key(job_id))
-    if result_data:
-        return Job.from_json(_decode_str(result_data)), None
-
-    job_key = await _find_job_key_by_id(redis_client, job_id)
-    if job_key is None:
-        return None, None
-
-    job_data = await redis_client.get(job_key)
-    if not job_data:
-        return None, None
-
-    return Job.from_json(_decode_str(job_data)), job_key
-
-
-async def _delete_stream_entries_for_job(
-    redis_client: Any,
-    stream_key: str,
-    job_id: str,
-    *,
-    batch_size: int = 500,
-    max_scan: int = 50_000,
-) -> int:
-    start = "-"
-    scanned = 0
-    deleted = 0
-
-    while scanned < max_scan:
-        rows = await redis_client.xrange(
-            stream_key, min=start, max="+", count=batch_size
-        )
-        if not rows:
-            break
-
-        delete_ids: list[str] = []
-        for msg_id, msg_data in rows:
-            scanned += 1
-            msg_job_id = msg_data.get(b"job_id") or msg_data.get("job_id")
-            if _decode_str(msg_job_id) == job_id:
-                delete_ids.append(_decode_str(msg_id))
-
-        if delete_ids:
-            deleted += await redis_client.xdel(stream_key, *delete_ids)
-
-        if len(rows) < batch_size:
-            break
-
-        start = f"({_decode_str(rows[-1][0])}"
-
-    return deleted
 
 
 @router.get("", response_model=JobListResponse)
@@ -189,33 +78,7 @@ async def list_jobs(
         if has_more:
             jobs = jobs[:limit]
 
-        # Convert to response models with duration_ms
-        job_responses = [
-            JobHistoryResponse(
-                id=job.id,
-                function=job.function,
-                function_name=job.function_name,
-                status=job.status,
-                created_at=job.created_at,
-                scheduled_at=job.scheduled_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
-                attempts=job.attempts,
-                max_retries=job.max_retries,
-                timeout=job.timeout,
-                worker_id=job.worker_id,
-                parent_id=job.parent_id,
-                root_id=job.root_id,
-                progress=job.progress,
-                kwargs=job.kwargs,
-                metadata=job.metadata_,
-                queue_wait_ms=job.queue_wait_ms,
-                result=job.result,
-                error=job.error,
-                duration_ms=calculate_duration_ms(job.started_at, job.completed_at),
-            )
-            for job in jobs
-        ]
+        job_responses = [job_history_to_response(job) for job in jobs]
 
         return JobListResponse(
             jobs=job_responses,
@@ -257,12 +120,12 @@ async def get_job_stats(
         )
 
         return JobStatsResponse(
-            total=stats["total"],
-            success_count=stats["success_count"],
-            failure_count=stats["failure_count"],
-            cancelled_count=stats["cancelled_count"],
-            success_rate=stats["success_rate"],
-            avg_duration_ms=None,  # TODO: Calculate from jobs
+            total=stats.total,
+            success_count=stats.success_count,
+            failure_count=stats.failure_count,
+            cancelled_count=stats.cancelled_count,
+            success_rate=stats.success_rate,
+            avg_duration_ms=stats.avg_duration_ms,
         )
 
 
@@ -290,11 +153,7 @@ async def get_job_trends(
         except RuntimeError:
             return _empty_trends(hours)
 
-        allowed = [
-            key
-            for key, config in func_defs.items()
-            if config.type == type
-        ]
+        allowed = [key for key, config in func_defs.items() if config.type == type]
         if function and function not in allowed:
             return _empty_trends(hours)
         if function is None:
@@ -308,7 +167,7 @@ async def get_job_trends(
         start_time = now - timedelta(hours=hours)
 
         # Get aggregated trends from DB (SQL GROUP BY)
-        trend_rows = await repo.get_hourly_trends(
+        trend_rows: list[JobHourlyTrendRow] = await repo.get_hourly_trends(
             start_date=start_time,
             end_date=now,
             function=function,
@@ -381,34 +240,7 @@ async def get_job_timeline(job_id: str) -> JobListResponse:
             raise HTTPException(status_code=404, detail="Job not found")
 
         return JobListResponse(
-            jobs=[
-                JobHistoryResponse(
-                    id=job.id,
-                    function=job.function,
-                    function_name=job.function_name,
-                    status=job.status,
-                    created_at=job.created_at,
-                    scheduled_at=job.scheduled_at,
-                    started_at=job.started_at,
-                    completed_at=job.completed_at,
-                    attempts=job.attempts,
-                    max_retries=job.max_retries,
-                    timeout=job.timeout,
-                    worker_id=job.worker_id,
-                    parent_id=job.parent_id,
-                    root_id=job.root_id,
-                    progress=job.progress,
-                    kwargs=job.kwargs,
-                    metadata=job.metadata_,
-                    queue_wait_ms=job.queue_wait_ms,
-                    result=job.result,
-                    error=job.error,
-                    duration_ms=calculate_duration_ms(
-                        job.started_at, job.completed_at
-                    ),
-                )
-                for job in jobs
-            ],
+            jobs=[job_history_to_response(job) for job in jobs],
             total=len(jobs),
             has_more=False,
         )
@@ -433,42 +265,18 @@ async def get_job(job_id: str) -> JobHistoryResponse:
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        return JobHistoryResponse(
-            id=job.id,
-            function=job.function,
-            function_name=job.function_name,
-            status=job.status,
-            created_at=job.created_at,
-            scheduled_at=job.scheduled_at,
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-            attempts=job.attempts,
-            max_retries=job.max_retries,
-            timeout=job.timeout,
-            worker_id=job.worker_id,
-            parent_id=job.parent_id,
-            root_id=job.root_id,
-            progress=job.progress,
-            kwargs=job.kwargs,
-            metadata=job.metadata_,
-            queue_wait_ms=job.queue_wait_ms,
-            result=job.result,
-            error=job.error,
-            duration_ms=calculate_duration_ms(job.started_at, job.completed_at),
-        )
+        return job_history_to_response(job)
 
 
-@router.post("/{job_id}/cancel")
-async def cancel_job(job_id: str) -> dict:
+@router.post("/{job_id}/cancel", response_model=JobCancelResponse)
+async def cancel_job_route(job_id: str) -> JobCancelResponse:
     """Cancel a running or queued job."""
-    settings = get_settings()
-
     try:
         redis_client = await get_redis()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    job, job_key = await _load_job(redis_client, job_id)
+    job, job_key = await load_job(redis_client, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status.is_terminal():
@@ -478,55 +286,38 @@ async def cancel_job(job_id: str) -> dict:
         )
 
     job.mark_cancelled()
-
-    stream_key = _stream_key(job.function)
-    scheduled_key = _scheduled_key(job.function)
-    dedup_key = _dedup_key(job.function)
-    index_key = _job_index_key(job.id)
-    result_key = _result_key(job.id)
-    cancel_marker_key = _cancel_marker_key(job.id)
-
-    await redis_client.setex(
-        cancel_marker_key,
-        max(1, settings.queue_job_ttl_seconds),
-        "1",
+    cancel_result = await cancel_job(
+        redis_client,
+        job,
+        existing_job_key=job_key,
     )
-    await redis_client.zrem(scheduled_key, job.id)
-    deleted_from_stream = await _delete_stream_entries_for_job(
-        redis_client, stream_key, job.id
+    if not cancel_result.cancelled:
+        current, _ = await load_job(redis_client, job_id)
+        current_status = current.status.value if current else "terminal"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Job {job_id} cannot be cancelled because it is already "
+                f"'{current_status}'."
+            ),
+        )
+
+    return JobCancelResponse(
+        job_id=job.id,
+        cancelled=True,
+        deleted_stream_entries=cancel_result.deleted_stream_entries,
     )
 
-    await redis_client.setex(
-        result_key,
-        max(1, settings.queue_result_ttl_seconds),
-        job.to_json(),
-    )
-    if job_key:
-        await redis_client.delete(job_key)
-    await redis_client.delete(index_key)
-    if job.key:
-        await redis_client.srem(dedup_key, job.key)
 
-    await redis_client.publish(f"upnext:job:{job.id}", JobStatus.CANCELLED.value)
-
-    return {
-        "job_id": job.id,
-        "cancelled": True,
-        "deleted_stream_entries": deleted_from_stream,
-    }
-
-
-@router.post("/{job_id}/retry")
-async def retry_job(job_id: str) -> dict:
+@router.post("/{job_id}/retry", response_model=JobRetryResponse)
+async def retry_job(job_id: str) -> JobRetryResponse:
     """Retry a failed job."""
-    settings = get_settings()
-
     try:
         redis_client = await get_redis()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    job, _ = await _load_job(redis_client, job_id)
+    job, _ = await load_job(redis_client, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -539,64 +330,17 @@ async def retry_job(job_id: str) -> dict:
             ),
         )
 
-    job.mark_queued("Manual retry requested")
-    job.started_at = None
-    job.completed_at = None
-    job.worker_id = None
-    job.error = None
-    job.error_traceback = None
-    job.result = None
-    job.progress = 0.0
-    if job.metadata is None:
-        job.metadata = {}
-    job.metadata.pop("_stream_key", None)
-    job.metadata.pop("_stream_msg_id", None)
+    try:
+        await manual_retry(redis_client, job)
 
-    job_key = _queue_key("job", job.function, job.id)
-    index_key = _job_index_key(job.id)
-    stream_key = _stream_key(job.function)
-    scheduled_key = _scheduled_key(job.function)
-    dedup_key = _dedup_key(job.function)
-
-    if job.key and await redis_client.sismember(dedup_key, job.key):
+    except DuplicateIdempotencyKeyError as exc:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Job {job_id} cannot be retried: idempotency key '{job.key}' "
+                f"Job {job_id} cannot be retried: idempotency key "
+                f"'{exc.idempotency_key}' "
                 "is already active."
             ),
-        )
+        ) from exc
 
-    await redis_client.setex(
-        job_key,
-        max(1, settings.queue_job_ttl_seconds),
-        job.to_json(),
-    )
-    await redis_client.setex(
-        index_key,
-        max(1, settings.queue_job_ttl_seconds),
-        job_key,
-    )
-    await redis_client.delete(_result_key(job.id))
-    await redis_client.delete(_cancel_marker_key(job.id))
-    await redis_client.zrem(scheduled_key, job.id)
-    if job.key:
-        await redis_client.sadd(dedup_key, job.key)
-        await redis_client.expire(dedup_key, max(1, settings.queue_job_ttl_seconds))
-
-    payload = {"job_id": job.id, "function": job.function, "data": job.to_json()}
-    stream_maxlen = max(0, settings.queue_stream_maxlen)
-    if stream_maxlen > 0:
-        try:
-            await redis_client.xadd(
-                stream_key,
-                payload,
-                maxlen=stream_maxlen,
-                approximate=True,
-            )
-        except TypeError:
-            await redis_client.xadd(stream_key, payload, maxlen=stream_maxlen)
-    else:
-        await redis_client.xadd(stream_key, payload)
-
-    return {"job_id": job.id, "retried": True}
+    return JobRetryResponse(job_id=job.id, retried=True)

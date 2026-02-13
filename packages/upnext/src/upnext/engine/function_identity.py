@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Literal
 
-FunctionKind = Literal["task", "cron", "event"]
+from upnext.types import FunctionKind
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 

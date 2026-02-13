@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from shared.models import Job
+from shared.domain.jobs import Job
 from upnext.engine.event_router import EventRouter
 from upnext.engine.function_identity import build_function_key
 

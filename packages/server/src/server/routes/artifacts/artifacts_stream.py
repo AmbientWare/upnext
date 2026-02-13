@@ -4,10 +4,10 @@ from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from shared.events import ARTIFACT_EVENTS_STREAM
+from shared.keys import ARTIFACT_EVENTS_STREAM
 
 from server.routes.artifacts.artifacts_utils import parse_artifact_stream_event
-from server.services import get_redis
+from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ async def stream_job_artifacts(job_id: str, request: Request) -> StreamingRespon
                         if parsed.job_id != job_id:
                             continue
                         yield f"data: {parsed.model_dump_json()}\n\n"
+
         except asyncio.CancelledError:
             return
 

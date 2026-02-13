@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass, field
 from typing import (
@@ -14,9 +15,10 @@ from typing import (
     overload,
 )
 
-from shared.models import Job
-from upnext.engine.handlers.idempotency import normalize_idempotency_key
+from shared.domain import EventSource, Job
+
 from upnext.engine.function_identity import build_function_key
+from upnext.engine.handlers.idempotency import normalize_idempotency_key
 from upnext.engine.queue.base import BaseQueue
 
 if TYPE_CHECKING:
@@ -72,45 +74,12 @@ class TypedEvent(Generic[P]):
 
     async def send(self, *args: P.args, **kwargs: P.kwargs) -> None:
         """Deliver the event with typed parameters."""
-        # Merge positional args into kwargs based on function signature
-        import inspect
-
-        sig = inspect.signature(self._func)
-        params = list(sig.parameters.keys())
-        # Convert positional args to kwargs
-        for i, arg in enumerate(args):
-            if i < len(params):
-                kwargs[params[i]] = arg
-        await self._event._enqueue_handlers(kwargs)
-
-    async def send_idempotent(
-        self,
-        idempotency_key: str,
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> None:
-        """Deliver event with typed parameters and idempotency key."""
-        import inspect
-
-        sig = inspect.signature(self._func)
-        params = list(sig.parameters.keys())
-        for i, arg in enumerate(args):
-            if i < len(params):
-                kwargs[params[i]] = arg
-        await self._event._enqueue_handlers(kwargs, idempotency_key=idempotency_key)
+        bound = inspect.signature(self._func).bind(*args, **kwargs)
+        await self._event._enqueue_handlers(dict(bound.arguments))
 
     def send_sync(self, *args: P.args, **kwargs: P.kwargs) -> None:
         """Send the event synchronously with typed parameters."""
         asyncio.run(self.send(*args, **kwargs))
-
-    def send_idempotent_sync(
-        self,
-        idempotency_key: str,
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> None:
-        """Send the event synchronously with idempotency key."""
-        asyncio.run(self.send_idempotent(idempotency_key, *args, **kwargs))
 
 
 @dataclass
@@ -213,6 +182,13 @@ class EventHandle:
 
         def decorator(fn: Callable[..., Any]) -> TypedEvent[Any]:
             handler_name = name or fn.__name__
+            if any(
+                existing.display_name == handler_name for existing in self._handlers
+            ):
+                raise ValueError(
+                    f"Event handler name '{handler_name}' is already registered "
+                    f"for event pattern '{self.pattern}'"
+                )
             handler = _Handler(
                 key=build_function_key(
                     "event",
@@ -270,18 +246,18 @@ class EventHandle:
             if idempotency_key is not None
             else ""
         )
-        for handler in self._handlers:
+
+        async def enqueue_handler(handler: _Handler) -> None:
             # Pass event data directly as kwargs (like tasks)
             job = Job(
                 function=handler.key,
                 function_name=handler.display_name,
                 kwargs=data,
                 key=normalized_key,
-                metadata={
-                    "event_pattern": self.pattern,
-                    "event_handler_key": handler.key,
-                    "event_handler_name": handler.display_name,
-                },
+                source=EventSource(
+                    event_pattern=self.pattern,
+                    event_handler_name=handler.display_name,
+                ),
             )
             try:
                 await queue.enqueue(job)
@@ -290,6 +266,8 @@ class EventHandle:
                     f"Failed to enqueue handler '{handler.display_name}' "
                     f"for event '{self.pattern}': {e}"
                 )
+
+        await asyncio.gather(*(enqueue_handler(handler) for handler in self._handlers))
 
     async def send(self, **data: Any) -> None:
         """Send event, enqueuing all handlers.

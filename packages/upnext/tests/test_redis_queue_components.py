@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import pytest
-from shared.models import Job, JobStatus
+from shared.domain.jobs import Job, JobStatus
 from upnext.engine.queue.redis.constants import CompletedJob
 from upnext.engine.queue.redis.fetcher import Fetcher
 from upnext.engine.queue.redis.finisher import Finisher

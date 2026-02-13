@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from shared.patterns import matches_event_pattern
-from shared.schemas import MissedRunPolicy
+from shared.contracts.common import MissedRunPolicy
 
 from upnext.engine.queue.redis.rate_limit import parse_rate_limit
 

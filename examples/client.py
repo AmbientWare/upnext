@@ -172,10 +172,14 @@ async def fetch_image_artifact(session: aiohttp.ClientSession) -> dict | None:
     url = random.choice(REMOTE_IMAGE_URLS)
     payload = {"url": url}
     try:
-        async with session.post(f"{API_URL}/artifacts/fetch-image", json=payload) as resp:
+        async with session.post(
+            f"{API_URL}/artifacts/fetch-image", json=payload
+        ) as resp:
             if resp.status == 200:
                 result = await resp.json()
-                logger.info(f"Submitted image artifact fetch: {result['job_id']} ({url})")
+                logger.info(
+                    f"Submitted image artifact fetch: {result['job_id']} ({url})"
+                )
                 return result
             else:
                 logger.warning(f"Failed to fetch image artifact: {resp.status}")

@@ -5,16 +5,19 @@ from itertools import permutations
 from time import perf_counter
 
 import pytest
-from pydantic import ValidationError
-
-from shared.events import JobCompletedEvent, JobFailedEvent, JobStartedEvent, SSEJobEvent
-from server.db.models import Artifact, JobHistory, PendingArtifact
-from server.db.repository import ArtifactRepository
-from server.db.repository import JobRepository
-from server.services.event_processing import process_event
-import server.services.event_processing as event_processing_module
-import server.routes.jobs as jobs_route
 import server.routes.jobs.jobs_root as jobs_root_route
+import server.services.events.processing as event_processing_module
+from pydantic import ValidationError
+from server.db.repositories import ArtifactRepository, JobRepository
+from server.db.tables import Artifact, JobHistory, PendingArtifact
+from server.services.events import process_event
+from shared.contracts import (
+    JobCompletedEvent,
+    JobFailedEvent,
+    JobProgressEvent,
+    JobStartedEvent,
+    SSEJobEvent,
+)
 
 
 @pytest.mark.contract
@@ -27,7 +30,6 @@ def test_event_model_contract_requires_lineage_fields() -> None:
         function_name="fn",
         root_id="job-1",
         kwargs={},
-        metadata={},
         attempt=1,
         max_retries=0,
         started_at=now,
@@ -52,13 +54,12 @@ def test_event_model_contract_requires_lineage_fields() -> None:
     )
 
     with pytest.raises(ValidationError):
-        JobStartedEvent( # type: ignore[call-arg]
+        JobStartedEvent(  # type: ignore[call-arg]
             job_id="job-1",
             function="fn",
             function_name="fn",
             # missing root_id should fail contract
             kwargs={},
-            metadata={},
             attempt=1,
             max_retries=0,
             started_at=now,
@@ -102,7 +103,6 @@ async def test_event_replay_invariant_same_final_state_for_permuted_sequences(
                 "max_retries": 0,
                 "started_at": base,
                 "kwargs": {},
-                "metadata": {},
             },
         ),
         (
@@ -135,7 +135,18 @@ async def test_event_replay_invariant_same_final_state_for_permuted_sequences(
         root_id = job_id
         for event_type, payload in order:
             materialized = {**payload, "job_id": job_id, "root_id": root_id}
-            await process_event(event_type, materialized, worker_id="worker-replay")
+            if event_type == "job.started":
+                await process_event(
+                    JobStartedEvent.model_validate(
+                        {**materialized, "worker_id": "worker-replay"}
+                    )
+                )
+            elif event_type == "job.progress":
+                await process_event(JobProgressEvent.model_validate(materialized))
+            elif event_type == "job.completed":
+                await process_event(JobCompletedEvent.model_validate(materialized))
+            else:
+                raise AssertionError(f"Unexpected event type in test: {event_type}")
 
         async with sqlite_db.session() as session:
             row = await session.get(JobHistory, job_id)
@@ -147,7 +158,9 @@ async def test_event_replay_invariant_same_final_state_for_permuted_sequences(
 
 
 @pytest.mark.asyncio
-async def test_outage_then_replay_recovers_without_duplicates(sqlite_db, monkeypatch) -> None:
+async def test_outage_then_replay_recovers_without_duplicates(
+    sqlite_db, monkeypatch
+) -> None:
     payload = {
         "job_id": "outage-job",
         "function": "fn",
@@ -157,7 +170,6 @@ async def test_outage_then_replay_recovers_without_duplicates(sqlite_db, monkeyp
         "max_retries": 0,
         "started_at": datetime.now(UTC),
         "kwargs": {},
-        "metadata": {},
     }
 
     calls = {"n": 0}
@@ -170,11 +182,19 @@ async def test_outage_then_replay_recovers_without_duplicates(sqlite_db, monkeyp
 
     monkeypatch.setattr(event_processing_module, "get_database", flaky_get_database)
 
-    # First processing during outage is not applied/persisted.
-    assert await process_event("job.started", payload, worker_id="worker") is False
+    # First processing during outage fails and should be retried later.
+    with pytest.raises(RuntimeError, match="db down"):
+        await process_event(
+            JobStartedEvent.model_validate({**payload, "worker_id": "worker"})
+        )
 
     # Replay after DB recovery should persist exactly one row.
-    assert await process_event("job.started", payload, worker_id="worker") is True
+    assert (
+        await process_event(
+            JobStartedEvent.model_validate({**payload, "worker_id": "worker"})
+        )
+        is True
+    )
 
     async with sqlite_db.session() as session:
         row = await session.get(JobHistory, "outage-job")
@@ -183,7 +203,9 @@ async def test_outage_then_replay_recovers_without_duplicates(sqlite_db, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_job_trends_route_zero_fills_missing_hours(sqlite_db, monkeypatch) -> None:
+async def test_job_trends_route_zero_fills_missing_hours(
+    sqlite_db, monkeypatch
+) -> None:
     now = datetime.now(UTC)
 
     async with sqlite_db.session() as session:
@@ -200,7 +222,7 @@ async def test_job_trends_route_zero_fills_missing_hours(sqlite_db, monkeypatch)
         )
 
     monkeypatch.setattr(jobs_root_route, "get_database", lambda: sqlite_db)
-    out = await jobs_route.get_job_trends(hours=4, function="fn.trend", type=None)
+    out = await jobs_root_route.get_job_trends(hours=4, function="fn.trend", type=None)
 
     assert len(out.hourly) == 4
     hours = [item.hour for item in out.hourly]
@@ -270,37 +292,37 @@ async def test_started_event_time_comparison_handles_naive_and_aware_datetimes(
     started_at_naive = started_at_aware.replace(tzinfo=None)
 
     applied = await process_event(
-        "job.started",
-        {
-            "job_id": "job-time-1",
-            "function": "fn.time",
-            "function_name": "time",
-            "root_id": "job-time-1",
-            "attempt": 1,
-            "max_retries": 0,
-            "started_at": started_at_aware,
-            "kwargs": {},
-            "metadata": {},
-        },
-        "worker-time",
+        JobStartedEvent.model_validate(
+            {
+                "job_id": "job-time-1",
+                "function": "fn.time",
+                "function_name": "time",
+                "root_id": "job-time-1",
+                "attempt": 1,
+                "max_retries": 0,
+                "started_at": started_at_aware,
+                "kwargs": {},
+                "worker_id": "worker-time",
+            }
+        )
     )
     assert applied is True
 
     # Same timestamp but naive form should still be treated as duplicate.
     duplicate = await process_event(
-        "job.started",
-        {
-            "job_id": "job-time-1",
-            "function": "fn.time",
-            "function_name": "time",
-            "root_id": "job-time-1",
-            "attempt": 1,
-            "max_retries": 0,
-            "started_at": started_at_naive,
-            "kwargs": {},
-            "metadata": {},
-        },
-        "worker-time",
+        JobStartedEvent.model_validate(
+            {
+                "job_id": "job-time-1",
+                "function": "fn.time",
+                "function_name": "time",
+                "root_id": "job-time-1",
+                "attempt": 1,
+                "max_retries": 0,
+                "started_at": started_at_naive,
+                "kwargs": {},
+                "worker_id": "worker-time",
+            }
+        )
     )
     assert duplicate is False
 
@@ -330,19 +352,19 @@ async def test_pending_artifact_promotion_preserves_all_rows_without_orphans(
         )
 
     await process_event(
-        "job.started",
-        {
-            "job_id": "artifact-life-1",
-            "function": "fn.artifact",
-            "function_name": "artifact",
-            "root_id": "artifact-life-1",
-            "attempt": 1,
-            "max_retries": 0,
-            "started_at": datetime.now(UTC),
-            "kwargs": {},
-            "metadata": {},
-        },
-        "worker-artifact",
+        JobStartedEvent.model_validate(
+            {
+                "job_id": "artifact-life-1",
+                "function": "fn.artifact",
+                "function_name": "artifact",
+                "root_id": "artifact-life-1",
+                "attempt": 1,
+                "max_retries": 0,
+                "started_at": datetime.now(UTC),
+                "kwargs": {},
+                "worker_id": "worker-artifact",
+            }
+        )
     )
 
     async with sqlite_db.session() as session:

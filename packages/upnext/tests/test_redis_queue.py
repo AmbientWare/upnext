@@ -6,14 +6,14 @@ import time
 from datetime import UTC, datetime
 
 import pytest
-from shared.models import Job, JobStatus
-from shared.schemas import (
+from shared.domain.jobs import CronSource, Job, JobStatus
+from shared.contracts import (
     DispatchReason,
     FunctionConfig,
     FunctionType,
     MissedRunPolicy,
 )
-from shared.workers import FUNCTION_KEY_PREFIX
+from shared.keys.workers import FUNCTION_KEY_PREFIX
 from upnext.engine.queue.base import DuplicateJobError
 from upnext.engine.queue.redis.queue import RedisQueue
 
@@ -59,7 +59,7 @@ async def test_queue_lifecycle_enqueue_dequeue_finish_cleans_keys(
 
 
 @pytest.mark.asyncio
-async def test_retry_clears_stream_metadata_and_requeues_immediately(
+async def test_retry_keeps_stream_claim_queue_local_and_requeues_immediately(
     queue: RedisQueue,
 ) -> None:
     job = Job(function="task_fn", function_name="task", key="retry-key")
@@ -67,15 +67,18 @@ async def test_retry_clears_stream_metadata_and_requeues_immediately(
 
     active = await queue.dequeue(["task_fn"], timeout=0.2)
     assert active is not None
-    old_msg_id = active.metadata.get("_stream_msg_id")
+    old_claim = queue._peek_stream_claim(active.id)  # noqa: SLF001
+    assert old_claim is not None
 
     await queue.retry(active, delay=0)
 
-    # Retry should clear stream metadata from the job payload and put it back on stream.
+    # Retry should keep stream claim queue-local and put the job back on stream.
     requeued = await queue.dequeue(["task_fn"], timeout=0.2)
     assert requeued is not None
     assert requeued.id == active.id
-    assert requeued.metadata.get("_stream_msg_id") != old_msg_id
+    new_claim = queue._peek_stream_claim(requeued.id)  # noqa: SLF001
+    assert new_claim is not None
+    assert new_claim.msg_id != old_claim.msg_id
 
 
 @pytest.mark.asyncio
@@ -131,6 +134,9 @@ async def test_record_dispatch_reason_updates_hash_and_stream(queue: RedisQueue)
     rate_limited = raw.get(b"rate_limited") or raw.get("rate_limited")
     assert int(paused) == 1
     assert int(rate_limited) == 1
+    ttl = await client.ttl(queue._dispatch_reasons_key("fn.dispatch"))  # noqa: SLF001
+    assert ttl is not None
+    assert int(ttl) > 0
 
     events = await client.xrevrange(queue._dispatch_events_stream_key(), count=2)  # noqa: SLF001
     assert len(events) == 2
@@ -163,6 +169,99 @@ async def test_cancel_terminal_job_returns_false(queue: RedisQueue) -> None:
     await queue.finish(active, JobStatus.COMPLETE)
 
     assert await queue.cancel(terminal_job.id) is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_does_not_override_existing_terminal_result(
+    queue: RedisQueue,
+) -> None:
+    job = Job(function="task_fn", function_name="task", key="cancel-race-key")
+    await queue.enqueue(job)
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    completed = Job(
+        id=job.id,
+        function=job.function,
+        function_name=job.function_name,
+        key=job.key,
+    )
+    completed.mark_complete({"ok": True})
+    await client.setex(
+        queue._result_key(job.id),  # noqa: SLF001
+        queue._result_ttl_seconds,  # noqa: SLF001
+        completed.to_json().encode(),
+    )
+
+    assert await queue.cancel(job.id) is False
+
+    resolved = await queue.get_job(job.id)
+    assert resolved is not None
+    assert resolved.status == JobStatus.COMPLETE
+    assert resolved.result == {"ok": True}
+    assert await queue.is_cancelled(job.id) is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_does_not_clear_existing_cancel_marker_on_race(
+    queue: RedisQueue,
+) -> None:
+    job = Job(function="task_fn", function_name="task", key="cancel-marker-race-key")
+    await queue.enqueue(job)
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.setex(
+        queue._cancel_marker_key(job.id),  # noqa: SLF001
+        queue._job_ttl_seconds,  # noqa: SLF001
+        b"1",
+    )
+
+    completed = Job(
+        id=job.id,
+        function=job.function,
+        function_name=job.function_name,
+        key=job.key,
+    )
+    completed.mark_complete({"ok": True})
+    await client.setex(
+        queue._result_key(job.id),  # noqa: SLF001
+        queue._result_ttl_seconds,  # noqa: SLF001
+        completed.to_json().encode(),
+    )
+
+    assert await queue.cancel(job.id) is False
+    assert await queue.is_cancelled(job.id) is True
+
+
+@pytest.mark.asyncio
+async def test_dequeue_skips_stale_stream_entry_without_active_job_key(
+    queue: RedisQueue,
+) -> None:
+    stale = Job(function="task_fn", function_name="task", key="stale-stream-entry")
+    fresh = Job(function="task_fn", function_name="task", key="fresh-stream-entry")
+    await queue.enqueue(stale)
+    await queue.enqueue(fresh)
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.delete(queue._job_key(stale))  # noqa: SLF001
+    await client.delete(queue._job_index_key(stale.id))  # noqa: SLF001
+
+    picked = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert picked is not None
+    assert picked.id == fresh.id
+
+
+@pytest.mark.asyncio
+async def test_manual_retry_preserves_attempt_counter(queue: RedisQueue) -> None:
+    failed = Job(function="task_fn", function_name="task", key="manual-retry-attempts")
+    failed.attempts = 3
+    failed.mark_failed("boom")
+
+    await queue.manual_retry(failed)
+
+    queued = await queue.get_job(failed.id)
+    assert queued is not None
+    assert queued.status == JobStatus.QUEUED
+    assert queued.attempts == 3
 
 
 @pytest.mark.asyncio
@@ -315,7 +414,7 @@ async def test_failed_job_moves_to_dead_letter_and_can_be_replayed(
     replayed = await queue.dequeue(["task_fn"], timeout=0.2)
     assert replayed is not None
     assert replayed.id == replayed_job_id
-    assert replayed.metadata.get("dlq_replayed_from") == entry.entry_id
+    assert replayed.dlq_replayed_from == entry.entry_id
 
     assert await queue.get_dead_letters("task_fn", limit=10) == []
 
@@ -451,8 +550,7 @@ async def test_cron_cursor_persists_next_and_last_completion(queue: RedisQueue) 
         function="cron.fn",
         function_name="cron_fn",
         key="cron:cron.fn",
-        schedule="* * * * *",
-        metadata={"cron": True},
+        source=CronSource(schedule="* * * * *"),
     )
 
     seeded = await queue.seed_cron(cron_job, next_run_at=now + 60)
@@ -492,8 +590,7 @@ async def test_reschedule_cron_same_window_reuses_existing_reservation(
         function="cron.resv",
         function_name="cron_resv",
         key="cron:cron.resv",
-        schedule="* * * * *",
-        metadata={"cron": True},
+        source=CronSource(schedule="* * * * *"),
     )
     cron_job.completed_at = datetime.now(UTC)
     next_run_at = now + 60
@@ -526,8 +623,7 @@ async def test_reschedule_cron_reclaims_stale_window_reservation(
         function="cron.stale",
         function_name="cron_stale",
         key="cron:cron.stale",
-        schedule="* * * * *",
-        metadata={"cron": True},
+        source=CronSource(schedule="* * * * *"),
     )
     cron_job.completed_at = datetime.now(UTC)
 
@@ -565,8 +661,7 @@ async def test_cron_startup_reconciliation_enqueues_catchup_when_cursor_is_stale
         function="cron.reconcile",
         function_name="cron_reconcile",
         key="cron:cron.reconcile",
-        schedule="* * * * *",
-        metadata={"cron": True},
+        source=CronSource(schedule="* * * * *"),
     )
 
     reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
@@ -592,9 +687,9 @@ async def test_cron_startup_reconciliation_enqueues_catchup_when_cursor_is_stale
         if isinstance(reconciled_job_raw, bytes)
         else reconciled_job_raw
     )
-    assert reconciled_job.metadata.get("startup_reconciled") is True
-    assert reconciled_job.metadata.get("startup_policy") == "catch_up"
-    reconciled_window = float(reconciled_job.metadata["cron_window_at"])
+    assert reconciled_job.startup_reconciled is True
+    assert reconciled_job.startup_policy == "catch_up"
+    reconciled_window = float(reconciled_job.cron_window_at or 0.0)
     assert reconciled_window <= now
     assert reconciled_window >= stale_next_run - 0.001
 
@@ -639,8 +734,7 @@ async def test_cron_startup_reconciliation_latest_only_uses_latest_window(
         function="cron.latest",
         function_name="cron_latest",
         key="cron:cron.latest",
-        schedule="* * * * *",
-        metadata={"cron": True},
+        source=CronSource(schedule="* * * * *"),
     )
     reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
     assert reconciled is True
@@ -659,8 +753,8 @@ async def test_cron_startup_reconciliation_latest_only_uses_latest_window(
         if isinstance(reconciled_job_raw, bytes)
         else reconciled_job_raw
     )
-    assert reconciled_job.metadata.get("startup_policy") == "latest_only"
-    assert float(reconciled_job.metadata["cron_window_at"]) > stale_next_run + 60
+    assert reconciled_job.startup_policy == "latest_only"
+    assert float(reconciled_job.cron_window_at or 0.0) > stale_next_run + 60
 
 
 @pytest.mark.asyncio
@@ -695,8 +789,7 @@ async def test_cron_startup_reconciliation_skip_policy_advances_cursor_without_e
         function="cron.skip",
         function_name="cron_skip",
         key="cron:cron.skip",
-        schedule="* * * * *",
-        metadata={"cron": True},
+        source=CronSource(schedule="* * * * *"),
     )
 
     reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
@@ -746,8 +839,7 @@ async def test_cron_startup_reconciliation_catch_up_window_respects_max_seconds(
         function="cron.windowed",
         function_name="cron_windowed",
         key="cron:cron.windowed",
-        schedule="* * * * *",
-        metadata={"cron": True},
+        source=CronSource(schedule="* * * * *"),
     )
     reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
     assert reconciled is True
@@ -768,5 +860,5 @@ async def test_cron_startup_reconciliation_catch_up_window_respects_max_seconds(
         if isinstance(reconciled_job_raw, bytes)
         else reconciled_job_raw
     )
-    assert reconciled_job.metadata.get("startup_policy") == "catch_up"
-    assert float(reconciled_job.metadata["cron_window_at"]) >= now - 90
+    assert reconciled_job.startup_policy == "catch_up"
+    assert float(reconciled_job.cron_window_at or 0.0) >= now - 90

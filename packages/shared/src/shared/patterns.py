@@ -4,8 +4,6 @@ This module provides wildcard pattern matching for event routing.
 Both EventRouter and Registry use this shared implementation.
 """
 
-from __future__ import annotations
-
 import re
 
 

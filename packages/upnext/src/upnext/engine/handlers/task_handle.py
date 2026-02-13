@@ -5,7 +5,8 @@ import inspect
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Generic, ParamSpec, overload
 
-from shared.models import Job
+from shared.domain import Job
+
 from upnext.engine.handlers.idempotency import normalize_idempotency_key
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.registry import TaskDefinition
@@ -138,6 +139,7 @@ class TaskHandle(Generic[P]):
 
         Parameters are typed based on the original function signature.
         By default, wait timeout matches the task definition timeout.
+        Raises if the job finishes with failed/cancelled status.
         """
         future = await self._enqueue_future(args, kwargs)
         timeout = self.definition.timeout if wait_timeout is None else wait_timeout
@@ -150,7 +152,10 @@ class TaskHandle(Generic[P]):
         wait_timeout: float | None = None,
         **kwargs: Any,
     ) -> TaskResult[Any]:
-        """Submit with idempotency key and wait for completion."""
+        """Submit with idempotency key and wait for completion.
+
+        Raises if the job finishes with failed/cancelled status.
+        """
         future = await self._enqueue_future(
             args,
             kwargs,
@@ -174,9 +179,7 @@ class TaskHandle(Generic[P]):
         **kwargs: P.kwargs,
     ) -> Future[Any]:
         """Submit task with idempotency key from a sync context."""
-        return asyncio.run(
-            self.submit_idempotent(idempotency_key, *args, **kwargs)
-        )
+        return asyncio.run(self.submit_idempotent(idempotency_key, *args, **kwargs))
 
     @overload
     def wait_sync(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]: ...

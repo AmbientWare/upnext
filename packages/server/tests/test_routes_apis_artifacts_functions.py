@@ -9,20 +9,20 @@ import server.routes.apis as apis_route
 import server.routes.apis.apis_root as apis_root_route
 import server.routes.apis.apis_stream as apis_stream_route
 import server.routes.apis.apis_utils as apis_utils_route
-import server.routes.artifacts as artifacts_route
 import server.routes.artifacts.artifacts_root as artifacts_root_route
-import server.routes.artifacts.job_artifacts as job_artifacts_route
+import server.routes.artifacts.artifacts_utils as artifacts_utils_route
 import server.routes.functions as functions_route
 import server.routes.jobs.jobs_stream as jobs_stream_route
 import server.routes.workers.workers_stream as workers_stream_route
+import server.services.apis.tracking as api_tracking_module
+import server.services.operations.alerts as alerts_module
 from fastapi import FastAPI, HTTPException, Response
 from httpx import ASGITransport, AsyncClient
-from server.db.models import PendingArtifact
-from server.db.repository import JobRepository
+from server.db.repositories import JobRepository
+from server.db.tables import PendingArtifact
 from server.routes import v1_router
-from server.services.queue import FunctionQueueDepthStats
-from shared.schemas import (
-    DispatchReasonMetrics,
+from server.services.jobs.metrics import FunctionQueueDepthStats
+from shared.contracts import (
     ApiInstance,
     ApiPageResponse,
     ApisListResponse,
@@ -30,6 +30,7 @@ from shared.schemas import (
     ArtifactResponse,
     ArtifactType,
     CreateArtifactRequest,
+    DispatchReasonMetrics,
     FunctionConfig,
     FunctionType,
     WorkerInstance,
@@ -61,15 +62,15 @@ def _worker(
 
 
 def test_calculate_artifact_size_handles_supported_payload_types() -> None:
-    assert artifacts_route.calculate_artifact_size(None) is None
-    assert artifacts_route.calculate_artifact_size("hello") == 5
-    assert artifacts_route.calculate_artifact_size({"x": 1}) == len(
+    assert artifacts_utils_route.calculate_artifact_size(None) is None
+    assert artifacts_utils_route.calculate_artifact_size("hello") == 5
+    assert artifacts_utils_route.calculate_artifact_size({"x": 1}) == len(
         json.dumps({"x": 1}).encode("utf-8")
     )
-    assert artifacts_route.calculate_artifact_size([1, 2]) == len(
+    assert artifacts_utils_route.calculate_artifact_size([1, 2]) == len(
         json.dumps([1, 2]).encode("utf-8")
     )
-    assert artifacts_route.calculate_artifact_size(123) is None
+    assert artifacts_utils_route.calculate_artifact_size(123) is None
 
 
 @pytest.mark.asyncio
@@ -90,11 +91,11 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
             }
         )
 
-    monkeypatch.setattr(job_artifacts_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
     monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
 
     create_response = Response()
-    created = await artifacts_route.create_artifact(
+    created = await artifacts_root_route.create_artifact(
         "artifact-job-1",
         CreateArtifactRequest(name="summary", type=ArtifactType.TEXT, data="hello"),
         create_response,
@@ -106,28 +107,29 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
     assert created.type == ArtifactType.TEXT
     assert created.size_bytes == 5
 
-    listed = await artifacts_route.list_artifacts("artifact-job-1")
+    listed = await artifacts_root_route.list_artifacts("artifact-job-1")
     assert listed.total == 1
     assert listed.artifacts[0].id == created.id
     assert listed.artifacts[0].storage_backend == "local"
     assert listed.artifacts[0].storage_key
 
-    fetched = await artifacts_route.get_artifact(created.id)
+    fetched = await artifacts_root_route.get_artifact(created.id)
     assert fetched.id == created.id
     assert fetched.job_id == "artifact-job-1"
 
-    content = await artifacts_route.get_artifact_content(created.id)
+    content = await artifacts_root_route.get_artifact_content(created.id)
     assert content.body == b"hello"
 
-    deleted = await artifacts_route.delete_artifact(created.id)
-    assert deleted == {"status": "deleted", "id": created.id}
+    deleted = await artifacts_root_route.delete_artifact(created.id)
+    assert deleted.status == "deleted"
+    assert deleted.id == created.id
 
     with pytest.raises(HTTPException, match="Artifact not found") as get_missing_exc:
-        await artifacts_route.get_artifact(created.id)
+        await artifacts_root_route.get_artifact(created.id)
     assert get_missing_exc.value.status_code == 404
 
     with pytest.raises(HTTPException, match="Artifact not found") as delete_missing_exc:
-        await artifacts_route.delete_artifact(created.id)
+        await artifacts_root_route.delete_artifact(created.id)
     assert delete_missing_exc.value.status_code == 404
 
 
@@ -135,10 +137,10 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
 async def test_create_artifact_queues_pending_when_job_row_missing(
     sqlite_db, monkeypatch
 ) -> None:
-    monkeypatch.setattr(job_artifacts_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
 
     response = Response()
-    queued = await artifacts_route.create_artifact(
+    queued = await artifacts_root_route.create_artifact(
         "missing-job",
         CreateArtifactRequest(
             name="payload", type=ArtifactType.JSON, data={"ok": True}
@@ -167,7 +169,7 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
     assert rows[0].name == "payload"
     assert rows[0].size_bytes == len(json.dumps({"ok": True}).encode("utf-8"))
 
-    listed = await artifacts_route.list_artifacts("missing-job")
+    listed = await artifacts_root_route.list_artifacts("missing-job")
     assert listed.total == 0
     assert listed.artifacts == []
 
@@ -177,27 +179,27 @@ async def test_artifact_routes_handle_database_unavailable(monkeypatch) -> None:
     def _no_db():
         raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr(job_artifacts_route, "get_database", _no_db)
+    monkeypatch.setattr(artifacts_root_route, "get_database", _no_db)
     monkeypatch.setattr(artifacts_root_route, "get_database", _no_db)
 
     with pytest.raises(HTTPException, match="Database not available") as create_exc:
-        await artifacts_route.create_artifact(
+        await artifacts_root_route.create_artifact(
             "job-1",
             CreateArtifactRequest(name="x", type=ArtifactType.TEXT, data="payload"),
             Response(),
         )
     assert create_exc.value.status_code == 503
 
-    listed = await artifacts_route.list_artifacts("job-1")
+    listed = await artifacts_root_route.list_artifacts("job-1")
     assert listed.total == 0
     assert listed.artifacts == []
 
     with pytest.raises(HTTPException, match="Database not available") as get_exc:
-        await artifacts_route.get_artifact(1)
+        await artifacts_root_route.get_artifact("1")
     assert get_exc.value.status_code == 503
 
     with pytest.raises(HTTPException, match="Database not available") as del_exc:
-        await artifacts_route.delete_artifact(1)
+        await artifacts_root_route.delete_artifact("1")
     assert del_exc.value.status_code == 503
 
 
@@ -314,12 +316,6 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             "fn.event": DispatchReasonMetrics(paused=0),
         }
 
-    emitted_counts: list[int] = []
-
-    async def _emit_alerts(functions):  # type: ignore[no-untyped-def]
-        emitted_counts.append(len(functions))
-        return 0
-
     monkeypatch.setattr(functions_route, "get_function_definitions", _defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", _workers)
     monkeypatch.setattr(functions_route, "get_function_queue_depth_stats", _queue_depth)
@@ -328,7 +324,6 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
-    monkeypatch.setattr(functions_route, "emit_function_alerts", _emit_alerts)
     monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
 
     all_functions = await functions_route.list_functions(type=None)
@@ -356,11 +351,53 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
     assert event.queue_backlog == 1
     assert set(event.workers) == {"host-1", "workerid"}
     assert event.active is True
-    assert emitted_counts == [2]
 
     event_only = await functions_route.list_functions(type=FunctionType.EVENT)
     assert event_only.total == 1
     assert event_only.functions[0].key == "fn.event"
+
+
+@pytest.mark.asyncio
+async def test_list_functions_has_no_alert_delivery_side_effect(monkeypatch) -> None:
+    async def _defs() -> dict[str, FunctionConfig]:
+        return {
+            "fn.task": FunctionConfig(
+                key="fn.task",
+                name="Task Fn",
+                type=FunctionType.TASK,
+            )
+        }
+
+    async def _workers() -> list[WorkerInstance]:
+        return []
+
+    async def _queue_depth() -> dict[str, FunctionQueueDepthStats]:
+        return {}
+
+    async def _dispatch_reasons() -> dict[str, DispatchReasonMetrics]:
+        return {}
+
+    async def _emit_raises(_functions):  # type: ignore[no-untyped-def]
+        raise AssertionError("list_functions should not emit alerts")
+
+    monkeypatch.setattr(functions_route, "get_function_definitions", _defs)
+    monkeypatch.setattr(functions_route, "list_worker_instances", _workers)
+    monkeypatch.setattr(functions_route, "get_function_queue_depth_stats", _queue_depth)
+    monkeypatch.setattr(
+        functions_route,
+        "get_function_dispatch_reason_stats",
+        _dispatch_reasons,
+    )
+    monkeypatch.setattr(
+        functions_route,
+        "get_database",
+        lambda: (_ for _ in ()).throw(RuntimeError("db unavailable")),
+    )
+    monkeypatch.setattr(alerts_module, "emit_function_alerts", _emit_raises)
+
+    out = await functions_route.list_functions(type=None)
+    assert out.total == 1
+    assert out.functions[0].key == "fn.task"
 
 
 @pytest.mark.asyncio
@@ -512,52 +549,52 @@ async def test_get_function_defaults_when_backends_unavailable(monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     class _Reader:
-        async def get_apis(self) -> list[dict]:
+        async def get_apis(self) -> list[api_tracking_module.ApiMetricsByName]:
             return [
-                {
-                    "name": "orders",
-                    "endpoint_count": 1,
-                    "requests_24h": 12,
-                    "avg_latency_ms": 21.5,
-                    "error_rate": 8.3,
-                    "requests_per_min": 0.5,
-                }
+                api_tracking_module.ApiMetricsByName(
+                    name="orders",
+                    endpoint_count=1,
+                    requests_24h=12,
+                    avg_latency_ms=21.5,
+                    error_rate=8.3,
+                    requests_per_min=0.5,
+                )
             ]
 
-        async def get_endpoints(self, api_name: str | None = None) -> list[dict]:
+        async def get_endpoints(
+            self, api_name: str | None = None
+        ) -> list[api_tracking_module.ApiEndpointMetrics]:
             rows = [
-                {
-                    "api_name": "orders",
-                    "method": "GET",
-                    "path": "/orders",
-                    "requests_24h": 12,
-                    "requests_per_min": 0.5,
-                    "avg_latency_ms": 21.5,
-                    "p50_latency_ms": 20.0,
-                    "p95_latency_ms": 30.0,
-                    "p99_latency_ms": 35.0,
-                    "error_rate": 8.3,
-                    "success_rate": 91.7,
-                    "client_error_rate": 8.3,
-                    "server_error_rate": 0.0,
-                    "status_2xx": 11,
-                    "status_4xx": 1,
-                    "status_5xx": 0,
-                    "last_request_at": datetime.now(UTC).isoformat(),
-                }
+                api_tracking_module.ApiEndpointMetrics(
+                    api_name="orders",
+                    method="GET",
+                    path="/orders",
+                    requests_24h=12,
+                    requests_per_min=0.5,
+                    avg_latency_ms=21.5,
+                    error_rate=8.3,
+                    success_rate=91.7,
+                    client_error_rate=8.3,
+                    server_error_rate=0.0,
+                    status_2xx=11,
+                    status_4xx=1,
+                    status_5xx=0,
+                )
             ]
             if api_name is None:
                 return rows
-            return [row for row in rows if row["api_name"] == api_name]
+            return [row for row in rows if row.api_name == api_name]
 
-        async def get_hourly_trends(self, hours: int) -> list[dict]:  # noqa: ARG002
+        async def get_hourly_trends(
+            self, hours: int
+        ) -> list[api_tracking_module.ApiHourlyTrend]:  # noqa: ARG002
             return [
-                {
-                    "hour": "2026-02-08T10:00:00Z",
-                    "success_2xx": 10,
-                    "client_4xx": 1,
-                    "server_5xx": 1,
-                }
+                api_tracking_module.ApiHourlyTrend(
+                    hour="2026-02-08T10:00:00Z",
+                    success_2xx=10,
+                    client_4xx=1,
+                    server_5xx=1,
+                )
             ]
 
     async def _reader() -> _Reader:
@@ -595,7 +632,7 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     monkeypatch.setattr(apis_root_route, "get_metrics_reader", _reader)
     monkeypatch.setattr(apis_root_route, "list_api_instances", _instances)
 
-    listed = await apis_route.list_apis()
+    listed = await apis_root_route.list_apis()
     assert listed.total == 2
     by_name = {api.name: api for api in listed.apis}
     assert by_name["orders"].active is True
@@ -603,20 +640,20 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     assert by_name["instance-only"].active is True
     assert by_name["instance-only"].requests_24h == 0
 
-    endpoints = await apis_route.list_endpoints()
+    endpoints = await apis_root_route.list_endpoints()
     assert endpoints.total == 1
     assert endpoints.endpoints[0].method == "GET"
     assert endpoints.endpoints[0].path == "/orders"
 
-    trends = await apis_route.get_api_trends(hours=12)
+    trends = await apis_root_route.get_api_trends(hours=12)
     assert len(trends.hourly) == 1
     assert trends.hourly[0].success_2xx == 10
 
-    found = await apis_route.get_endpoint("get", "orders")
+    found = await apis_root_route.get_endpoint("get", "orders")
     assert found.method == "GET"
     assert found.path == "/orders"
 
-    api_page = await apis_route.get_api("orders")
+    api_page = await apis_root_route.get_api("orders")
     assert api_page.api.name == "orders"
     assert api_page.api.docs_url == "http://localhost:8080/docs"
     assert api_page.api.requests_24h == 12
@@ -624,7 +661,7 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     assert api_page.total_endpoints == 1
     assert api_page.endpoints[0].path == "/orders"
 
-    missing = await apis_route.get_endpoint("post", "missing")
+    missing = await apis_root_route.get_endpoint("post", "missing")
     assert missing.method == "POST"
     assert missing.path == "/missing"
 
@@ -640,22 +677,22 @@ async def test_apis_routes_fallback_to_empty_when_sources_fail(monkeypatch) -> N
     monkeypatch.setattr(apis_root_route, "get_metrics_reader", _fail_reader)
     monkeypatch.setattr(apis_root_route, "list_api_instances", _fail_instances)
 
-    listed = await apis_route.list_apis()
+    listed = await apis_root_route.list_apis()
     assert listed.total == 0
     assert listed.apis == []
 
-    endpoints = await apis_route.list_endpoints()
+    endpoints = await apis_root_route.list_endpoints()
     assert endpoints.total == 0
     assert endpoints.endpoints == []
 
-    trends = await apis_route.get_api_trends(hours=24)
+    trends = await apis_root_route.get_api_trends(hours=24)
     assert trends.hourly == []
 
-    detail = await apis_route.get_endpoint("get", "missing")
+    detail = await apis_root_route.get_endpoint("get", "missing")
     assert detail.method == "GET"
     assert detail.path == "/missing"
 
-    api_page = await apis_route.get_api("missing")
+    api_page = await apis_root_route.get_api("missing")
     assert api_page.api.name == "missing"
     assert api_page.api.docs_url is None
     assert api_page.total_endpoints == 0
@@ -670,7 +707,7 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
     async def _list_apis() -> ApisListResponse:
         return ApisListResponse(
             apis=[
-                apis_route.ApiInfo(
+                apis_root_route.ApiInfo(
                     name="orders",
                     active=True,
                     instance_count=1,
@@ -686,7 +723,9 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
 
     async def _get_api(name: str) -> ApiPageResponse:
         return ApiPageResponse(
-            api=apis_route.ApiOverview(name=name, requests_24h=123, endpoint_count=2),
+            api=apis_root_route.ApiOverview(
+                name=name, requests_24h=123, endpoint_count=2
+            ),
             endpoints=[],
             total_endpoints=0,
         )
@@ -702,12 +741,12 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
     monkeypatch.setattr(apis_stream_route, "get_api", _get_api)
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
-    list_response = await apis_route.stream_apis(_RequestStub())
+    list_response = await apis_stream_route.stream_apis(_RequestStub())
     list_stream = cast(AsyncIterator[str], list_response.body_iterator.__aiter__())
     open_frame = await anext(list_stream)
     snapshot_frame = await anext(list_stream)
 
-    detail_response = await apis_route.stream_api("orders", _RequestStub())
+    detail_response = await apis_stream_route.stream_api("orders", _RequestStub())
     detail_stream = cast(AsyncIterator[str], detail_response.body_iterator.__aiter__())
     detail_open_frame = await anext(detail_stream)
     detail_snapshot_frame = await anext(detail_stream)
@@ -726,13 +765,16 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
     list_closer = getattr(list_response.body_iterator, "aclose", None)
     if callable(list_closer):
         await list_closer()
+
     detail_closer = getattr(detail_response.body_iterator, "aclose", None)
     if callable(detail_closer):
         await detail_closer()
 
 
 @pytest.mark.asyncio
-async def test_apis_stream_routes_return_503_when_redis_unavailable(monkeypatch) -> None:
+async def test_apis_stream_routes_return_503_when_redis_unavailable(
+    monkeypatch,
+) -> None:
     class _RequestStub:
         async def is_disconnected(self) -> bool:
             return False

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
-from server.db.models import JobHistory
-from server.services.stream_subscriber import StreamSubscriber, StreamSubscriberConfig
-from shared.events import EVENTS_STREAM
+from server.db.tables import JobHistory
+from server.services.events import StreamSubscriber, StreamSubscriberConfig
+from shared.keys import EVENTS_STREAM
 from upnext.engine.status import StatusPublisher
 
 
@@ -84,7 +82,6 @@ async def test_stale_pending_worker_event_is_reclaimed_and_persisted_once(
         attempt=1,
         max_retries=0,
         root_id=job_id,
-        metadata={"created": datetime.now(UTC).isoformat()},
     )
 
     # Simulate a crashed consumer that read but did not ACK.

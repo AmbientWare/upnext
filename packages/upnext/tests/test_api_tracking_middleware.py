@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from shared.api import API_PREFIX
-from shared.events import API_REQUESTS_STREAM
+from shared.keys.api import API_PREFIX
+from shared.keys import API_REQUESTS_STREAM
 from starlette.requests import Request
 from upnext.sdk.middleware import ApiTrackingConfig, ApiTrackingMiddleware
 

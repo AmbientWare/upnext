@@ -23,17 +23,31 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
 import redis.asyncio as redis
-from shared import Job, JobStatus
-from shared.schemas import DispatchReason, FunctionConfig, MissedRunPolicy
-from shared.workers import FUNCTION_KEY_PREFIX
+from pydantic import BaseModel
+from shared import CronSource, Job, JobStatus, clone_job_source
+from shared.contracts import DispatchReason, FunctionConfig, MissedRunPolicy
+from shared.keys import (
+    QUEUE_CONSUMER_GROUP,
+    QUEUE_KEY_PREFIX,
+    function_definition_key,
+    function_definition_pattern,
+    function_scheduled_pattern,
+    function_stream_pattern,
+    job_match_pattern,
+    job_status_channel,
+)
+from shared.queue_mutations import (
+    delete_stream_entries_for_job as shared_delete_stream_entries_for_job,
+    prepare_job_for_manual_retry,
+)
 
-from upnext.config import get_settings
+from upnext.config import ThroughputMode, get_settings
 from upnext.engine.cron import calculate_next_cron_run
 from upnext.engine.queue.base import (
     BaseQueue,
@@ -44,12 +58,9 @@ from upnext.engine.queue.base import (
 from upnext.engine.queue.redis.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CLAIM_TIMEOUT_MS,
-    DEFAULT_CONSUMER_GROUP,
     DEFAULT_FLUSH_INTERVAL,
     DEFAULT_INBOX_SIZE,
-    DEFAULT_KEY_PREFIX,
     DEFAULT_OUTBOX_SIZE,
-    QUEUE_KEY_PREFIX,
     CompletedJob,
 )
 from upnext.engine.queue.redis.fetcher import Fetcher
@@ -67,6 +78,14 @@ class _CronCursorRecord(BaseModel):
     next_run_at: datetime
     last_completed_at: datetime | None = None
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class _StreamClaim:
+    """Queue-local stream claim identity for ack/retry/cancel operations."""
+
+    stream_key: str
+    msg_id: str
 
 
 class RedisQueue(BaseQueue):
@@ -92,8 +111,8 @@ class RedisQueue(BaseQueue):
     def __init__(
         self,
         redis_url: str = "redis://localhost:6379",
-        key_prefix: str = DEFAULT_KEY_PREFIX,
-        consumer_group: str = DEFAULT_CONSUMER_GROUP,
+        key_prefix: str = QUEUE_KEY_PREFIX,
+        consumer_group: str = QUEUE_CONSUMER_GROUP,
         claim_timeout_ms: int = DEFAULT_CLAIM_TIMEOUT_MS,
         job_ttl_seconds: int | None = None,
         result_ttl_seconds: int | None = None,
@@ -133,7 +152,7 @@ class RedisQueue(BaseQueue):
         self._stream_maxlen = max(
             0,
             (
-                settings.queue_stream_maxlen
+                settings.default_queue_stream_maxlen()
                 if stream_maxlen is None
                 else int(stream_maxlen)
             ),
@@ -150,6 +169,7 @@ class RedisQueue(BaseQueue):
             0,
             int(settings.queue_dispatch_events_stream_maxlen),
         )
+        self._require_lua_atomic = settings.queue_runtime_profile == ThroughputMode.SAFE
 
         self._consumer_id = f"consumer_{uuid.uuid4().hex[:8]}"
         self._client: Any = client
@@ -174,7 +194,13 @@ class RedisQueue(BaseQueue):
             str, tuple[tuple[str | None, int | None], float]
         ] = {}
         self._group_active_count_cache: dict[str, tuple[int, float]] = {}
+        self._routing_group_members_cache: tuple[dict[str, list[str]], float] | None = (
+            None
+        )
+        self._routing_group_members_cache_ttl = 10.0
+        self._dispatch_event_emit_cache: dict[tuple[str, str], float] = {}
         self._fair_dequeue_cursor = 0
+        self._stream_claims: dict[str, _StreamClaim] = {}
 
         # Components (created on start)
         self._fetcher = None
@@ -276,6 +302,39 @@ class RedisQueue(BaseQueue):
         except Exception as e:
             logger.warning(f"Failed to load Lua scripts: {e}")
             self._scripts_loaded = False
+            if self._require_lua_atomic:
+                raise RuntimeError(
+                    "Failed to load required Redis Lua scripts in SAFE mode. "
+                    "Switch to throughput profile to allow non-atomic fallbacks."
+                ) from e
+
+    async def _evalsha_with_reload(
+        self,
+        script_attr: str,
+        num_keys: int,
+        *args: str,
+    ) -> Any:
+        """Run EVALSHA and recover once from Redis NOSCRIPT after restart/flush."""
+        client = await self._ensure_connected()
+        sha = getattr(self, script_attr, None)
+        if not sha:
+            raise RuntimeError(f"Lua script SHA missing for {script_attr}")
+
+        try:
+            return await client.evalsha(sha, num_keys, *args)
+        except redis.ResponseError as exc:
+            if "NOSCRIPT" not in str(exc):
+                raise
+
+            # Redis script cache was evicted (restart/flush); reload and retry once.
+            self._scripts_loaded = False
+            await self._load_scripts()
+
+            refreshed_sha = getattr(self, script_attr, None)
+            if not refreshed_sha:
+                raise
+
+            return await client.evalsha(refreshed_sha, num_keys, *args)
 
     async def _ensure_consumer_group(self, stream_key: str) -> None:
         """Ensure consumer group exists for a stream."""
@@ -331,7 +390,7 @@ class RedisQueue(BaseQueue):
         return self._key("cancelled", job_id)
 
     def _function_def_key(self, function: str) -> str:
-        return f"{FUNCTION_KEY_PREFIX}:{function}"
+        return function_definition_key(function)
 
     def _rate_limit_key(self, function: str) -> str:
         return self._key("fn", function, "rate_limit")
@@ -363,7 +422,9 @@ class RedisQueue(BaseQueue):
 
         owner_job_key = self._key("job", function, owner)
         scheduled_score = await client.zscore(self._scheduled_key(function), owner)
-        owner_exists = scheduled_score is not None or bool(await client.exists(owner_job_key))
+        owner_exists = scheduled_score is not None or bool(
+            await client.exists(owner_job_key)
+        )
         if owner_exists:
             return (False, owner)
 
@@ -416,30 +477,62 @@ class RedisQueue(BaseQueue):
         client = await self._ensure_connected()
         counts_key = self._dispatch_reasons_key(function)
         stream_key = self._dispatch_events_stream_key()
+        emit_stream_event = self._should_emit_dispatch_event(
+            function=function,
+            reason=reason.value,
+            job_id=job_id,
+        )
         try:
-            await client.hincrby(counts_key, reason.value, 1)
-            await client.expire(counts_key, max(1, self._job_ttl_seconds))
-            payload = {
-                "function": function,
-                "reason": reason.value,
-                "job_id": job_id or "",
-                "at": datetime.now(UTC).isoformat(),
-            }
-            if self._dispatch_events_stream_maxlen > 0:
-                await client.xadd(
-                    stream_key,
-                    payload,
-                    maxlen=self._dispatch_events_stream_maxlen,
-                    approximate=True,
-                )
-            else:
-                await client.xadd(stream_key, payload)
+            async with client.pipeline(transaction=False) as pipe:
+                pipe.hincrby(counts_key, reason.value, 1)
+                pipe.expire(counts_key, max(1, self._job_ttl_seconds))
+                if emit_stream_event:
+                    payload = {
+                        "function": function,
+                        "reason": reason.value,
+                        "job_id": job_id or "",
+                        "at": datetime.now(UTC).isoformat(),
+                    }
+                    if self._dispatch_events_stream_maxlen > 0:
+                        pipe.xadd(
+                            stream_key,
+                            payload,
+                            maxlen=self._dispatch_events_stream_maxlen,
+                            approximate=True,
+                        )
+                    else:
+                        pipe.xadd(stream_key, payload)
+                await pipe.execute()
         except Exception:
             logger.debug(
                 "Failed to record dispatch reason function=%s reason=%s",
                 function,
                 reason.value,
             )
+
+    def _should_emit_dispatch_event(
+        self,
+        *,
+        function: str,
+        reason: str,
+        job_id: str | None,
+    ) -> bool:
+        """Throttle dispatch event-stream writes while preserving aggregate counters."""
+        if self._dispatch_events_stream_maxlen <= 0:
+            return False
+
+        now = time.time()
+        key = (function, reason)
+        min_interval = 0.25 if job_id else 1.0
+        previous = self._dispatch_event_emit_cache.get(key, 0.0)
+        if now - previous < min_interval:
+            return False
+        self._dispatch_event_emit_cache[key] = now
+
+        # Keep the in-memory throttle map bounded for long-running workers.
+        if len(self._dispatch_event_emit_cache) > 10_000:
+            self._dispatch_event_emit_cache.clear()
+        return True
 
     async def _paused_state_map(self, functions: list[str]) -> dict[str, bool]:
         """Resolve paused state for functions with a small in-memory TTL cache."""
@@ -480,7 +573,9 @@ class RedisQueue(BaseQueue):
             try:
                 parsed = parse_rate_limit(config.rate_limit)
             except ValueError as exc:
-                logger.warning("Invalid rate_limit for function '%s': %s", function, exc)
+                logger.warning(
+                    "Invalid rate_limit for function '%s': %s", function, exc
+                )
                 parsed = None
 
         self._function_rate_limit_cache[function] = (parsed, now + 1.0)
@@ -573,24 +668,7 @@ class RedisQueue(BaseQueue):
         if cached and cached[1] > now:
             return cached[0]
 
-        client = await self._ensure_connected()
-        members: list[str] = []
-        cursor = 0
-        while True:
-            cursor, keys = await client.scan(
-                cursor=cursor,
-                match=f"{FUNCTION_KEY_PREFIX}:*",
-                count=100,
-            )
-            for key in keys:
-                raw = await client.get(key)
-                config = self._parse_function_config(raw)
-                if config is None:
-                    continue
-                if config.routing_group == group:
-                    members.append(config.key)
-            if cursor == 0:
-                break
+        members = (await self._routing_group_members()).get(group, [])
 
         active = 0
         for function in members:
@@ -599,9 +677,48 @@ class RedisQueue(BaseQueue):
         self._group_active_count_cache[group] = (active, now + 0.25)
         return active
 
+    async def _routing_group_members(self) -> dict[str, list[str]]:
+        now = time.time()
+        cached = self._routing_group_members_cache
+        if cached and cached[1] > now:
+            return cached[0]
+
+        client = await self._ensure_connected()
+        members: dict[str, list[str]] = {}
+        cursor = 0
+        while True:
+            cursor, keys = await client.scan(
+                cursor=cursor,
+                match=function_definition_pattern(),
+                count=100,
+            )
+            rows = await client.mget(keys) if keys else []
+            for raw in rows:
+                config = self._parse_function_config(raw)
+                if config is None or not config.routing_group:
+                    continue
+                members.setdefault(config.routing_group, []).append(config.key)
+            if cursor == 0:
+                break
+
+        self._routing_group_members_cache = (
+            members,
+            now + self._routing_group_members_cache_ttl,
+        )
+        return members
+
     def _invalidate_function_active_count(self, function: str) -> None:
         self._function_active_count_cache.pop(function, None)
         self._group_active_count_cache.clear()
+
+    def _set_stream_claim(self, job_id: str, *, stream_key: str, msg_id: str) -> None:
+        self._stream_claims[job_id] = _StreamClaim(stream_key=stream_key, msg_id=msg_id)
+
+    def _peek_stream_claim(self, job_id: str) -> _StreamClaim | None:
+        return self._stream_claims.get(job_id)
+
+    def _pop_stream_claim(self, job_id: str) -> _StreamClaim | None:
+        return self._stream_claims.pop(job_id, None)
 
     async def _acquire_rate_limit_token(
         self,
@@ -614,8 +731,8 @@ class RedisQueue(BaseQueue):
         ttl_ms = max(1000, int(rate_limit.window_seconds * 2000))
 
         if self._rate_limit_sha:
-            allowed = await client.evalsha(
-                self._rate_limit_sha,
+            allowed = await self._evalsha_with_reload(
+                "_rate_limit_sha",
                 1,
                 bucket_key,
                 str(now_ms),
@@ -626,7 +743,9 @@ class RedisQueue(BaseQueue):
             return int(allowed) == 1
 
         raw_tokens, raw_ts = await client.hmget(bucket_key, "tokens", "ts")
-        tokens = float(raw_tokens) if raw_tokens is not None else float(rate_limit.capacity)
+        tokens = (
+            float(raw_tokens) if raw_tokens is not None else float(rate_limit.capacity)
+        )
         ts = float(raw_ts) if raw_ts is not None else float(now_ms)
         if now_ms > ts:
             tokens = min(
@@ -651,36 +770,97 @@ class RedisQueue(BaseQueue):
         if not functions:
             return []
         states = await self._paused_state_map(functions)
+        paused_functions = [fn for fn in functions if states.get(fn, False)]
+        if paused_functions:
+            await asyncio.gather(
+                *(
+                    self.record_dispatch_reason(fn, DispatchReason.PAUSED)
+                    for fn in paused_functions
+                )
+            )
+
+        candidates = [fn for fn in functions if not states.get(fn, False)]
+        if not candidates:
+            return []
+
+        max_concurrency_values = await asyncio.gather(
+            *(self._function_max_concurrency(fn) for fn in candidates)
+        )
+
+        needs_active_check = [
+            fn
+            for fn, max_concurrency in zip(
+                candidates, max_concurrency_values, strict=False
+            )
+            if max_concurrency is not None
+        ]
+        active_counts: dict[str, int] = {}
+        if needs_active_check:
+            active_values = await asyncio.gather(
+                *(self._function_active_count(fn) for fn in needs_active_check)
+            )
+            active_counts = dict(zip(needs_active_check, active_values, strict=False))
+
         runnable: list[str] = []
-        for function in functions:
-            if states.get(function, False):
-                await self.record_dispatch_reason(function, DispatchReason.PAUSED)
-                continue
-            max_concurrency = await self._function_max_concurrency(function)
+        capacity_blocked: list[str] = []
+        for function, max_concurrency in zip(
+            candidates, max_concurrency_values, strict=False
+        ):
             if max_concurrency is None:
                 runnable.append(function)
                 continue
-
-            active = await self._function_active_count(function)
-            if active < max_concurrency:
+            if active_counts.get(function, 0) < max_concurrency:
                 runnable.append(function)
-                continue
+            else:
+                capacity_blocked.append(function)
 
-            await self.record_dispatch_reason(function, DispatchReason.NO_CAPACITY)
-            continue
+        if capacity_blocked:
+            await asyncio.gather(
+                *(
+                    self.record_dispatch_reason(fn, DispatchReason.NO_CAPACITY)
+                    for fn in capacity_blocked
+                )
+            )
+
+        if not runnable:
+            return []
+
+        quotas = await asyncio.gather(
+            *(self._function_group_quota(fn) for fn in runnable)
+        )
+
+        functions_by_group: dict[str, list[str]] = {}
+        for function, (group, group_limit) in zip(runnable, quotas, strict=False):
+            if group is None or group_limit is None:
+                continue
+            functions_by_group.setdefault(group, []).append(function)
+
+        group_active_counts: dict[str, int] = {}
+        if functions_by_group:
+            groups = list(functions_by_group)
+            group_active_values = await asyncio.gather(
+                *(self._group_active_count(group) for group in groups)
+            )
+            group_active_counts = dict(zip(groups, group_active_values, strict=False))
 
         filtered: list[str] = []
-        for function in runnable:
-            group, group_limit = await self._function_group_quota(function)
+        group_blocked: list[str] = []
+        for function, (group, group_limit) in zip(runnable, quotas, strict=False):
             if group is None or group_limit is None:
                 filtered.append(function)
                 continue
-
-            group_active = await self._group_active_count(group)
-            if group_active < group_limit:
+            if group_active_counts.get(group, 0) < group_limit:
                 filtered.append(function)
             else:
-                await self.record_dispatch_reason(function, DispatchReason.NO_CAPACITY)
+                group_blocked.append(function)
+
+        if group_blocked:
+            await asyncio.gather(
+                *(
+                    self.record_dispatch_reason(fn, DispatchReason.NO_CAPACITY)
+                    for fn in group_blocked
+                )
+            )
         return filtered
 
     def _fair_order_functions(self, functions: list[str]) -> list[str]:
@@ -753,39 +933,13 @@ class RedisQueue(BaseQueue):
     ) -> int:
         """Delete stream entries matching a job_id (best effort, cancel path only)."""
         client = await self._ensure_connected()
-        start = "-"
-        scanned = 0
-        deleted = 0
-
-        while scanned < max_scan:
-            rows = await client.xrange(stream_key, min=start, max="+", count=batch_size)
-            if not rows:
-                break
-
-            delete_ids: list[str] = []
-            for msg_id, msg_data in rows:
-                scanned += 1
-                msg_job_id = msg_data.get(b"job_id") or msg_data.get("job_id")
-                msg_job_id_str = (
-                    msg_job_id.decode() if isinstance(msg_job_id, bytes) else msg_job_id
-                )
-                if msg_job_id_str == job_id:
-                    msg_id_str = (
-                        msg_id.decode() if isinstance(msg_id, bytes) else msg_id
-                    )
-                    delete_ids.append(msg_id_str)
-
-            if delete_ids:
-                deleted += await client.xdel(stream_key, *delete_ids)
-
-            if len(rows) < batch_size:
-                break
-
-            last_id = rows[-1][0]
-            last_id_str = last_id.decode() if isinstance(last_id, bytes) else last_id
-            start = f"({last_id_str}"
-
-        return deleted
+        return await shared_delete_stream_entries_for_job(
+            client,
+            stream_key,
+            job_id,
+            batch_size=batch_size,
+            max_scan=max_scan,
+        )
 
     # =========================================================================
     # CORE - enqueue
@@ -813,8 +967,8 @@ class RedisQueue(BaseQueue):
             dest_key = scheduled_key if delay > 0 else stream_key
             scheduled_time = run_at if delay > 0 else 0
 
-            result = await client.evalsha(
-                self._enqueue_sha,
+            result = await self._evalsha_with_reload(
+                "_enqueue_sha",
                 4,
                 dedup_key,
                 job_key,
@@ -906,7 +1060,7 @@ class RedisQueue(BaseQueue):
                     consumername=self._consumer_id,
                     streams={sk: ">" for sk in stream_keys},
                     count=1,
-                    block=min(remaining_ms, 10),
+                    block=min(remaining_ms, 1000),
                 )
 
                 if result:
@@ -979,7 +1133,7 @@ class RedisQueue(BaseQueue):
                     consumername=self._consumer_id,
                     streams={sk: ">" for sk in stream_keys},
                     count=count - len(jobs),
-                    block=min(remaining_ms, 10),
+                    block=min(remaining_ms, 1000),
                 )
 
                 if result:
@@ -1051,7 +1205,9 @@ class RedisQueue(BaseQueue):
         client = await self._ensure_connected()
         msg_id_str = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
 
-        # Try to get job data from stream message (fast path)
+        # Resolve canonical active job payload; stream entries can be stale.
+        job_key: str
+        parsed_job_id: str | None = None
         job_data_raw = msg_data.get(b"data") or msg_data.get("data")
         if job_data_raw:
             job_str = (
@@ -1059,7 +1215,18 @@ class RedisQueue(BaseQueue):
                 if isinstance(job_data_raw, bytes)
                 else job_data_raw
             )
-            job = Job.from_json(job_str)
+            try:
+                stream_job = Job.from_json(job_str)
+            except Exception:
+                logger.warning(
+                    "Skipping invalid stream payload stream=%s msg_id=%s",
+                    stream_key,
+                    msg_id_str,
+                )
+                await client.xack(stream_key, self._consumer_group, msg_id_str)
+                return None
+            job_key = self._job_key(stream_job)
+            parsed_job_id = stream_job.id
         else:
             # Fallback for old messages
             job_id_raw = msg_data.get(b"job_id") or msg_data.get("job_id")
@@ -1070,6 +1237,7 @@ class RedisQueue(BaseQueue):
             job_id = (
                 job_id_raw.decode() if isinstance(job_id_raw, bytes) else job_id_raw
             )
+            parsed_job_id = job_id
             function_raw = msg_data.get(b"function") or msg_data.get("function")
             function = (
                 function_raw.decode()
@@ -1078,13 +1246,33 @@ class RedisQueue(BaseQueue):
             )
 
             job_key = self._key("job", function, job_id)
-            job_data = await client.get(job_key)
-            if not job_data:
-                await client.xack(stream_key, self._consumer_group, msg_id_str)
-                return None
 
-            job_str = job_data.decode() if isinstance(job_data, bytes) else job_data
+        job_data = await client.get(job_key)
+        if not job_data:
+            # ACK only if the job already reached terminal state and payload was
+            # legitimately removed. Otherwise keep pending for investigation/replay.
+            if parsed_job_id and await client.exists(self._result_key(parsed_job_id)):
+                await client.xack(stream_key, self._consumer_group, msg_id_str)
+            else:
+                logger.warning(
+                    "Missing active job payload for stream=%s msg_id=%s; leaving pending",
+                    stream_key,
+                    msg_id_str,
+                )
+            return None
+
+        job_str = job_data.decode() if isinstance(job_data, bytes) else job_data
+        try:
             job = Job.from_json(job_str)
+        except Exception:
+            logger.warning(
+                "Skipping invalid canonical job payload key=%s stream=%s msg_id=%s",
+                job_key,
+                stream_key,
+                msg_id_str,
+            )
+            await client.xack(stream_key, self._consumer_group, msg_id_str)
+            return None
 
         rate_limit = await self._function_rate_limit(job.function)
         max_concurrency = await self._function_max_concurrency(job.function)
@@ -1096,9 +1284,7 @@ class RedisQueue(BaseQueue):
                     DispatchReason.NO_CAPACITY,
                     job_id=job.id,
                 )
-                job.metadata = job.metadata or {}
-                job.metadata["_stream_msg_id"] = msg_id_str
-                job.metadata["_stream_key"] = stream_key
+                self._set_stream_claim(job.id, stream_key=stream_key, msg_id=msg_id_str)
                 await self.retry(job, delay=0.1)
                 self._invalidate_function_active_count(job.function)
                 return None
@@ -1112,9 +1298,7 @@ class RedisQueue(BaseQueue):
                     DispatchReason.NO_CAPACITY,
                     job_id=job.id,
                 )
-                job.metadata = job.metadata or {}
-                job.metadata["_stream_msg_id"] = msg_id_str
-                job.metadata["_stream_key"] = stream_key
+                self._set_stream_claim(job.id, stream_key=stream_key, msg_id=msg_id_str)
                 await self.retry(job, delay=0.1)
                 self._invalidate_function_active_count(job.function)
                 return None
@@ -1127,20 +1311,17 @@ class RedisQueue(BaseQueue):
                     DispatchReason.RATE_LIMITED,
                     job_id=job.id,
                 )
-                job.metadata = job.metadata or {}
-                job.metadata["_stream_msg_id"] = msg_id_str
-                job.metadata["_stream_key"] = stream_key
+                self._set_stream_claim(job.id, stream_key=stream_key, msg_id=msg_id_str)
                 await self.retry(job, delay=rate_limit.token_interval_seconds)
                 self._invalidate_function_active_count(job.function)
                 return None
 
-        # Store stream info for later ACK
-        job.metadata = job.metadata or {}
-        job.metadata["_stream_msg_id"] = msg_id_str
-        job.metadata["_stream_key"] = stream_key
+        # Store stream claim for later ACK/retry bookkeeping.
+        self._set_stream_claim(job.id, stream_key=stream_key, msg_id=msg_id_str)
 
         job.status = JobStatus.ACTIVE
         job.started_at = datetime.now(UTC)
+        await self._refresh_job_ttl(client, job, job_key=job_key)
         self._invalidate_function_active_count(job.function)
 
         return job
@@ -1175,8 +1356,9 @@ class RedisQueue(BaseQueue):
         """Mark job as finished immediately (no batching)."""
         client = await self._ensure_connected()
 
-        msg_id = job.metadata.get("_stream_msg_id") if job.metadata else None
-        stream_key = job.metadata.get("_stream_key") if job.metadata else None
+        claim = self._pop_stream_claim(job.id)
+        msg_id = claim.msg_id if claim else None
+        stream_key = claim.stream_key if claim else None
         if not stream_key:
             stream_key = self._stream_key(job.function)
 
@@ -1189,11 +1371,11 @@ class RedisQueue(BaseQueue):
         job_key = self._job_key(job)
         job_index_key = self._job_index_key(job.id)
         dedup_key = self._dedup_key(job.function)
-        pubsub_channel = f"upnext:job:{job.id}"
+        pubsub_channel = job_status_channel(job.id)
 
         if self._finish_sha:
-            await client.evalsha(
-                self._finish_sha,
+            await self._evalsha_with_reload(
+                "_finish_sha",
                 6,
                 stream_key,
                 result_key,
@@ -1236,13 +1418,9 @@ class RedisQueue(BaseQueue):
         client = await self._ensure_connected()
         now = time.time()
 
-        msg_id = job.metadata.get("_stream_msg_id") if job.metadata else None
-        old_stream_key = job.metadata.get("_stream_key") if job.metadata else None
-
-        # Clear stream metadata before re-enqueue
-        if job.metadata:
-            job.metadata.pop("_stream_msg_id", None)
-            job.metadata.pop("_stream_key", None)
+        claim = self._pop_stream_claim(job.id)
+        msg_id = claim.msg_id if claim else None
+        old_stream_key = claim.stream_key if claim else None
 
         run_at = now + delay if delay > 0 else now
         job.scheduled_at = datetime.fromtimestamp(run_at, UTC)
@@ -1262,8 +1440,8 @@ class RedisQueue(BaseQueue):
 
         # Use Lua script for atomic retry if available
         if self._retry_sha and old_stream_key:
-            await client.evalsha(
-                self._retry_sha,
+            await self._evalsha_with_reload(
+                "_retry_sha",
                 4,  # number of keys
                 old_stream_key,
                 job_key,
@@ -1297,6 +1475,50 @@ class RedisQueue(BaseQueue):
                 )
         self._invalidate_function_active_count(job.function)
 
+    async def manual_retry(self, job: Job) -> None:
+        """Requeue a terminal job for operator-initiated retry."""
+        if job.status not in {JobStatus.FAILED, JobStatus.CANCELLED}:
+            raise ValueError(
+                f"Job {job.id} cannot be retried from status '{job.status.value}'"
+            )
+
+        client = await self._ensure_connected()
+        self._pop_stream_claim(job.id)
+
+        prepare_job_for_manual_retry(job)
+
+        stream_key = self._stream_key(job.function)
+        scheduled_key = self._scheduled_key(job.function)
+        dedup_key = self._dedup_key(job.function)
+        job_key = self._job_key(job)
+        job_index_key = self._job_index_key(job.id)
+
+        if job.key and await client.sismember(dedup_key, job.key):
+            raise DuplicateJobError(
+                f"idempotency key '{job.key}' is already active for {job.function}"
+            )
+
+        await self._ensure_consumer_group(stream_key)
+
+        payload_json = job.to_json()
+        payload = {"job_id": job.id, "function": job.function, "data": payload_json}
+        async with client.pipeline(transaction=True) as pipe:
+            pipe.setex(job_key, self._job_ttl_seconds, payload_json)
+            pipe.setex(job_index_key, self._job_ttl_seconds, job_key)
+            pipe.delete(self._result_key(job.id))
+            pipe.delete(self._cancel_marker_key(job.id))
+            pipe.zrem(scheduled_key, job.id)
+            if job.key:
+                pipe.sadd(dedup_key, job.key)
+                pipe.expire(dedup_key, self._job_ttl_seconds)
+            if self._stream_maxlen > 0:
+                pipe.xadd(stream_key, payload, maxlen=self._stream_maxlen)
+            else:
+                pipe.xadd(stream_key, payload)
+            await pipe.execute()
+
+        self._invalidate_function_active_count(job.function)
+
     async def cancel(self, job_id: str) -> bool:
         """Cancel a job."""
         client = await self._ensure_connected()
@@ -1314,38 +1536,35 @@ class RedisQueue(BaseQueue):
         if job.status.is_terminal():
             return False
 
-        # Update job status for result storage
-        job.status = JobStatus.CANCELLED
-        job.completed_at = datetime.now(UTC)
+        # Update job status for result storage.
+        job.mark_cancelled()
 
-        msg_id = job.metadata.get("_stream_msg_id") if job.metadata else None
+        claim = self._pop_stream_claim(job.id)
+        msg_id = claim.msg_id if claim else None
         stream_key = self._stream_key(job.function)
         scheduled_key = self._scheduled_key(job.function)
         result_key = self._result_key(job.id)
         job_index_key = self._job_index_key(job.id)
         dedup_key = self._dedup_key(job.function)
         cancel_marker_key = self._cancel_marker_key(job.id)
-        pubsub_channel = f"upnext:job:{job.id}"
+        pubsub_channel = job_status_channel(job.id)
 
         # Mark cancellation immediately so workers can skip already-prefetched jobs.
-        await client.setex(cancel_marker_key, self._job_ttl_seconds, b"1")
-
-        # Remove queued copies from scheduled and stream storage (best effort).
-        await client.zrem(scheduled_key, job.id)
-        deleted_from_stream = await self._delete_stream_entries_for_job(
-            stream_key, job.id
-        )
-        if deleted_from_stream > 0:
-            logger.debug(
-                "Deleted %s queued stream entries for cancelled job %s",
-                deleted_from_stream,
-                job.id,
+        # Use NX so concurrent cancels do not clobber each other's marker lifetime.
+        marker_created = bool(
+            await client.set(
+                cancel_marker_key,
+                b"1",
+                ex=self._job_ttl_seconds,
+                nx=True,
             )
+        )
 
         # Use Lua script for atomic cancellation if available
+        cancelled = False
         if self._cancel_sha:
-            await client.evalsha(
-                self._cancel_sha,
+            result = await self._evalsha_with_reload(
+                "_cancel_sha",
                 6,  # number of keys
                 stream_key,
                 result_key,
@@ -1359,18 +1578,45 @@ class RedisQueue(BaseQueue):
                 str(self._result_ttl_seconds),
                 job.key or "",
             )
+            result_text = result.decode() if isinstance(result, bytes) else str(result)
+            cancelled = result_text == "OK"
         else:
             # Fallback without Lua
+            stored = await client.set(
+                result_key,
+                job.to_json().encode(),
+                ex=self._result_ttl_seconds,
+                nx=True,
+            )
+            cancelled = bool(stored)
+            if not cancelled:
+                if marker_created:
+                    await client.delete(cancel_marker_key)
+                return False
             if msg_id:
                 await client.xack(stream_key, self._consumer_group, msg_id)
-            await client.setex(
-                result_key, self._result_ttl_seconds, job.to_json().encode()
-            )
             await client.delete(job_key)
             await client.delete(job_index_key)
             if job.key:
                 await client.srem(dedup_key, job.key)
             await client.publish(pubsub_channel, JobStatus.CANCELLED.value)
+
+        if not cancelled:
+            if marker_created:
+                await client.delete(cancel_marker_key)
+            return False
+
+        # Remove queued copies from scheduled and stream storage (best effort).
+        await client.zrem(scheduled_key, job.id)
+        deleted_from_stream = await self._delete_stream_entries_for_job(
+            stream_key, job.id
+        )
+        if deleted_from_stream > 0:
+            logger.debug(
+                "Deleted %s queued stream entries for cancelled job %s",
+                deleted_from_stream,
+                job.id,
+            )
 
         self._invalidate_function_active_count(job.function)
         return True
@@ -1402,16 +1648,27 @@ class RedisQueue(BaseQueue):
         return Job.from_json(job_str)
 
     # =========================================================================
-    # OPTIONAL - progress, heartbeat, metadata
+    # OPTIONAL - progress, heartbeat, checkpoint
     # =========================================================================
 
     async def update_progress(self, job_id: str, progress: float) -> None:
-        job = await self.get_job(job_id)
-        if job:
-            job.progress = progress
-            job_key = self._job_key(job)
-            client = await self._ensure_connected()
-            await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
+        client = await self._ensure_connected()
+        job_key = await self._find_job_key_by_id(job_id)
+        if job_key is None:
+            return
+
+        job_data = await client.get(job_key)
+        if not job_data:
+            return
+
+        job = Job.from_json(
+            job_data.decode() if isinstance(job_data, bytes) else job_data
+        )
+        if job.progress == progress:
+            return
+
+        job.progress = progress
+        await client.setex(job_key, self._job_ttl_seconds, job.to_json())
 
     async def is_cancelled(self, job_id: str) -> bool:
         client = await self._ensure_connected()
@@ -1428,12 +1685,10 @@ class RedisQueue(BaseQueue):
         # Group by stream key for efficient pipelining
         by_stream: dict[str, list[str]] = {}
         for job in jobs:
-            if not job.metadata:
+            claim = self._peek_stream_claim(job.id)
+            if claim is None:
                 continue
-            stream_key = job.metadata.get("_stream_key")
-            msg_id = job.metadata.get("_stream_msg_id")
-            if stream_key and msg_id:
-                by_stream.setdefault(stream_key, []).append(msg_id)
+            by_stream.setdefault(claim.stream_key, []).append(claim.msg_id)
 
         for stream_key, msg_ids in by_stream.items():
             try:
@@ -1446,10 +1701,47 @@ class RedisQueue(BaseQueue):
                 )
             except redis.ResponseError as e:
                 logger.warning(f"Heartbeat XCLAIM failed on {stream_key}: {e}")
+        await self._refresh_job_ttls(client, jobs)
 
-    async def update_job_metadata(self, job_id: str, metadata: dict[str, Any]) -> None:
+    async def _refresh_job_ttl(
+        self,
+        client: Any,
+        job: Job,
+        *,
+        job_key: str | None = None,
+    ) -> None:
+        if self._job_ttl_seconds <= 0:
+            return
+        key = job_key or self._job_key(job)
+        index_key = self._job_index_key(job.id)
+        try:
+            async with client.pipeline(transaction=False) as pipe:
+                pipe.expire(key, self._job_ttl_seconds)
+                pipe.expire(index_key, self._job_ttl_seconds)
+                await pipe.execute()
+        except Exception:
+            logger.debug("Failed refreshing TTL for job %s", job.id)
+
+    async def _refresh_job_ttls(self, client: Any, jobs: list[Job]) -> None:
+        if not jobs or self._job_ttl_seconds <= 0:
+            return
+        try:
+            async with client.pipeline(transaction=False) as pipe:
+                for job in jobs:
+                    pipe.expire(self._job_key(job), self._job_ttl_seconds)
+                    pipe.expire(self._job_index_key(job.id), self._job_ttl_seconds)
+                await pipe.execute()
+        except Exception:
+            logger.debug("Failed refreshing TTL for %s active jobs", len(jobs))
+
+    async def update_job_checkpoint(
+        self,
+        job_id: str,
+        state: dict[str, Any],
+        checkpointed_at: str,
+    ) -> None:
         client = await self._ensure_connected()
-        if not metadata:
+        if not state:
             return
 
         job_key = await self._find_job_key_by_id(job_id)
@@ -1463,15 +1755,10 @@ class RedisQueue(BaseQueue):
         job = Job.from_json(
             job_data.decode() if isinstance(job_data, bytes) else job_data
         )
-        job.metadata = job.metadata or {}
-        job.metadata.update(metadata)
+        job.checkpoint = state
+        job.checkpoint_at = checkpointed_at
 
-        ttl = await client.ttl(job_key)
-        serialized = job.to_json()
-        if ttl and ttl > 0:
-            await client.setex(job_key, int(ttl), serialized)
-        else:
-            await client.set(job_key, serialized)
+        await client.setex(job_key, self._job_ttl_seconds, job.to_json())
 
     async def _find_job_key_by_id(self, job_id: str) -> str | None:
         """Find stored job key for a job ID using index first, SCAN as fallback."""
@@ -1491,7 +1778,7 @@ class RedisQueue(BaseQueue):
             await client.delete(index_key)
 
         cursor = 0
-        match = f"{self._key_prefix}:job:*:{job_id}"
+        match = job_match_pattern(job_id, key_prefix=self._key_prefix)
         while True:
             cursor, keys = await client.scan(cursor=cursor, match=match, count=100)
             for key in keys:
@@ -1547,31 +1834,39 @@ class RedisQueue(BaseQueue):
 
     async def subscribe_job(self, job_id: str, timeout: float | None = None) -> str:
         client = await self._ensure_connected()
-
-        job = await self.get_job(job_id)
-        if job and job.status.is_terminal():
-            return job.status.value
+        terminal_status = await self._terminal_job_status(job_id)
+        if terminal_status is not None:
+            return terminal_status
 
         pubsub = client.pubsub()
-        await pubsub.subscribe(f"upnext:job:{job_id}")
+        channel = job_status_channel(job_id)
+        await pubsub.subscribe(channel)
 
         try:
+            # Close the race between initial status check and subscribe setup.
+            terminal_status = await self._terminal_job_status(job_id)
+            if terminal_status is not None:
+                return terminal_status
+
             deadline = None if timeout is None else time.time() + timeout
 
             while True:
+                now = time.time()
                 if deadline is not None:
-                    remaining = deadline - time.time()
+                    remaining = deadline - now
                     if remaining <= 0:
+                        terminal_status = await self._terminal_job_status(job_id)
+                        if terminal_status is not None:
+                            return terminal_status
                         break
-
-                    async with asyncio.timeout(remaining):
-                        message = await pubsub.get_message(
-                            ignore_subscribe_messages=True, timeout=remaining
-                        )
+                    poll_timeout = min(1.0, remaining)
                 else:
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=1.0
-                    )
+                    poll_timeout = 1.0
+
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=poll_timeout,
+                )
 
                 if message and message["type"] == "message":
                     status = message["data"]
@@ -1579,11 +1874,22 @@ class RedisQueue(BaseQueue):
                         return status.decode()
                     return str(status)
 
+                terminal_status = await self._terminal_job_status(job_id)
+                if terminal_status is not None:
+                    return terminal_status
+
             raise TimeoutError(f"Timeout waiting for job {job_id}")
 
         finally:
-            await pubsub.unsubscribe(f"upnext:job:{job_id}")
+            await pubsub.unsubscribe(channel)
             await pubsub.close()
+
+    async def _terminal_job_status(self, job_id: str) -> str | None:
+        """Return terminal status for a job id when available."""
+        job = await self.get_job(job_id)
+        if job and job.status.is_terminal():
+            return job.status.value
+        return None
 
     async def publish_event(self, event_name: str, data: dict[str, Any]) -> None:
         client = await self._ensure_connected()
@@ -1600,7 +1906,9 @@ class RedisQueue(BaseQueue):
         cursor = 0
         while True:
             cursor, keys = await client.scan(
-                cursor=cursor, match=f"{QUEUE_KEY_PREFIX}:fn:*:stream", count=100
+                cursor=cursor,
+                match=function_stream_pattern(key_prefix=self._key_prefix),
+                count=100,
             )
 
             for stream_key in keys:
@@ -1633,7 +1941,9 @@ class RedisQueue(BaseQueue):
         cursor = 0
         while True:
             cursor, keys = await client.scan(
-                cursor=cursor, match=f"{self._key_prefix}:fn:*:scheduled", count=100
+                cursor=cursor,
+                match=function_scheduled_pattern(key_prefix=self._key_prefix),
+                count=100,
             )
 
             for key in keys:
@@ -1750,13 +2060,14 @@ class RedisQueue(BaseQueue):
             retry_backoff=dead_job.retry_backoff,
             parent_id=dead_job.parent_id,
             root_id=dead_job.root_id if dead_job.parent_id else "",
-            metadata=dict(dead_job.metadata or {}),
-            schedule=dead_job.schedule,
+            source=clone_job_source(dead_job.source),
+            checkpoint=dead_job.checkpoint,
+            checkpoint_at=dead_job.checkpoint_at,
         )
-        replayed.metadata["dlq_replayed_from"] = entry_id
+        replayed.dlq_replayed_from = entry_id
         failed_at_raw = msg_data.get(b"failed_at") or msg_data.get("failed_at")
         if failed_at_raw:
-            replayed.metadata["dlq_failed_at"] = self._decode_text(failed_at_raw)
+            replayed.dlq_failed_at = self._decode_text(failed_at_raw)
 
         new_job_id = await self.enqueue(replayed)
         await client.xdel(dlq_stream, entry_id)
@@ -1942,9 +2253,7 @@ class RedisQueue(BaseQueue):
             return []
 
         cutoff = (
-            now_ts - max_catch_up_seconds
-            if max_catch_up_seconds is not None
-            else None
+            now_ts - max_catch_up_seconds if max_catch_up_seconds is not None else None
         )
         windows: list[float] = []
         cursor_ts = next_run_at
@@ -1991,8 +2300,7 @@ class RedisQueue(BaseQueue):
         job.key = f"cron:{job.function}:{self._cron_window_token(next_run_at)}"
         job.scheduled_at = datetime.fromtimestamp(next_run_at, UTC)
         job.mark_queued("Cron job scheduled")
-        job.metadata = job.metadata or {}
-        job.metadata["cron_window_at"] = next_run_at
+        job.cron_window_at = next_run_at
         job_key = self._job_key(job)
         await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
 
@@ -2013,18 +2321,25 @@ class RedisQueue(BaseQueue):
         client = await self._ensure_connected()
         cron_registry = self._cron_registry_key()
         cron_key = f"cron:{job.function}"
+        schedule = job.schedule
+        if not schedule:
+            raise ValueError(f"Cron job '{job.id}' is missing schedule")
 
         new_job = Job(
             function=job.function,
             function_name=job.function_name,
             kwargs=job.kwargs,
             key=f"cron:{job.function}:{self._cron_window_token(next_run_at)}",
-            schedule=job.schedule,
             timeout=job.timeout,
-            metadata=dict(job.metadata or {}),
+            source=CronSource(
+                schedule=schedule,
+                cron_window_at=next_run_at,
+                startup_reconciled=job.startup_reconciled,
+                startup_policy=job.startup_policy,
+            ),
+            checkpoint=job.checkpoint,
+            checkpoint_at=job.checkpoint_at,
         )
-        new_job.metadata.setdefault("cron", True)
-        new_job.metadata["cron_window_at"] = next_run_at
         new_job.scheduled_at = datetime.fromtimestamp(next_run_at, UTC)
         new_job.mark_queued("Cron job rescheduled")
 
@@ -2093,7 +2408,13 @@ class RedisQueue(BaseQueue):
                 # A cron run is already present; no extra catch-up enqueue needed.
                 return False
 
-        schedule = job.schedule or "* * * * *"
+        schedule = job.schedule
+        if not schedule:
+            logger.warning(
+                "Skipping cron startup reconciliation for %s: missing schedule",
+                job.function,
+            )
+            return False
         policy, max_window = await self._cron_reconcile_policy(job.function)
         missed_windows = self._cron_missed_windows(
             schedule=schedule,
@@ -2132,19 +2453,24 @@ class RedisQueue(BaseQueue):
             function_name=job.function_name,
             kwargs=job.kwargs,
             key=f"cron:{job.function}:{self._cron_window_token(selected_window)}",
-            schedule=job.schedule,
             timeout=job.timeout,
-            metadata=dict(job.metadata or {}),
+            source=CronSource(
+                schedule=schedule,
+                cron_window_at=selected_window,
+                startup_reconciled=True,
+                startup_policy=(
+                    MissedRunPolicy.LATEST_ONLY
+                    if policy == MissedRunPolicy.LATEST_ONLY
+                    else MissedRunPolicy.CATCH_UP
+                ).value,
+            ),
+            checkpoint=job.checkpoint,
+            checkpoint_at=job.checkpoint_at,
         )
-        catchup_job.metadata.setdefault("cron", True)
-        catchup_job.metadata["cron_window_at"] = selected_window
-        catchup_job.metadata["startup_reconciled"] = True
         catchup_job.scheduled_at = datetime.fromtimestamp(selected_window, UTC)
         if policy == MissedRunPolicy.LATEST_ONLY:
-            catchup_job.metadata["startup_policy"] = MissedRunPolicy.LATEST_ONLY
             catchup_job.mark_queued("Cron startup reconciliation latest-only run")
         else:
-            catchup_job.metadata["startup_policy"] = MissedRunPolicy.CATCH_UP
             catchup_job.mark_queued("Cron startup reconciliation catch-up")
 
         reserved, owner = await self._reserve_cron_window(
@@ -2187,7 +2513,7 @@ class RedisQueue(BaseQueue):
         self, client: redis.Redis, function_name: str, next_run_at: float
     ) -> None:
         """Update the function definition in Redis with the next scheduled run time."""
-        func_key = f"{FUNCTION_KEY_PREFIX}:{function_name}"
+        func_key = function_definition_key(function_name)
         data = await client.get(func_key)
         config = self._parse_function_config(data, key_hint=func_key)
         if config is None:

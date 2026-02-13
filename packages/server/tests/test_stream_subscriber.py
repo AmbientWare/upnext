@@ -4,9 +4,10 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-import server.services.stream_subscriber as stream_subscriber_module
-from server.services.stream_subscriber import StreamSubscriber, StreamSubscriberConfig
-from shared.events import EVENTS_PUBSUB_CHANNEL, EVENTS_STREAM
+import server.services.events.subscriber as stream_subscriber_module
+from server.services.events import StreamSubscriber, StreamSubscriberConfig
+from shared.contracts import JobFailedEvent, JobProgressEvent, JobStartedEvent
+from shared.keys import EVENTS_PUBSUB_CHANNEL, EVENTS_STREAM
 
 
 @pytest.mark.asyncio
@@ -25,11 +26,9 @@ async def test_process_batch_acks_only_successful_events(
 
     call_log: list[str] = []
 
-    async def fake_process_event(
-        event_type: str, data: dict, worker_id: str | None
-    ) -> bool:
-        call_log.append(event_type)
-        if event_type == "job.failed":
+    async def fake_process_event(event: object) -> bool:
+        call_log.append(type(event).__name__)
+        if isinstance(event, JobFailedEvent):
             raise RuntimeError("boom")
         return True
 
@@ -76,7 +75,7 @@ async def test_process_batch_acks_only_successful_events(
 
     processed = await subscriber._process_batch(drain=True)  # noqa: SLF001
     assert processed == 1
-    assert call_log == ["job.started", "job.failed"]
+    assert call_log == ["JobStartedEvent", "JobFailedEvent"]
 
     pending_summary = await fake_redis.xpending(config.stream, config.group)
     assert pending_summary["pending"] == 1
@@ -99,10 +98,8 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
 
     processed_ids: list[str] = []
 
-    async def fake_process_event(
-        event_type: str, data: dict, worker_id: str | None
-    ) -> bool:
-        processed_ids.append(data["job_id"])
+    async def fake_process_event(event: object) -> bool:
+        processed_ids.append(str(getattr(event, "job_id")))
         return True
 
     monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)
@@ -205,6 +202,122 @@ async def test_publish_event_filters_sensitive_fields(fake_redis) -> None:
     assert "state" not in body
 
 
+def test_parse_events_propagates_worker_id_for_started_events(fake_redis) -> None:
+    config = StreamSubscriberConfig(
+        stream=EVENTS_STREAM,
+        group="test-started-worker-id",
+        consumer_id="consumer-started",
+    )
+    subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
+
+    ts = datetime.now(UTC).isoformat()
+    events = [
+        (
+            "1-0",
+            {
+                "type": "job.started",
+                "job_id": "job-started-worker-1",
+                "worker_id": "worker-123",
+                "data": json.dumps(
+                    {
+                        "function": "task_key",
+                        "function_name": "task_name",
+                        "root_id": "job-started-worker-1",
+                        "attempt": 1,
+                        "max_retries": 0,
+                        "started_at": ts,
+                    }
+                ),
+            },
+        )
+    ]
+
+    parsed, summary = subscriber._parse_events(events)  # noqa: SLF001
+    assert summary.total == 0
+    assert len(parsed) == 1
+    assert isinstance(parsed[0].event, JobStartedEvent)
+    assert parsed[0].event.worker_id == "worker-123"
+
+
+@pytest.mark.asyncio
+async def test_invalid_events_are_dead_lettered_before_ack(fake_redis) -> None:
+    config = StreamSubscriberConfig(
+        stream=EVENTS_STREAM,
+        group="test-invalid-dlq",
+        consumer_id="consumer-invalid",
+        invalid_events_stream=f"{EVENTS_STREAM}:invalid:test",
+        batch_size=10,
+        poll_interval=0.01,
+    )
+    subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
+    assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
+
+    await fake_redis.xadd(
+        config.stream,
+        {
+            "type": "job.not-real",
+            "job_id": "job-invalid-1",
+            "worker_id": "worker-1",
+            "data": "{}",
+        },
+    )
+
+    processed = await subscriber._process_batch(drain=True)  # noqa: SLF001
+    assert processed == 0
+
+    pending_summary = await fake_redis.xpending(config.stream, config.group)
+    assert pending_summary["pending"] == 0
+
+    invalid_rows = await fake_redis.xrange(config.invalid_events_stream, count=10)
+    assert len(invalid_rows) == 1
+    payload = invalid_rows[0][1]
+    assert payload[b"event_id"]
+    assert payload[b"reason"] == b"invalid_envelope"
+
+
+@pytest.mark.asyncio
+async def test_invalid_events_stay_pending_when_dead_letter_write_fails(
+    fake_redis, monkeypatch
+) -> None:
+    config = StreamSubscriberConfig(
+        stream=EVENTS_STREAM,
+        group="test-invalid-dlq-fail",
+        consumer_id="consumer-invalid-fail",
+        invalid_events_stream=f"{EVENTS_STREAM}:invalid:fail",
+        batch_size=10,
+        poll_interval=0.01,
+    )
+    subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
+    assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
+
+    await fake_redis.xadd(
+        config.stream,
+        {
+            "type": "job.not-real",
+            "job_id": "job-invalid-2",
+            "worker_id": "worker-1",
+            "data": "{}",
+        },
+    )
+
+    original_xadd = fake_redis.xadd
+
+    async def fail_invalid_stream_xadd(*args, **kwargs):  # noqa: ANN002, ANN003
+        if args and args[0] == config.invalid_events_stream:
+            raise RuntimeError("dlq stream down")
+        return await original_xadd(*args, **kwargs)
+
+    monkeypatch.setattr(fake_redis, "xadd", fail_invalid_stream_xadd)
+
+    processed = await subscriber._process_batch(drain=True)  # noqa: SLF001
+    assert processed == 0
+
+    pending_summary = await fake_redis.xpending(config.stream, config.group)
+    assert pending_summary["pending"] == 1
+    invalid_rows = await fake_redis.xrange(config.invalid_events_stream, count=10)
+    assert invalid_rows == []
+
+
 @pytest.mark.asyncio
 async def test_reclaim_of_stale_pending_event_processes_once_and_acks(
     fake_redis, monkeypatch
@@ -222,9 +335,7 @@ async def test_reclaim_of_stale_pending_event_processes_once_and_acks(
 
     call_count = 0
 
-    async def fake_process_event(
-        event_type: str, data: dict, worker_id: str | None
-    ) -> bool:
+    async def fake_process_event(event: object) -> bool:  # noqa: ARG001
         nonlocal call_count
         call_count += 1
         return True
@@ -357,9 +468,7 @@ async def test_process_batch_returns_processed_when_ack_fails(
     subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
     assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
 
-    async def fake_process_event(
-        event_type: str, data: dict, worker_id: str | None
-    ) -> bool:  # noqa: ARG001
+    async def fake_process_event(event: object) -> bool:  # noqa: ARG001
         return True
 
     monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)
@@ -411,11 +520,9 @@ async def test_process_batch_coalesces_duplicate_progress_events(
 
     seen_progress: list[float] = []
 
-    async def fake_process_event(
-        event_type: str, data: dict, worker_id: str | None
-    ) -> bool:  # noqa: ARG001
-        if event_type == "job.progress":
-            seen_progress.append(float(data.get("progress", 0)))
+    async def fake_process_event(event: object) -> bool:  # noqa: ARG001
+        if isinstance(event, JobProgressEvent):
+            seen_progress.append(float(getattr(event, "progress", 0)))
         return True
 
     monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)
@@ -460,9 +567,7 @@ async def test_coalesced_progress_events_are_not_acked_when_latest_fails(
     subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
     assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
 
-    async def fake_process_event(
-        event_type: str, data: dict, worker_id: str | None
-    ) -> bool:  # noqa: ARG001
+    async def fake_process_event(event: object) -> bool:  # noqa: ARG001
         raise RuntimeError("boom")
 
     monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)

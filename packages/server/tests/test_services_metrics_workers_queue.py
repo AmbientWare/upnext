@@ -4,13 +4,13 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-import server.services.api_tracking as api_tracking_module
-import server.services.queue as queue_service_module
-import server.services.workers as workers_service_module
+import server.services.apis.tracking as api_tracking_module
+import server.services.jobs.metrics as queue_service_module
+import server.services.registry as workers_service_module
 from fakeredis.aioredis import FakeRedis
-from shared.api import API_PREFIX
-from shared.models import Job
-from shared.workers import (
+from shared.keys.api import API_PREFIX
+from shared.domain.jobs import Job
+from shared.keys.workers import (
     FUNCTION_KEY_PREFIX,
     WORKER_DEF_PREFIX,
     WORKER_INSTANCE_KEY_PREFIX,
@@ -78,12 +78,12 @@ async def test_api_metrics_reader_aggregates_hourly_and_minute_buckets(
     apis = await reader.get_apis()
 
     assert len(apis) == 1
-    assert apis[0]["name"] == "orders"
-    assert apis[0]["endpoint_count"] == 2
-    assert apis[0]["requests_24h"] == 15
-    assert apis[0]["avg_latency_ms"] == pytest.approx(23.33)
-    assert apis[0]["error_rate"] == pytest.approx(13.3)
-    assert apis[0]["requests_per_min"] == 5.0
+    assert apis[0].name == "orders"
+    assert apis[0].endpoint_count == 2
+    assert apis[0].requests_24h == 15
+    assert apis[0].avg_latency_ms == pytest.approx(23.33)
+    assert apis[0].error_rate == pytest.approx(13.3)
+    assert apis[0].requests_per_min == 5.0
 
 
 @pytest.mark.asyncio
@@ -115,23 +115,23 @@ async def test_api_metrics_reader_endpoints_trends_summary_and_factory(
 
     filtered = await reader.get_endpoints(api_name="billing")
     assert len(filtered) == 1
-    assert filtered[0]["api_name"] == "billing"
-    assert filtered[0]["method"] == "GET"
-    assert filtered[0]["path"] == "/invoices"
+    assert filtered[0].api_name == "billing"
+    assert filtered[0].method == "GET"
+    assert filtered[0].path == "/invoices"
 
     all_endpoints = await reader.get_endpoints()
     assert len(all_endpoints) == 1
 
     trends = await reader.get_hourly_trends(hours=3)
     assert len(trends) == 3
-    assert sum(item["success_2xx"] for item in trends) == 2
-    assert sum(item["client_4xx"] for item in trends) == 1
-    assert sum(item["server_5xx"] for item in trends) == 0
+    assert sum(item.success_2xx for item in trends) == 2
+    assert sum(item.client_4xx for item in trends) == 1
+    assert sum(item.server_5xx for item in trends) == 0
 
     summary = await reader.get_summary()
-    assert summary["requests_24h"] == 3
-    assert summary["avg_latency_ms"] == 30.0
-    assert summary["error_rate"] == pytest.approx(33.3)
+    assert summary.requests_24h == 3
+    assert summary.avg_latency_ms == 30.0
+    assert summary.error_rate == pytest.approx(33.3)
 
     async def fake_get_redis() -> FakeRedis:
         return redis_text_client
@@ -364,3 +364,125 @@ async def test_queue_service_lists_oldest_queued_jobs(redis_text_client, monkeyp
     assert rows[0].function_name == "Scheduled Fn"
     assert rows[1].source == "stream"
     assert rows[1].function_name == "Stream Fn"
+
+
+@pytest.mark.asyncio
+async def test_oldest_queued_jobs_excludes_claimed_stream_messages(
+    redis_text_client,
+    monkeypatch,
+) -> None:
+    stream_key = "upnext:fn:fn.stream:stream"
+    await redis_text_client.xgroup_create(stream_key, "workers", id="0", mkstream=True)
+
+    claimed_job = Job(
+        id="job-claimed-1",
+        function="fn.stream",
+        function_name="Stream Fn",
+        scheduled_at=datetime.now(UTC) - timedelta(minutes=10),
+    )
+    queued_job = Job(
+        id="job-queued-1",
+        function="fn.stream",
+        function_name="Stream Fn",
+        scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    await redis_text_client.xadd(
+        stream_key,
+        {"job_id": claimed_job.id, "data": claimed_job.to_json()},
+    )
+    await redis_text_client.xadd(
+        stream_key,
+        {"job_id": queued_job.id, "data": queued_job.to_json()},
+    )
+    await redis_text_client.xreadgroup(
+        groupname="workers",
+        consumername="consumer-1",
+        streams={stream_key: ">"},
+        count=1,
+    )
+
+    async def fake_get_redis() -> FakeRedis:
+        return redis_text_client
+
+    monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
+
+    rows = await queue_service_module.get_oldest_queued_jobs(limit=10)
+    assert rows
+    assert rows[0].id == "job-queued-1"
+
+
+@pytest.mark.asyncio
+async def test_queue_service_parsing_handles_malformed_payloads(monkeypatch) -> None:
+    class _MalformedRedis:
+        async def scan_iter(self, match: str, count: int = 100):  # noqa: ARG002
+            if match.endswith(":stream"):
+                yield "upnext:fn:fn.bad:stream"
+            elif match.startswith("upnext:workers:instances"):
+                yield "upnext:workers:instances:worker-1"
+            elif match.startswith("upnext:dispatch_reasons:"):
+                yield "upnext:dispatch_reasons:fn.bad"
+            else:
+                if False:
+                    yield ""
+
+        async def xinfo_groups(self, _stream_key: str):
+            return [{"name": "workers", "lag": "oops", "pending": b"bad"}]
+
+        async def get(self, _key: str):
+            return "{bad-json"
+
+        async def hgetall(self, _key: str):
+            return {
+                "paused": "n/a",
+                "rate_limited": "3",
+                "no_capacity": b"nope",
+                "cancelled": 2,
+                "retrying": None,
+            }
+
+    async def fake_get_redis() -> _MalformedRedis:
+        return _MalformedRedis()
+
+    monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
+
+    queue_stats = await queue_service_module.get_queue_depth_stats()
+    assert queue_stats.waiting == 0
+    assert queue_stats.claimed == 0
+
+    function_stats = await queue_service_module.get_function_queue_depth_stats()
+    assert function_stats["fn.bad"].waiting == 0
+    assert function_stats["fn.bad"].claimed == 0
+
+    reason_stats = await queue_service_module.get_function_dispatch_reason_stats()
+    assert "fn.bad" not in reason_stats
+
+
+@pytest.mark.asyncio
+async def test_queue_service_parses_bytes_keyed_group_payloads(monkeypatch) -> None:
+    class _BytesGroupRedis:
+        async def scan_iter(self, match: str, count: int = 100):  # noqa: ARG002
+            if match.endswith(":stream"):
+                yield b"upnext:fn:fn.bytes:stream"
+            else:
+                if False:
+                    yield ""
+
+        async def xinfo_groups(self, _stream_key: str):
+            return [{b"name": b"workers", b"lag": b"2", b"pending": b"1"}]
+
+        async def get(self, _key: str):
+            return None
+
+    async def fake_get_redis() -> _BytesGroupRedis:
+        return _BytesGroupRedis()
+
+    monkeypatch.setattr(queue_service_module, "get_redis", fake_get_redis)
+
+    queue_stats = await queue_service_module.get_queue_depth_stats()
+    assert queue_stats.waiting == 2
+    assert queue_stats.claimed == 1
+
+    function_stats = await queue_service_module.get_function_queue_depth_stats()
+    assert function_stats["fn.bytes"].waiting == 2
+    assert function_stats["fn.bytes"].claimed == 1

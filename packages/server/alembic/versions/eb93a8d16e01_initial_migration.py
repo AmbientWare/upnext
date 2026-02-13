@@ -25,8 +25,10 @@ def upgrade() -> None:
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('function', sa.String(length=255), nullable=False),
     sa.Column('function_name', sa.String(length=255), nullable=False),
+    sa.Column('job_type', sa.String(length=20), nullable=False),
     sa.Column('status', sa.String(length=20), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('scheduled_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
@@ -39,7 +41,16 @@ def upgrade() -> None:
     sa.Column('root_id', sa.String(length=36), nullable=False),
     sa.Column('progress', sa.Float(), nullable=False),
     sa.Column('kwargs', sa.JSON(), nullable=False),
-    sa.Column('metadata', sa.JSON(), nullable=False),
+    sa.Column('schedule', sa.String(length=120), nullable=True),
+    sa.Column('cron_window_at', sa.Float(), nullable=True),
+    sa.Column('startup_reconciled', sa.Boolean(), nullable=False),
+    sa.Column('startup_policy', sa.String(length=32), nullable=True),
+    sa.Column('checkpoint', sa.JSON(), nullable=True),
+    sa.Column('checkpoint_at', sa.String(length=64), nullable=True),
+    sa.Column('dlq_replayed_from', sa.String(length=64), nullable=True),
+    sa.Column('dlq_failed_at', sa.String(length=64), nullable=True),
+    sa.Column('event_pattern', sa.String(length=255), nullable=True),
+    sa.Column('event_handler_name', sa.String(length=255), nullable=True),
     sa.Column('result', sa.JSON(), nullable=True),
     sa.Column('error', sa.Text(), nullable=True),
     sa.PrimaryKeyConstraint('id')
@@ -47,12 +58,13 @@ def upgrade() -> None:
     op.create_index('ix_job_history_created_at', 'job_history', ['created_at'], unique=False)
     op.create_index('ix_job_history_function', 'job_history', ['function'], unique=False)
     op.create_index('ix_job_history_function_name', 'job_history', ['function_name'], unique=False)
+    op.create_index('ix_job_history_job_type', 'job_history', ['job_type'], unique=False)
     op.create_index('ix_job_history_parent_id', 'job_history', ['parent_id'], unique=False)
     op.create_index('ix_job_history_root_id', 'job_history', ['root_id'], unique=False)
     op.create_index('ix_job_history_status', 'job_history', ['status'], unique=False)
     op.create_index('ix_job_history_worker_id', 'job_history', ['worker_id'], unique=False)
     op.create_table('artifacts',
-    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('job_id', sa.String(length=36), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('type', sa.String(length=50), nullable=False),
@@ -64,6 +76,7 @@ def upgrade() -> None:
     sa.Column('status', sa.String(length=20), nullable=False),
     sa.Column('error', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['job_id'], ['job_history.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -71,7 +84,7 @@ def upgrade() -> None:
     op.create_index('ix_artifacts_name', 'artifacts', ['name'], unique=False)
     op.create_index('ix_artifacts_storage', 'artifacts', ['storage_backend', 'storage_key'], unique=False)
     op.create_table('pending_artifacts',
-    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('job_id', sa.String(length=36), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('type', sa.String(length=50), nullable=False),
@@ -83,6 +96,7 @@ def upgrade() -> None:
     sa.Column('status', sa.String(length=20), nullable=False),
     sa.Column('error', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('ix_pending_artifacts_created_at', 'pending_artifacts', ['created_at'], unique=False)
@@ -106,6 +120,7 @@ def downgrade() -> None:
     op.drop_index('ix_job_history_parent_id', table_name='job_history')
     op.drop_index('ix_job_history_function_name', table_name='job_history')
     op.drop_index('ix_job_history_function', table_name='job_history')
+    op.drop_index('ix_job_history_job_type', table_name='job_history')
     op.drop_index('ix_job_history_created_at', table_name='job_history')
     op.drop_table('job_history')
     # ### end Alembic commands ###

@@ -6,7 +6,8 @@ from typing import Any
 
 import pytest
 import redis.asyncio as redis
-from shared.models import Job, JobStatus
+from shared.domain.jobs import Job, JobStatus
+from upnext.config import ThroughputMode, get_settings
 from upnext.engine.queue.redis.queue import RedisQueue
 
 
@@ -14,6 +15,8 @@ from upnext.engine.queue.redis.queue import RedisQueue
 async def test_enqueue_falls_back_when_script_loading_fails(
     fake_redis, monkeypatch
 ) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_QUEUE_RUNTIME_PROFILE", ThroughputMode.THROUGHPUT.value)
     queue = RedisQueue(client=fake_redis, key_prefix="upnext-script-fallback")
 
     async def fail_script_load(script: str) -> str:  # noqa: ARG001
@@ -30,6 +33,61 @@ async def test_enqueue_falls_back_when_script_loading_fails(
     active = await queue.dequeue(["task_fn"], timeout=0.2)
     assert active is not None
     assert active.id == job.id
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_fails_fast_when_script_loading_fails_in_safe_mode(
+    fake_redis, monkeypatch
+) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_QUEUE_RUNTIME_PROFILE", ThroughputMode.SAFE.value)
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-script-required")
+
+    async def fail_script_load(script: str) -> str:  # noqa: ARG001
+        raise RuntimeError("script load failed")
+
+    monkeypatch.setattr(fake_redis, "script_load", fail_script_load)
+
+    job = Job(function="task_fn", function_name="task", key="script-required-key")
+    with pytest.raises(RuntimeError, match="Failed to load required Redis Lua scripts"):
+        await queue.enqueue(job)
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_recovers_from_noscript_by_reloading_scripts(
+    fake_redis, monkeypatch
+) -> None:
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-noscript-reload")
+
+    original_evalsha = fake_redis.evalsha
+    original_script_load = fake_redis.script_load
+    state = {"raised": False}
+    loads = {"count": 0}
+
+    async def flaky_evalsha(*args, **kwargs):  # noqa: ANN002, ANN003
+        if not state["raised"]:
+            state["raised"] = True
+            raise redis.ResponseError("NOSCRIPT No matching script. Please use EVAL.")
+        return await original_evalsha(*args, **kwargs)
+
+    async def tracked_script_load(script: str) -> str:
+        loads["count"] += 1
+        return await original_script_load(script)
+
+    monkeypatch.setattr(fake_redis, "evalsha", flaky_evalsha)
+    monkeypatch.setattr(fake_redis, "script_load", tracked_script_load)
+
+    job = Job(function="task_fn", function_name="task", key="noscript-reload-key")
+    await queue.enqueue(job)
+
+    active = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert active is not None
+    assert active.id == job.id
+    assert state["raised"] is True
+    # 6 scripts loaded initially + 6 reloaded after NOSCRIPT.
+    assert loads["count"] >= 12
 
 
 @pytest.mark.asyncio
@@ -80,6 +138,67 @@ async def test_dequeue_batch_recovers_after_nogroup_error(
     assert len(jobs) == 1
     assert jobs[0].id == job.id
     assert state["raised"] is True
+
+
+@pytest.mark.asyncio
+async def test_missing_payload_without_result_stays_pending(fake_redis) -> None:
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-missing-payload-pending")
+    job = Job(function="task_fn", function_name="task", key="missing-payload-pending")
+    await queue.enqueue(job)
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.delete(queue._job_key(job))  # noqa: SLF001
+
+    active = await queue.dequeue(["task_fn"], timeout=0.1)
+    assert active is None
+
+    pending = await client.xpending(queue._stream_key("task_fn"), queue._consumer_group)  # noqa: SLF001
+    assert pending["pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_payload_with_terminal_result_is_acked(fake_redis) -> None:
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-missing-payload-acked")
+    job = Job(function="task_fn", function_name="task", key="missing-payload-acked")
+    await queue.enqueue(job)
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.setex(queue._result_key(job.id), 60, job.to_json())  # noqa: SLF001
+    await client.delete(queue._job_key(job))  # noqa: SLF001
+
+    active = await queue.dequeue(["task_fn"], timeout=0.1)
+    assert active is None
+
+    pending = await client.xpending(queue._stream_key("task_fn"), queue._consumer_group)  # noqa: SLF001
+    assert pending["pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_restores_job_ttls_when_missing(fake_redis) -> None:
+    queue = RedisQueue(
+        client=fake_redis,
+        key_prefix="upnext-heartbeat-refresh",
+        job_ttl_seconds=5,
+    )
+    job = Job(function="task_fn", function_name="task", key="heartbeat-refresh")
+    await queue.enqueue(job)
+
+    active = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert active is not None
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    job_key = queue._job_key(active)  # noqa: SLF001
+    job_index_key = queue._job_index_key(active.id)  # noqa: SLF001
+
+    await client.persist(job_key)
+    await client.persist(job_index_key)
+    assert await client.ttl(job_key) == -1
+    assert await client.ttl(job_index_key) == -1
+
+    await queue.heartbeat_active_jobs([active])
+
+    assert await client.ttl(job_key) > 0
+    assert await client.ttl(job_index_key) > 0
 
 
 @pytest.mark.asyncio
@@ -193,4 +312,35 @@ async def test_subscribe_job_timeout_cleans_up_pubsub() -> None:
         assert "job-timeout-1" in str(timeout_exc.value)
 
     assert pubsub.unsubscribed_to == ["upnext:job:job-timeout-1"]
+    assert pubsub.closed is True
+
+
+@pytest.mark.asyncio
+async def test_subscribe_job_returns_terminal_status_without_pubsub_message() -> None:
+    pubsub = _PubSubStub(messages=[None, None], subscribed_to=[], unsubscribed_to=[])
+    redis_stub = _RedisWithPubSubStub(pubsub_instance=pubsub)
+
+    queue = RedisQueue(client=redis_stub, key_prefix="upnext-subscribe-race")
+    queue._scripts_loaded = True  # noqa: SLF001
+
+    calls = {"count": 0}
+
+    async def eventually_terminal(job_id: str) -> Job | None:
+        calls["count"] += 1
+        if calls["count"] < 2:
+            return None
+        return Job(
+            id=job_id,
+            function="task_fn",
+            function_name="task",
+            status=JobStatus.COMPLETE,
+            root_id=job_id,
+        )
+
+    queue.get_job = eventually_terminal  # type: ignore[method-assign]
+
+    status = await queue.subscribe_job("job-race-1", timeout=0.1)
+    assert status == JobStatus.COMPLETE.value
+    assert pubsub.subscribed_to == ["upnext:job:job-race-1"]
+    assert pubsub.unsubscribed_to == ["upnext:job:job-race-1"]
     assert pubsub.closed is True

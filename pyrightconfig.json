@@ -2,12 +2,14 @@
   "include": [
     "packages/upnext/src",
     "packages/server/src",
-    "packages/shared/src"
+    "packages/shared/src",
+    "scripts/benchmarks"
   ],
   "extraPaths": [
     "packages/upnext/src",
     "packages/server/src",
-    "packages/shared/src"
+    "packages/shared/src",
+    "scripts/benchmarks"
   ],
   "venvPath": ".",
   "venv": ".venv",

@@ -11,7 +11,7 @@
 -- ARGV[4] = result_ttl
 -- ARGV[5] = dedup_value (job.key, can be empty)
 --
--- Returns: number of operations completed
+-- Returns: "OK" on success, "ALREADY_TERMINAL" when result key already exists.
 
 local stream_key = KEYS[1]
 local result_key = KEYS[2]
@@ -26,32 +26,31 @@ local result_data = ARGV[3]
 local result_ttl = tonumber(ARGV[4])
 local dedup_value = ARGV[5]
 
-local ops = 0
+if redis.call("EXISTS", result_key) == 1 then
+    return "ALREADY_TERMINAL"
+end
 
 -- ACK the message if we have a message_id
 if message_id and message_id ~= "" then
     redis.call("XACK", stream_key, consumer_group, message_id)
-    ops = ops + 1
 end
 
 -- Store cancellation result with TTL
-redis.call("SETEX", result_key, result_ttl, result_data)
-ops = ops + 1
+local result_set = redis.call("SET", result_key, result_data, "EX", result_ttl, "NX")
+if not result_set then
+    return "ALREADY_TERMINAL"
+end
 
 -- Delete job data
 redis.call("DEL", job_key)
-ops = ops + 1
 redis.call("DEL", job_index_key)
-ops = ops + 1
 
 -- Remove dedup key if present
 if dedup_value and dedup_value ~= "" then
     redis.call("SREM", dedup_key, dedup_value)
-    ops = ops + 1
 end
 
 -- Publish cancellation notification
 redis.call("PUBLISH", pubsub_channel, "cancelled")
-ops = ops + 1
 
-return ops
+return "OK"

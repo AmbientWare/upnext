@@ -11,6 +11,7 @@ which delegates to JobProcessor for actual job processing.
 """
 
 import asyncio
+import contextlib
 import contextvars
 import logging
 import multiprocessing
@@ -24,30 +25,23 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
-from shared.models import Job, JobStatus
-from shared.schemas import DispatchReason
+from shared.contracts import DispatchReason
+from shared.domain import Job, JobStatus
 
 from upnext.engine.cron import calculate_next_cron_timestamp
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.registry import Registry, TaskDefinition
 from upnext.sdk.context import Context, set_current_context
-from upnext.types import SyncExecutor
+from upnext.types import (
+    CommandQueueLike,
+    ContextCommand,
+    ContextCommandOrSentinel,
+    SyncExecutor,
+)
 
 logger = logging.getLogger(__name__)
-_METADATA_NON_PERSISTED_KEYS = frozenset({"_stream_key", "_stream_msg_id"})
-
-
-def _sanitize_started_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Strip queue transport keys before emitting job.started metadata."""
-    if not metadata:
-        return {}
-    return {
-        key: value
-        for key, value in metadata.items()
-        if key not in _METADATA_NON_PERSISTED_KEYS
-    }
 
 
 def _run_sync_task_with_context(
@@ -98,6 +92,7 @@ class JobProcessor:
         sync_pool_size: int | None = None,
         dequeue_timeout: float = 5.0,
         status_buffer: Any | None = None,  # StatusPublisher
+        status_flush_timeout_seconds: float = 2.0,
         handle_signals: bool = True,
     ) -> None:
         """
@@ -112,6 +107,8 @@ class JobProcessor:
             sync_pool_size: Pool size for sync executor. Defaults to min(32, concurrency) for thread, cpu_count for process.
             dequeue_timeout: Timeout for dequeue operations
             status_buffer: Status buffer for batched event reporting
+            status_flush_timeout_seconds: Max time budget for draining pending
+                status events during shutdown.
             handle_signals: Whether to set up SIGTERM/SIGINT handlers (default True).
                 Set to False when signals are handled at a higher level.
         """
@@ -121,6 +118,7 @@ class JobProcessor:
         self._functions = functions or []
         self._dequeue_timeout = dequeue_timeout
         self._status_buffer = status_buffer
+        self._status_flush_timeout_seconds = max(0.1, status_flush_timeout_seconds)
         self._handle_signals = handle_signals
 
         # Worker identity
@@ -239,6 +237,16 @@ class JobProcessor:
                 await asyncio.gather(*self._tasks, return_exceptions=True)
 
         finally:
+            if self._status_buffer and hasattr(self._status_buffer, "close"):
+                try:
+                    await self._status_buffer.close(
+                        timeout_seconds=self._status_flush_timeout_seconds
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to flush status publisher during shutdown: %s",
+                        exc,
+                    )
             # Close the queue (flushes pending operations and closes connections)
             await self._queue.close()
 
@@ -291,6 +299,28 @@ class JobProcessor:
         """Handle shutdown signal."""
         logger.debug("Received shutdown signal")
         self._stop_event.set()
+
+    async def _emit_status_event(
+        self,
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if not self._status_buffer:
+            return
+        method = getattr(self._status_buffer, method_name, None)
+        if method is None:
+            return
+        try:
+            await method(*args, **kwargs)
+        except Exception as exc:
+            job_id = args[0] if args else "unknown"
+            logger.warning(
+                "Status publish failed method=%s job_id=%s: %s",
+                method_name,
+                job_id,
+                exc,
+            )
 
     def _spawn_processor(self, previous: asyncio.Task[None] | None = None) -> None:
         """
@@ -391,7 +421,6 @@ class JobProcessor:
                 attempt_info,
             )
 
-            started_metadata = _sanitize_started_metadata(job.metadata)
             queue_wait_ms: float | None = None
             if job.scheduled_at is not None:
                 queue_wait_ms = round(
@@ -399,19 +428,23 @@ class JobProcessor:
                     3,
                 )
 
-            if self._status_buffer:
-                await self._status_buffer.record_job_started(
-                    job.id,
-                    job.function,
-                    job.function_name,
-                    job.attempts,
-                    job.max_retries,
-                    parent_id=job.parent_id,
-                    root_id=job.root_id,
-                    metadata=started_metadata,
-                    scheduled_at=job.scheduled_at,
-                    queue_wait_ms=queue_wait_ms,
-                )
+            await self._emit_status_event(
+                "record_job_started",
+                job.id,
+                job.function,
+                job.function_name,
+                job.attempts,
+                job.max_retries,
+                parent_id=job.parent_id,
+                root_id=job.root_id,
+                source=job.source_data,
+                checkpoint=job.checkpoint,
+                checkpoint_at=job.checkpoint_at,
+                dlq_replayed_from=job.dlq_replayed_from,
+                dlq_failed_at=job.dlq_failed_at,
+                scheduled_at=job.scheduled_at,
+                queue_wait_ms=queue_wait_ms,
+            )
 
             # Execute job (track for auto-heartbeating)
             self._active_jobs[job.id] = job
@@ -476,12 +509,13 @@ class JobProcessor:
         kwargs = job.kwargs
 
         # Choose the right queue type for this executor mode
+        cmd_queue: CommandQueueLike
         if task_def.is_async:
-            cmd_queue = _AsyncQueueWrapper(asyncio.Queue())
+            cmd_queue = _AsyncQueueWrapper(asyncio.Queue[ContextCommandOrSentinel]())
         elif isinstance(self._sync_pool, ProcessPoolExecutor):
-            cmd_queue = multiprocessing.Queue()
+            cmd_queue = cast(CommandQueueLike, multiprocessing.Queue())
         else:
-            cmd_queue = thread_queue.Queue()
+            cmd_queue = thread_queue.Queue[ContextCommandOrSentinel]()
 
         ctx._cmd_queue = cmd_queue
 
@@ -491,6 +525,14 @@ class JobProcessor:
         # Start drain task
         drain = asyncio.create_task(
             _drain_commands(cmd_queue, backend, is_async_queue=task_def.is_async)
+        )
+        poll_interval = 0.25 if (job.timeout or task_def.timeout or 0) <= 10 else 1.0
+        cancel_poll = asyncio.create_task(
+            self._poll_job_cancellation(
+                job,
+                ctx,
+                interval_seconds=poll_interval,
+            )
         )
 
         # Set context in contextvars so get_current_context() works
@@ -521,12 +563,40 @@ class JobProcessor:
             return result
 
         finally:
+            cancel_poll.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_poll
             # Signal drain to stop and wait for it to flush
             cmd_queue.put(None)
             await drain
 
             # Clear context
             set_current_context(None)
+
+    async def _poll_job_cancellation(
+        self,
+        job: Job,
+        ctx: "Context",
+        *,
+        interval_seconds: float = 0.5,
+        max_interval_seconds: float = 2.0,
+    ) -> None:
+        """Set context cancellation flag when external cancellation is requested."""
+        # Process pool tasks run in a separate process and receive a copy of Context,
+        # so cancellation flag updates here cannot be observed there.
+        if isinstance(self._sync_pool, ProcessPoolExecutor):
+            return
+
+        current_interval = max(0.1, interval_seconds)
+        while True:
+            try:
+                if await self._queue.is_cancelled(job.id):
+                    ctx._cancelled = True  # noqa: SLF001
+                    return
+            except Exception:
+                return
+            await asyncio.sleep(current_interval)
+            current_interval = min(max_interval_seconds, current_interval * 1.5)
 
     async def _call_hook(
         self,
@@ -565,17 +635,17 @@ class JobProcessor:
         self._jobs_processed += 1
 
         # Report completion
-        if self._status_buffer:
-            await self._status_buffer.record_job_completed(
-                job.id,
-                job.function,
-                job.function_name,
-                root_id=job.root_id,
-                parent_id=job.parent_id,
-                attempt=job.attempts,
-                result=result,
-                duration_ms=duration_ms,
-            )
+        await self._emit_status_event(
+            "record_job_completed",
+            job.id,
+            job.function,
+            job.function_name,
+            root_id=job.root_id,
+            parent_id=job.parent_id,
+            attempt=job.attempts,
+            result=result,
+            duration_ms=duration_ms,
+        )
 
         duration_str = f" in {duration_ms:.0f}ms" if duration_ms else ""
         logger.debug(
@@ -588,7 +658,9 @@ class JobProcessor:
         # Reschedule cron jobs for next execution
         if job.is_cron:
             cron_base_ts = self._cron_reschedule_base(job)
-            next_run_at = self._calculate_next_cron_run(job.schedule, base_ts=cron_base_ts)
+            next_run_at = self._calculate_next_cron_run(
+                job.schedule, base_ts=cron_base_ts
+            )
             await self._queue.reschedule_cron(job, next_run_at)
             logger.debug(
                 "Rescheduled cron %s (%s) → %s",
@@ -636,18 +708,18 @@ class JobProcessor:
             job.mark_retrying(delay)
 
             # Report retry
-            if self._status_buffer:
-                await self._status_buffer.record_job_retrying(
-                    job.id,
-                    job.function,
-                    job.function_name,
-                    job.root_id,
-                    error_msg,
-                    delay,
-                    current_attempt=job.attempts,
-                    next_attempt=job.attempts + 1,
-                    parent_id=job.parent_id,
-                )
+            await self._emit_status_event(
+                "record_job_retrying",
+                job.id,
+                job.function,
+                job.function_name,
+                job.root_id,
+                error_msg,
+                delay,
+                current_attempt=job.attempts,
+                next_attempt=job.attempts + 1,
+                parent_id=job.parent_id,
+            )
 
             # Reschedule job
             await self._queue.record_dispatch_reason(
@@ -673,19 +745,19 @@ class JobProcessor:
             self._jobs_failed += 1
 
             # Report failure
-            if self._status_buffer:
-                await self._status_buffer.record_job_failed(
-                    job.id,
-                    job.function,
-                    job.function_name,
-                    job.root_id,
-                    error_msg,
-                    attempt=job.attempts,
-                    max_retries=job.max_retries,
-                    parent_id=job.parent_id,
-                    traceback=error_traceback,
-                    will_retry=False,
-                )
+            await self._emit_status_event(
+                "record_job_failed",
+                job.id,
+                job.function,
+                job.function_name,
+                job.root_id,
+                error_msg,
+                attempt=job.attempts,
+                max_retries=job.max_retries,
+                parent_id=job.parent_id,
+                traceback=error_traceback,
+                will_retry=False,
+            )
 
             # IMPORTANT: Reschedule cron jobs even on failure
             # The execution failed, but the schedule must continue
@@ -717,13 +789,10 @@ class JobProcessor:
         )
 
     def _cron_reschedule_base(self, job: Job) -> float | None:
-        """Resolve optional cron scheduling base timestamp from job metadata."""
-        metadata = job.metadata or {}
-        raw = metadata.get("cron_window_at")
-        if raw is None:
-            return None
+        """Resolve optional cron scheduling base timestamp from job fields."""
+        raw = job.cron_window_at
         try:
-            return float(raw)
+            return float(raw)  # type: ignore
         except (TypeError, ValueError):
             return None
 
@@ -774,57 +843,65 @@ class JobContextBackend:
         self._job = job
         self._status_buffer = status_buffer
 
+    async def _emit_status_event(
+        self,
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if not self._status_buffer:
+            return
+        method = getattr(self._status_buffer, method_name, None)
+        if method is None:
+            return
+        try:
+            await method(*args, **kwargs)
+        except Exception as exc:
+            job_id = args[0] if args else "unknown"
+            logger.warning(
+                "Status publish failed method=%s job_id=%s: %s",
+                method_name,
+                job_id,
+                exc,
+            )
+
     async def set_progress(
         self, job_id: str, progress: float, message: str | None = None
     ) -> None:
         await self._queue.update_progress(job_id, progress)
-        if self._status_buffer:
-            await self._status_buffer.record_job_progress(
-                job_id,
-                self._job.root_id,
-                progress,
-                parent_id=self._job.parent_id,
-                message=message,
-            )
-
-    async def set_metadata(self, job_id: str, key: str, value: Any) -> None:
-        """Store a metadata value for this job."""
-        # Update local job object
-        if self._job.metadata is None:
-            self._job.metadata = {}
-        self._job.metadata[key] = value
-
-        # Persist to queue
-        await self._queue.update_job_metadata(job_id, {key: value})
-
-    async def get_metadata(self, job_id: str, key: str) -> Any:
-        """Get a metadata value for this job."""
-        if job_id == self._job.id:
-            if self._job.metadata is None:
-                return None
-            return self._job.metadata.get(key)
-
-        other = await self._queue.get_job(job_id)
-        if other is None or other.metadata is None:
-            return None
-        return other.metadata.get(key)
+        await self._emit_status_event(
+            "record_job_progress",
+            job_id,
+            self._job.root_id,
+            progress,
+            parent_id=self._job.parent_id,
+            message=message,
+        )
 
     async def checkpoint(self, job_id: str, state: dict[str, Any]) -> None:
         """Store checkpoint state for resumption after failures."""
-        # Store checkpoint in job metadata under special key
-        await self.set_metadata(job_id, "_checkpoint", state)
-        if self._status_buffer:
-            await self._status_buffer.record_job_checkpoint(
-                job_id,
-                self._job.root_id,
-                state,
-                parent_id=self._job.parent_id,
-            )
+        checkpointed_at = datetime.now(UTC).isoformat()
+        if job_id == self._job.id:
+            self._job.checkpoint = state
+            self._job.checkpoint_at = checkpointed_at
+        await self._queue.update_job_checkpoint(job_id, state, checkpointed_at)
+        await self._emit_status_event(
+            "record_job_checkpoint",
+            job_id,
+            self._job.root_id,
+            state,
+            parent_id=self._job.parent_id,
+        )
 
     async def log(self, job_id: str, level: str, message: str, **extra: Any) -> None:
         """Send a log entry for this job."""
-        if self._status_buffer:
-            await self._status_buffer.record_job_log(job_id, level, message, **extra)
+        await self._emit_status_event(
+            "record_job_log",
+            job_id,
+            level,
+            message,
+            **extra,
+        )
 
     async def check_cancelled(self, job_id: str) -> bool:
         job = await self._queue.get_job(job_id)
@@ -836,13 +913,19 @@ class _AsyncQueueWrapper:
 
     __slots__ = ("_q",)
 
-    def __init__(self, q: asyncio.Queue[Any]) -> None:
+    def __init__(self, q: asyncio.Queue[ContextCommandOrSentinel]) -> None:
         self._q = q
 
-    def put(self, item: Any) -> None:
+    def put(
+        self,
+        item: ContextCommandOrSentinel,
+        block: bool = True,
+        timeout: float | None = None,
+    ) -> None:
+        _ = block, timeout
         self._q.put_nowait(item)
 
-    async def get(self) -> Any:
+    async def get(self) -> ContextCommandOrSentinel:
         return await self._q.get()
 
 
@@ -859,48 +942,34 @@ async def _drain_commands(
     Exits when it receives a ``None`` sentinel.
 
     For thread-safe / process-safe queues (queue.Queue, multiprocessing.Queue),
-    we poll via ``run_in_executor`` so we don't block the event loop.
+    we use a blocking ``get`` in an executor thread and rely on the sentinel
+    write in ``_call_function`` for cooperative shutdown.
     """
     loop = asyncio.get_running_loop()
 
     while True:
         # Read next command
         if is_async_queue:
-            cmd = await cmd_queue.get()
+            cmd: ContextCommandOrSentinel = await cmd_queue.get()
         else:
-            # Blocking get in executor with a short timeout so we stay
-            # responsive to cancellation.
-            try:
-                cmd = await loop.run_in_executor(
-                    None, partial(cmd_queue.get, True, 0.1)
-                )
-            except Exception:
-                # queue.Empty — just loop and try again
-                continue
+            cmd = await loop.run_in_executor(None, cmd_queue.get)
 
         if cmd is None:
             # Sentinel — all commands flushed, exit
             return
 
-        op = cmd[0]
+        command = cast(ContextCommand, cmd)
         try:
-            if op == "set_progress":
-                if len(cmd) == 4:
-                    _, job_id, progress, message = cmd
-                else:
-                    _, job_id, progress = cmd
-                    message = None
+            if command[0] == "set_progress":
+                _, job_id, progress, message = command
                 await backend.set_progress(job_id, progress, message)
-            elif op == "set_metadata":
-                _, job_id, key, value = cmd
-                await backend.set_metadata(job_id, key, value)
-            elif op == "checkpoint":
-                _, job_id, state = cmd
+            elif command[0] == "checkpoint":
+                _, job_id, state = command
                 await backend.checkpoint(job_id, state)
-            elif op == "send_log":
-                _, job_id, level, message, extra = cmd
+            elif command[0] == "send_log":
+                _, job_id, level, message, extra = command
                 await backend.log(job_id, level, message, **extra)
             else:
-                logger.warning(f"Unknown drain command: {op}")
+                logger.warning(f"Unknown drain command: {command[0]}")
         except Exception as e:
-            logger.warning(f"Drain command {op} failed: {e}")
+            logger.warning(f"Drain command {command[0]} failed: {e}")

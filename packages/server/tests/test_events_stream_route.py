@@ -6,10 +6,9 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, cast
 
 import pytest
-import server.routes.events as events_route
-import server.routes.events.events_stream as events_stream_route
+import server.routes.events_stream as events_stream_route
 from fastapi import HTTPException
-from shared.events import EVENTS_PUBSUB_CHANNEL
+from shared.keys import EVENTS_PUBSUB_CHANNEL
 
 
 @dataclass
@@ -56,7 +55,7 @@ async def test_stream_events_returns_503_when_redis_unavailable(monkeypatch) -> 
     monkeypatch.setattr(events_stream_route, "get_redis", fail_get_redis)
 
     with pytest.raises(HTTPException, match="redis unavailable") as exc:
-        await events_route.stream_events()
+        await events_stream_route.stream_events()
 
     assert exc.value.status_code == 503
 
@@ -76,7 +75,7 @@ async def test_stream_events_emits_frames_and_cleans_pubsub(monkeypatch) -> None
 
     monkeypatch.setattr(events_stream_route, "get_redis", fake_get_redis)
 
-    response = await events_route.stream_events()
+    response = await events_stream_route.stream_events()
     assert response.media_type == "text/event-stream"
     assert response.headers["Cache-Control"] == "no-cache"
     assert response.headers["Connection"] == "keep-alive"

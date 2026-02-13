@@ -8,14 +8,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from server.config import get_settings
 from server.db.session import get_database, init_database
 from server.routes import health_router, v1_router
-from server.services import (
-    CleanupService,
+from server.services.events import (
     StreamSubscriber,
     StreamSubscriberConfig,
+)
+from server.services.operations import (
+    AlertEmitterService,
+    CleanupService,
+)
+from server.services.redis import (
     close_redis,
     connect_redis,
 )
@@ -26,6 +32,15 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+class AppResponse(BaseModel):
+    """App response."""
+
+    name: str = "UpNext API"
+    version: str = get_settings().version
+    docs: str = "/docs"
+    note: str = "Frontend not built. Run 'bun run build' in web/ directory."
 
 
 @asynccontextmanager
@@ -70,6 +85,8 @@ async def lifespan(_app: FastAPI):
                 batch_size=settings.event_subscriber_batch_size,
                 poll_interval=settings.event_subscriber_poll_interval_ms / 1000,
                 stale_claim_ms=settings.event_subscriber_stale_claim_ms,
+                invalid_events_stream=settings.event_subscriber_invalid_stream,
+                invalid_events_stream_maxlen=settings.event_subscriber_invalid_stream_maxlen,
             ),
         )
         await subscriber.start()
@@ -88,6 +105,11 @@ async def lifespan(_app: FastAPI):
     )
     await cleanup.start()
 
+    alert_emitter = AlertEmitterService(
+        interval_seconds=settings.alert_poll_interval_seconds
+    )
+    await alert_emitter.start()
+
     yield
 
     # Shutdown
@@ -95,6 +117,7 @@ async def lifespan(_app: FastAPI):
 
     # Stop background services
     await cleanup.stop()
+    await alert_emitter.stop()
 
     if subscriber:
         await subscriber.stop()
@@ -111,18 +134,27 @@ async def lifespan(_app: FastAPI):
 
 
 # Create FastAPI app
+app_settings = get_settings()
 app = FastAPI(
     title="UpNext API",
     description="API server for UpNext job tracking and dashboard",
-    version=get_settings().version,
+    version=app_settings.version,
     lifespan=lifespan,
 )
 
 # Add CORS middleware
+allow_origins = app_settings.cors_allow_origins_list
+allow_credentials = app_settings.cors_allow_credentials and "*" not in allow_origins
+if app_settings.cors_allow_credentials and "*" in allow_origins:
+    logger.warning(
+        "CORS credentials disabled because wildcard origins are configured. "
+        "Set UPNEXT_CORS_ALLOW_ORIGINS to explicit origins to enable credentials."
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: prod config
-    allow_credentials=True,
+    allow_origins=allow_origins,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -156,12 +188,7 @@ else:
     @app.get("/")
     async def root():
         """Root endpoint (dev mode without built frontend)."""
-        return {
-            "name": "UpNext API",
-            "version": get_settings().version,
-            "docs": "/docs",
-            "note": "Frontend not built. Run 'bun run build' in web/ directory.",
-        }
+        return AppResponse()
 
 
 def main():

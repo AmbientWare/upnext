@@ -17,17 +17,17 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, overload
 
-from shared.models import Job
-from shared.schemas import FunctionConfig, FunctionType, MissedRunPolicy
-from shared.workers import (
+from shared.contracts import FunctionConfig, FunctionType, MissedRunPolicy
+from shared.domain import CronSource, Job
+from shared.keys import (
     FUNCTION_DEF_TTL,
-    FUNCTION_KEY_PREFIX,
-    WORKER_DEF_PREFIX,
     WORKER_DEF_TTL,
-    WORKER_HEARTBEAT_INTERVAL,
     WORKER_EVENTS_STREAM,
-    WORKER_INSTANCE_KEY_PREFIX,
+    WORKER_HEARTBEAT_INTERVAL,
     WORKER_TTL,
+    function_definition_key,
+    worker_definition_key,
+    worker_instance_key,
 )
 
 from upnext.config import get_settings
@@ -41,7 +41,7 @@ from upnext.engine.registry import (
     CronDefinition,
     Registry,
 )
-from upnext.engine.status import StatusPublisher
+from upnext.engine.status import StatusPublisher, StatusPublisherConfig
 from upnext.sdk.context import Context, set_current_context
 from upnext.types import SyncExecutor
 
@@ -51,6 +51,13 @@ F = TypeVar("F", bound=Callable[..., Any])
 P = ParamSpec("P")
 
 DEFAULT_CONCURRENCY = 2
+
+
+@dataclass(frozen=True)
+class _FunctionCatalog:
+    function_keys: list[str]
+    function_name_map: dict[str, str]
+    function_definitions: list[FunctionConfig]
 
 
 @dataclass
@@ -76,7 +83,18 @@ class Worker:
 
     name: str = field(default_factory=lambda: f"worker-{uuid.uuid4().hex[:8]}")
     concurrency: int = DEFAULT_CONCURRENCY
-    prefetch: int = 1  # Max jobs buffered locally from Redis.
+    prefetch: int | None = (
+        None  # None = profile default; else extra buffered reservations.
+    )
+    queue_batch_size: int | None = None
+    queue_inbox_size: int | None = None
+    queue_outbox_size: int | None = None
+    queue_flush_interval_ms: float | None = None
+    queue_claim_timeout_ms: int | None = None
+    queue_job_ttl_seconds: int | None = None
+    queue_result_ttl_seconds: int | None = None
+    queue_stream_maxlen: int | None = None
+    queue_dlq_stream_maxlen: int | None = None
     sync_executor: SyncExecutor = SyncExecutor.THREAD  # THREAD or PROCESS
     sync_pool_size: int | None = (
         None  # Executor pool size. Default: min(32, concurrency) for thread, cpu_count for process.
@@ -106,10 +124,26 @@ class Worker:
     _started_at: datetime | None = field(default=None, init=False)
     _registered_functions: list[str] = field(default_factory=list, init=False)
     _function_name_map: dict[str, str] = field(default_factory=dict, init=False)
-    _function_definitions: list[FunctionConfig] = field(default_factory=list, init=False)
+    _function_definitions: list[FunctionConfig] = field(
+        default_factory=list, init=False
+    )
     _worker_id: str | None = field(default=None, init=False)
     _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
     _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
+    _status_flush_timeout_seconds: float = field(default=2.0, init=False)
+
+    @staticmethod
+    def _resolve_int_option(
+        option_name: str,
+        explicit: int | None,
+        default: int,
+        *,
+        minimum: int,
+    ) -> int:
+        value = default if explicit is None else explicit
+        if value < minimum:
+            raise ValueError(f"{option_name} must be >= {minimum}")
+        return int(value)
 
     def initialize(
         self,
@@ -142,13 +176,90 @@ class Worker:
                 "or UPNEXT_REDIS_URL in the environment."
             )
         self._redis_client = create_redis_client(self.redis_url)
+        prefetch_raw = self.prefetch
+        prefetch_explicit = prefetch_raw is not None
+        prefetch = (
+            int(prefetch_raw)
+            if prefetch_raw is not None
+            else settings.default_worker_prefetch(concurrency=self.concurrency)
+        )
+        if prefetch < 1:
+            raise ValueError("Worker prefetch must be >= 1")
+
+        queue_batch_size = self._resolve_int_option(
+            "queue_batch_size",
+            self.queue_batch_size,
+            settings.default_queue_batch_size(),
+            minimum=1,
+        )
+        default_inbox_size = settings.default_queue_inbox_size(prefetch=prefetch)
+        if self.queue_inbox_size is not None:
+            queue_inbox_default = default_inbox_size
+        elif prefetch_explicit:
+            # Keep enough reserved work to saturate worker concurrency while honoring
+            # an explicit prefetch budget for additional buffered jobs.
+            queue_inbox_default = self.concurrency + prefetch
+        else:
+            queue_inbox_default = default_inbox_size
+        queue_inbox_size = self._resolve_int_option(
+            "queue_inbox_size",
+            self.queue_inbox_size,
+            queue_inbox_default,
+            minimum=1,
+        )
+        queue_outbox_size = self._resolve_int_option(
+            "queue_outbox_size",
+            self.queue_outbox_size,
+            settings.default_queue_outbox_size(),
+            minimum=1,
+        )
+        queue_claim_timeout_ms = self._resolve_int_option(
+            "queue_claim_timeout_ms",
+            self.queue_claim_timeout_ms,
+            settings.queue_claim_timeout_ms,
+            minimum=1,
+        )
+        queue_job_ttl_seconds = self._resolve_int_option(
+            "queue_job_ttl_seconds",
+            self.queue_job_ttl_seconds,
+            settings.queue_job_ttl_seconds,
+            minimum=1,
+        )
+        queue_result_ttl_seconds = self._resolve_int_option(
+            "queue_result_ttl_seconds",
+            self.queue_result_ttl_seconds,
+            settings.queue_result_ttl_seconds,
+            minimum=1,
+        )
+        queue_stream_maxlen = self._resolve_int_option(
+            "queue_stream_maxlen",
+            self.queue_stream_maxlen,
+            settings.default_queue_stream_maxlen(),
+            minimum=0,
+        )
+        queue_dlq_stream_maxlen = self._resolve_int_option(
+            "queue_dlq_stream_maxlen",
+            self.queue_dlq_stream_maxlen,
+            settings.queue_dlq_stream_maxlen,
+            minimum=0,
+        )
+        queue_flush_interval = settings.default_queue_flush_interval_seconds()
+        if self.queue_flush_interval_ms is not None:
+            queue_flush_interval = self.queue_flush_interval_ms / 1000
+        if queue_flush_interval <= 0:
+            raise ValueError("queue_flush_interval_ms must be > 0")
+
         self._queue_backend = RedisQueue(
             client=self._redis_client,
-            inbox_size=self.prefetch,
-            job_ttl_seconds=settings.queue_job_ttl_seconds,
-            result_ttl_seconds=settings.queue_result_ttl_seconds,
-            stream_maxlen=settings.queue_stream_maxlen,
-            dlq_stream_maxlen=settings.queue_dlq_stream_maxlen,
+            claim_timeout_ms=queue_claim_timeout_ms,
+            batch_size=queue_batch_size,
+            inbox_size=queue_inbox_size,
+            outbox_size=queue_outbox_size,
+            flush_interval=queue_flush_interval,
+            job_ttl_seconds=queue_job_ttl_seconds,
+            result_ttl_seconds=queue_result_ttl_seconds,
+            stream_maxlen=queue_stream_maxlen,
+            dlq_stream_maxlen=queue_dlq_stream_maxlen,
         )
 
         # Connect task handles to queue
@@ -162,11 +273,60 @@ class Worker:
         # Generate worker ID for tracking
         worker_id = f"{worker_id_prefix}_{uuid.uuid4().hex[:8]}"
         self._worker_id = worker_id
+        self._status_flush_timeout_seconds = max(
+            0.1,
+            settings.status_shutdown_flush_timeout_seconds,
+        )
+        durable_buffer_key = None
+        if settings.status_durable_buffer_enabled:
+            durable_candidate = settings.status_durable_buffer_key.strip()
+            if durable_candidate:
+                durable_buffer_key = durable_candidate
 
         # Create status publisher for writing events to Redis stream
-        self._status_buffer = StatusPublisher(self._redis_client, worker_id)
+        self._status_buffer = StatusPublisher(
+            self._redis_client,
+            worker_id,
+            config=StatusPublisherConfig(
+                max_stream_len=settings.status_stream_max_len,
+                retry_attempts=settings.status_publish_retry_attempts,
+                retry_base_delay_seconds=max(0.0, settings.status_publish_retry_base_ms)
+                / 1000,
+                retry_max_delay_seconds=max(0.0, settings.status_publish_retry_max_ms)
+                / 1000,
+                pending_buffer_size=max(1, settings.status_pending_buffer_size),
+                pending_flush_batch_size=max(
+                    1, settings.status_pending_flush_batch_size
+                ),
+                durable_buffer_key=durable_buffer_key,
+                durable_buffer_maxlen=max(1, settings.status_durable_buffer_maxlen),
+                strict=settings.status_publish_strict,
+            ),
+        )
 
         return worker_id
+
+    async def _emit_status_event(
+        self,
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if not self._status_buffer:
+            return
+        method = getattr(self._status_buffer, method_name, None)
+        if method is None:
+            return
+        try:
+            await method(*args, **kwargs)
+        except Exception as exc:
+            job_id = args[0] if args else "unknown"
+            logger.warning(
+                "Status publish failed method=%s job_id=%s: %s",
+                method_name,
+                job_id,
+                exc,
+            )
 
     @property
     def resolved_redis_url(self) -> str | None:
@@ -369,29 +529,28 @@ class Worker:
             # Send - all handlers fire
             order_placed.send(order_id="123")
         """
+        if not pattern.strip():
+            raise ValueError("Event pattern must be a non-empty string")
+
+        existing = self._event_handles.get(pattern)
+        if existing is not None:
+            return existing
+
         handle = EventHandle(pattern=pattern, _worker=self)
+        if self._queue_backend is not None:
+            handle._queue = self._queue_backend
         self._event_handles[pattern] = handle
         return handle
 
-    async def start(self) -> None:
-        """
-        Start the worker.
-
-        This connects to Redis, optionally connects to the UpNext API
-        for tracking, schedules cron jobs, and starts processing tasks.
-        """
-
-        worker_id = self.initialize(worker_id_prefix="worker")
-
-        # Build registered function keys and definitions
-        registered_functions: list[str] = []
+    def _build_function_catalog(self) -> _FunctionCatalog:
+        """Build immutable snapshots for worker registration and processor startup."""
+        function_keys: list[str] = []
         function_name_map: dict[str, str] = {}
         function_definitions: list[FunctionConfig] = []
 
-        # Add tasks
         for display_name, handle in self._task_handles.items():
             function_key = handle.function_key
-            registered_functions.append(function_key)
+            function_keys.append(function_key)
             function_name_map[function_key] = display_name
             function_definitions.append(
                 FunctionConfig(
@@ -408,10 +567,9 @@ class Worker:
                 )
             )
 
-        # Add crons
         for cron_def in self._crons:
-            if cron_def.key not in registered_functions:
-                registered_functions.append(cron_def.key)
+            if cron_def.key not in function_keys:
+                function_keys.append(cron_def.key)
             function_name_map[cron_def.key] = cron_def.display_name
             function_definitions.append(
                 FunctionConfig(
@@ -425,18 +583,16 @@ class Worker:
                 )
             )
 
-        # Add event handlers (one definition per handler key)
         for handle in self._event_handles.values():
             for handler in handle.handler_configs():
                 handler_key = handler["key"]
-                handler_name = handler["name"]
-                if handler_key not in registered_functions:
-                    registered_functions.append(handler_key)
-                function_name_map[handler_key] = handler_name
+                if handler_key not in function_keys:
+                    function_keys.append(handler_key)
+                function_name_map[handler_key] = handler["name"]
                 function_definitions.append(
                     FunctionConfig(
                         key=handler_key,
-                        name=handler_name,
+                        name=handler["name"],
                         type=FunctionType.EVENT,
                         pattern=handle.pattern,
                         timeout=handler["timeout"],
@@ -449,11 +605,29 @@ class Worker:
                     )
                 )
 
+        return _FunctionCatalog(
+            function_keys=function_keys,
+            function_name_map=function_name_map,
+            function_definitions=function_definitions,
+        )
+
+    async def start(self) -> None:
+        """
+        Start the worker.
+
+        This connects to Redis, optionally connects to the UpNext API
+        for tracking, schedules cron jobs, and starts processing tasks.
+        """
+
+        worker_id = self.initialize(worker_id_prefix="worker")
+
+        catalog = self._build_function_catalog()
+
         # Register worker instance and definitions in Redis
         self._started_at = datetime.now(UTC)
-        self._registered_functions = registered_functions
-        self._function_name_map = function_name_map
-        self._function_definitions = function_definitions
+        self._registered_functions = catalog.function_keys
+        self._function_name_map = catalog.function_name_map
+        self._function_definitions = catalog.function_definitions
         await self._write_worker_heartbeat()
         await self._write_worker_definition()
         await self._write_function_definitions()
@@ -465,7 +639,7 @@ class Worker:
             queue=self._queue_backend,
             registry=self._registry,
             concurrency=self.concurrency,
-            functions=registered_functions,
+            functions=catalog.function_keys,
             sync_executor=self.sync_executor,
             sync_pool_size=self.sync_pool_size,
             status_buffer=self._status_buffer,
@@ -491,8 +665,7 @@ class Worker:
                 kwargs={},
                 key=f"cron:{cron_def.key}",
                 timeout=cron_def.timeout,
-                schedule=cron_def.schedule,
-                metadata={"cron": True, "cron_name": cron_def.display_name},
+                source=CronSource(schedule=cron_def.schedule),
             )
 
             try:
@@ -555,7 +728,7 @@ class Worker:
         """Write worker data to Redis with TTL."""
         if not self._redis_client or not self._worker_id:
             return
-        key = f"{WORKER_INSTANCE_KEY_PREFIX}:{self._worker_id}"
+        key = worker_instance_key(self._worker_id)
         await self._redis_client.setex(key, WORKER_TTL, self._worker_data())
         await self._publish_worker_signal("worker.heartbeat")
 
@@ -568,7 +741,7 @@ class Worker:
         """
         if not self._redis_client:
             return
-        key = f"{WORKER_DEF_PREFIX}:{self.name}"
+        key = worker_definition_key(self.name)
         data = json.dumps(
             {
                 "name": self.name,
@@ -590,27 +763,39 @@ class Worker:
         """
         if not self._redis_client:
             return
-        for func_def in self._function_definitions:
-            function_key = func_def.key
-            key = f"{FUNCTION_KEY_PREFIX}:{function_key}"
-            existing = await self._redis_client.get(key)
-            updated_def = func_def
-            if existing:
-                payload = (
-                    existing.decode() if isinstance(existing, bytes) else str(existing)
-                )
-                try:
-                    existing_def = FunctionConfig.model_validate_json(payload)
-                    updated_def = func_def.model_copy(
-                        update={"paused": existing_def.paused}
+        keys = [
+            function_definition_key(func_def.key)
+            for func_def in self._function_definitions
+        ]
+        existing_rows = await self._redis_client.mget(keys) if keys else []
+
+        async with self._redis_client.pipeline(transaction=False) as pipe:
+            for func_def, key, existing in zip(
+                self._function_definitions,
+                keys,
+                existing_rows,
+                strict=False,
+            ):
+                updated_def = func_def
+                if existing:
+                    payload = (
+                        existing.decode()
+                        if isinstance(existing, bytes)
+                        else str(existing)
                     )
-                except Exception:
-                    pass
-            await self._redis_client.setex(
-                key,
-                FUNCTION_DEF_TTL,
-                updated_def.model_dump_json(),
-            )
+                    try:
+                        existing_def = FunctionConfig.model_validate_json(payload)
+                        updated_def = func_def.model_copy(
+                            update={"paused": existing_def.paused}
+                        )
+                    except Exception:
+                        pass
+                pipe.setex(
+                    key,
+                    FUNCTION_DEF_TTL,
+                    updated_def.model_dump_json(),
+                )
+            await pipe.execute()
 
     async def _publish_worker_signal(self, signal_type: str) -> None:
         """Publish worker heartbeat/lifecycle signal for realtime dashboards."""
@@ -715,22 +900,29 @@ class Worker:
             set_current_context(ctx)
 
             # Report job started
-            if self._status_buffer:
-                await self._status_buffer.record_job_started(
-                    job.id,
-                    job.function,
-                    job.function_name,
-                    job.attempts,
-                    job.max_retries,
-                    parent_id=job.parent_id,
-                    root_id=job.root_id,
-                    metadata=job.metadata,
-                    scheduled_at=job.scheduled_at,
-                    queue_wait_ms=round(
-                        max(0.0, (time_module.time() - job.scheduled_at.timestamp()) * 1000),
-                        3,
+            await self._emit_status_event(
+                "record_job_started",
+                job.id,
+                job.function,
+                job.function_name,
+                job.attempts,
+                job.max_retries,
+                parent_id=job.parent_id,
+                root_id=job.root_id,
+                source=job.source_data,
+                checkpoint=job.checkpoint,
+                checkpoint_at=job.checkpoint_at,
+                dlq_replayed_from=job.dlq_replayed_from,
+                dlq_failed_at=job.dlq_failed_at,
+                scheduled_at=job.scheduled_at,
+                queue_wait_ms=round(
+                    max(
+                        0.0,
+                        (time_module.time() - job.scheduled_at.timestamp()) * 1000,
                     ),
-                )
+                    3,
+                ),
+            )
 
             # Execute the function
             start = time_module.time()
@@ -743,39 +935,44 @@ class Worker:
             duration_ms = (time_module.time() - start) * 1000
 
             # Report job completed
-            if self._status_buffer:
-                await self._status_buffer.record_job_completed(
-                    job.id,
-                    job.function,
-                    job.function_name,
-                    root_id=job.root_id,
-                    parent_id=job.parent_id,
-                    attempt=job.attempts,
-                    result=result,
-                    duration_ms=duration_ms,
-                )
+            await self._emit_status_event(
+                "record_job_completed",
+                job.id,
+                job.function,
+                job.function_name,
+                root_id=job.root_id,
+                parent_id=job.parent_id,
+                attempt=job.attempts,
+                result=result,
+                duration_ms=duration_ms,
+            )
 
             return result
 
         except Exception as e:
             # Report job failed
-            if self._status_buffer:
-                await self._status_buffer.record_job_failed(
-                    job.id,
-                    job.function,
-                    job.function_name,
-                    root_id=job.root_id,
-                    error=str(e),
-                    attempt=job.attempts,
-                    max_retries=job.max_retries,
-                    parent_id=job.parent_id,
-                    traceback=traceback.format_exc(),
-                    will_retry=False,
-                )
+            await self._emit_status_event(
+                "record_job_failed",
+                job.id,
+                job.function,
+                job.function_name,
+                root_id=job.root_id,
+                error=str(e),
+                attempt=job.attempts,
+                max_retries=job.max_retries,
+                parent_id=job.parent_id,
+                traceback=traceback.format_exc(),
+                will_retry=False,
+            )
             raise
 
         finally:
             set_current_context(None)
+            if self._status_buffer:
+                with contextlib.suppress(Exception):
+                    await self._status_buffer.close(
+                        timeout_seconds=self._status_flush_timeout_seconds
+                    )
             if self._queue_backend:
                 await self._queue_backend.close()
 
@@ -794,6 +991,11 @@ class Worker:
         # Stop job processor - this is where the timeout matters
         if self._job_processor:
             await self._job_processor.stop(timeout)
+        elif self._status_buffer:
+            with contextlib.suppress(Exception):
+                await self._status_buffer.close(
+                    timeout_seconds=self._status_flush_timeout_seconds
+                )
 
         # Cancel remaining background tasks (0.5s max)
         if self._background_tasks:
@@ -808,9 +1010,7 @@ class Worker:
         # Remove worker from Redis and close connections
         if self._redis_client and self._worker_id:
             try:
-                await self._redis_client.delete(
-                    f"{WORKER_INSTANCE_KEY_PREFIX}:{self._worker_id}"
-                )
+                await self._redis_client.delete(worker_instance_key(self._worker_id))
                 await self._publish_worker_signal("worker.stopped")
             except Exception:
                 pass

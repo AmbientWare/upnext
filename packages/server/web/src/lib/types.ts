@@ -8,6 +8,7 @@
 // =============================================================================
 
 export type FunctionType = 'task' | 'cron' | 'event';
+export type JobType = 'task' | 'cron' | 'event';
 export type MissedRunPolicy = 'catch_up' | 'latest_only' | 'skip';
 export interface DispatchReasonMetrics {
   paused: number;
@@ -29,10 +30,32 @@ export type JobStatus =
 // Job Schemas
 // =============================================================================
 
+export interface TaskJobSource {
+  type: 'task';
+}
+
+export interface CronJobSource {
+  type: 'cron';
+  schedule: string;
+  cron_window_at: number | null;
+  startup_reconciled: boolean;
+  startup_policy: string | null;
+}
+
+export interface EventJobSource {
+  type: 'event';
+  event_pattern: string;
+  event_handler_name: string;
+}
+
+export type JobSource = TaskJobSource | CronJobSource | EventJobSource;
+
 export interface Job {
   id: string;
   function: string;
   function_name: string;
+  job_type: JobType;
+  source: JobSource;
   status: JobStatus;
   created_at: string | null;
   scheduled_at: string | null;
@@ -46,7 +69,10 @@ export interface Job {
   root_id: string;
   progress: number;
   kwargs: Record<string, unknown>;
-  metadata: Record<string, unknown>;
+  checkpoint: Record<string, unknown> | null;
+  checkpoint_at: string | null;
+  dlq_replayed_from: string | null;
+  dlq_failed_at: string | null;
   result: unknown;
   error: string | null;
   duration_ms: number | null;
@@ -81,7 +107,7 @@ export interface JobTrendsSnapshotEvent {
 // =============================================================================
 
 export interface Artifact {
-  id: number;
+  id: string;
   job_id: string;
   name: string;
   type: string;
@@ -104,8 +130,8 @@ export interface ArtifactStreamEvent {
   type: "artifact.created" | "artifact.queued" | "artifact.promoted" | "artifact.deleted";
   at: string;
   job_id: string;
-  artifact_id: number | null;
-  pending_id: number | null;
+  artifact_id: string | null;
+  pending_id: string | null;
   artifact: Artifact | null;
 }
 

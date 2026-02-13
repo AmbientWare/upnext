@@ -3,11 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from server.db.repositories import ArtifactRepository, JobRepository
+from server.db.tables import Artifact, JobHistory, PendingArtifact
+from server.services.operations.cleanup import CleanupService
 from sqlalchemy import select
-
-from server.db.models import Artifact, JobHistory, PendingArtifact
-from server.db.repository import ArtifactRepository, JobRepository
-from server.services.cleanup import CleanupService
 
 
 @pytest.mark.asyncio
@@ -63,11 +62,23 @@ async def test_cleanup_service_promotes_pending_and_deletes_old_rows(sqlite_db) 
         old = await session.get(JobHistory, "old-job")
         fresh = await session.get(JobHistory, "fresh-job")
         pending_rows = (
-            await session.execute(select(PendingArtifact).where(PendingArtifact.job_id == "fresh-job"))
-        ).scalars().all()
+            (
+                await session.execute(
+                    select(PendingArtifact).where(PendingArtifact.job_id == "fresh-job")
+                )
+            )
+            .scalars()
+            .all()
+        )
         artifacts = (
-            await session.execute(select(Artifact).where(Artifact.job_id == "fresh-job"))
-        ).scalars().all()
+            (
+                await session.execute(
+                    select(Artifact).where(Artifact.job_id == "fresh-job")
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     assert old is None
     assert fresh is not None

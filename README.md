@@ -109,11 +109,43 @@ The dashboard and API views use a stream-first model:
 
 This keeps UI updates near-realtime while reducing avoidable polling load.
 
+## Runtime Profiles
+
+UpNext runtime defaults to a safety-oriented profile:
+
+- `UPNEXT_QUEUE_RUNTIME_PROFILE=safe` (default)
+  - conservative worker prefetch (`1`)
+  - bounded stream sizes by default
+  - lower-risk queue buffering defaults
+- `UPNEXT_QUEUE_RUNTIME_PROFILE=throughput`
+  - higher prefetch / queue batching defaults for peak throughput
+
+Status-event publishing now retries and buffers transient failures by default.
+You can opt into fail-closed behavior with:
+
+- `UPNEXT_STATUS_PUBLISH_STRICT=true`
+
+Useful tuning env vars include:
+
+- `UPNEXT_QUEUE_STREAM_MAXLEN`
+- `UPNEXT_STATUS_STREAM_MAX_LEN`
+- `UPNEXT_STATUS_PUBLISH_RETRY_ATTEMPTS`
+- `UPNEXT_STATUS_PENDING_BUFFER_SIZE`
+
 ## Runtime Contract
 
 Queue and worker execution semantics are documented in:
 
 - `docs/execution-guarantees.md`
+
+## Benchmark Profiles
+
+Benchmark harness now supports explicit profiles:
+
+```bash
+uv run benchmarks --profile throughput
+uv run benchmarks --profile durability
+```
 
 ## Testing and Verification
 

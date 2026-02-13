@@ -23,6 +23,7 @@ server = []
 
 [project.scripts]
 upnext = "upnext.cli:app"
+benchmarks = "upnext.benchmarks:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -2,22 +2,19 @@
 
 import asyncio
 import logging
-from typing import Any, Literal, overload
+from collections.abc import Coroutine
+from typing import Any, Literal, TypeVar, overload
 
-import aiohttp
-from pydantic import TypeAdapter
 from shared.artifacts import ArtifactType
-from shared.schemas import ArtifactCreateResponse, ErrorResponse
-from upnext.config import get_settings
+from shared.contracts.artifacts import CreateArtifactRequest
+
+from upnext.engine.backend_api import ArtifactCreateResult, get_backend_api
 from upnext.sdk.context import get_current_context
+from upnext.types import ArtifactData
 
 logger = logging.getLogger(__name__)
 
-
-ArtifactCreateResult = ArtifactCreateResponse | ErrorResponse
-
-_artifact_create_response_adapter = TypeAdapter(ArtifactCreateResponse)
-_error_response_adapter = TypeAdapter(ErrorResponse)
+_T = TypeVar("_T")
 
 
 # TEXT: plain string
@@ -71,14 +68,14 @@ async def create_artifact(
 @overload
 async def create_artifact(
     name: str,
-    data: str,
+    data: ArtifactData,
     artifact_type: ArtifactType,
 ) -> ArtifactCreateResult: ...
 
 
 async def create_artifact(
     name: str,
-    data: str | dict[str, Any] | list[Any],
+    data: ArtifactData,
     artifact_type: ArtifactType = ArtifactType.JSON,
 ) -> ArtifactCreateResult:
     """
@@ -99,9 +96,9 @@ async def create_artifact(
 
     Returns:
         ArtifactCreateResult:
-        - Immediate create: `shared.schemas.ArtifactResponse`
-        - Queued create: `shared.schemas.ArtifactQueuedResponse`
-        - Error: `shared.schemas.ErrorResponse`
+        - Immediate create: `shared.contracts.artifacts.ArtifactResponse`
+        - Queued create: `shared.contracts.artifacts.ArtifactQueuedResponse`
+        - Error: `shared.contracts.artifacts.ErrorResponse`
 
     Example:
         from upnext import create_artifact, ArtifactType
@@ -121,45 +118,15 @@ async def create_artifact(
             await create_artifact("report.pdf", base64_pdf, ArtifactType.PDF)
     """
     ctx = get_current_context()
-    settings = get_settings()
-    url = f"{settings.url}/api/v1/jobs/{ctx.job_id}/artifacts"
 
-    payload = {
-        "name": name,
-        "type": artifact_type.value,
-        "data": data,
-    }
+    payload = CreateArtifactRequest(
+        name=name,
+        type=artifact_type,
+        data=data,
+    )
 
-    headers = {"Content-Type": "application/json"}
-    if settings.api_key:
-        headers["Authorization"] = f"Bearer {settings.api_key}"
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status in (200, 202):
-                    result = await resp.json()
-                    if resp.status == 200:
-                        logger.debug(f"Created artifact '{name}' for job {ctx.job_id}")
-                    else:
-                        logger.debug(f"Queued artifact '{name}' for job {ctx.job_id}")
-                    return _artifact_create_response_adapter.validate_python(result)
-                else:
-                    text = await resp.text()
-                    logger.warning(f"Failed to create artifact: {resp.status} {text}")
-                    try:
-                        payload = await resp.json()
-                    except Exception:
-                        payload = None
-                    if isinstance(payload, dict):
-                        try:
-                            return _error_response_adapter.validate_python(payload)
-                        except Exception:
-                            pass
-                    return ErrorResponse(detail=text or f"HTTP {resp.status}")
-    except Exception as e:
-        logger.warning(f"Error creating artifact: {e}")
-        return ErrorResponse(detail=str(e))
+    api = get_backend_api()
+    return await api.create_artifact(job_id=ctx.job_id, payload=payload)
 
 
 # Sync overloads
@@ -210,14 +177,14 @@ def create_artifact_sync(
 @overload
 def create_artifact_sync(
     name: str,
-    data: str,
+    data: ArtifactData,
     artifact_type: ArtifactType,
 ) -> ArtifactCreateResult: ...
 
 
 def create_artifact_sync(
     name: str,
-    data: str | dict[str, Any] | list[Any],
+    data: ArtifactData,
     artifact_type: ArtifactType = ArtifactType.JSON,
 ) -> ArtifactCreateResult:
     """
@@ -232,4 +199,16 @@ def create_artifact_sync(
         def process_data():
             create_artifact_sync("result", {"score": 0.95})
     """
-    return asyncio.run(create_artifact(name, data, artifact_type))  # type: ignore[arg-type]
+    return _run_sync(create_artifact(name, data, artifact_type))
+
+
+def _run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    coro.close()
+    raise RuntimeError(
+        "create_artifact_sync cannot run inside an active event loop; "
+        "use 'await create_artifact(...)' instead."
+    )

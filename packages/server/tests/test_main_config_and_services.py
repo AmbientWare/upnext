@@ -7,10 +7,10 @@ from typing import Any
 import pytest
 import server.config as config_module
 import server.main as main_module
-import server.services.api_instances as api_instances_module
+import server.services.apis.instances as api_instances_module
 import server.services.redis as redis_module
 from fastapi import FastAPI
-from shared import __version__ as shared_version
+from shared._version import __version__ as shared_version
 
 
 @dataclass
@@ -24,12 +24,15 @@ class _SettingsStub:
     event_subscriber_batch_size: int = 100
     event_subscriber_poll_interval_ms: int = 2000
     event_subscriber_stale_claim_ms: int = 30000
+    event_subscriber_invalid_stream: str = "upnext:status:events:invalid"
+    event_subscriber_invalid_stream_maxlen: int = 10_000
     cleanup_retention_days: int = 30
     cleanup_interval_hours: int = 1
     cleanup_pending_retention_hours: int = 24
     cleanup_pending_promote_batch: int = 500
     cleanup_pending_promote_max_loops: int = 20
     cleanup_startup_jitter_seconds: float = 30.0
+    alert_poll_interval_seconds: float = 60.0
 
 
 class _FakeDatabase:
@@ -89,6 +92,22 @@ class _FakeStreamSubscriber:
         self.stopped = True
 
 
+class _FakeAlertEmitterService:
+    instances: list[_FakeAlertEmitterService] = []
+
+    def __init__(self, interval_seconds: float = 60.0) -> None:
+        self.interval_seconds = interval_seconds
+        self.started = False
+        self.stopped = False
+        self.__class__.instances.append(self)
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
 class _FakeRedisClient:
     def __init__(self) -> None:
         self.closed = False
@@ -115,17 +134,22 @@ def _reset_singletons() -> None:
     redis_module._redis_client = None  # type: ignore[attr-defined]
     _FakeCleanupService.instances.clear()
     _FakeStreamSubscriber.instances.clear()
+    _FakeAlertEmitterService.instances.clear()
 
 
 def test_server_settings_defaults_and_flags(monkeypatch) -> None:
     monkeypatch.delenv("UPNEXT_DATABASE_URL", raising=False)
     monkeypatch.setenv("UPNEXT_ENV", "dev")
+    monkeypatch.delenv("UPNEXT_CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.delenv("UPNEXT_CORS_ALLOW_CREDENTIALS", raising=False)
     settings = config_module.get_settings()
 
     assert settings.is_development is True
     assert settings.is_production is False
     assert settings.effective_database_url.startswith("sqlite+aiosqlite:///")
     assert settings.is_sqlite is True
+    assert settings.cors_allow_origins_list == ["*"]
+    assert settings.cors_allow_credentials is False
     assert config_module.get_settings() is settings
 
 
@@ -134,12 +158,22 @@ def test_server_settings_database_override(monkeypatch) -> None:
     monkeypatch.setenv(
         "UPNEXT_DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/upnext"
     )
+    monkeypatch.setenv(
+        "UPNEXT_CORS_ALLOW_ORIGINS",
+        "https://app.example.com,https://admin.example.com",
+    )
+    monkeypatch.setenv("UPNEXT_CORS_ALLOW_CREDENTIALS", "true")
     settings = config_module.get_settings()
 
     assert settings.is_production is True
     assert settings.is_development is False
     assert settings.effective_database_url.startswith("postgresql+asyncpg://")
     assert settings.is_sqlite is False
+    assert settings.cors_allow_origins_list == [
+        "https://app.example.com",
+        "https://admin.example.com",
+    ]
+    assert settings.cors_allow_credentials is True
 
 
 @pytest.mark.asyncio
@@ -226,6 +260,7 @@ async def test_lifespan_sqlite_path_runs_cleanup_without_redis(monkeypatch) -> N
     monkeypatch.setattr(main_module, "init_database", lambda _url: db)
     monkeypatch.setattr(main_module, "get_database", lambda: db)
     monkeypatch.setattr(main_module, "CleanupService", _FakeCleanupService)
+    monkeypatch.setattr(main_module, "AlertEmitterService", _FakeAlertEmitterService)
     monkeypatch.setattr(main_module, "StreamSubscriber", _FakeStreamSubscriber)
 
     async def fail_if_called(_url: str):  # pragma: no cover - defensive guard
@@ -239,11 +274,13 @@ async def test_lifespan_sqlite_path_runs_cleanup_without_redis(monkeypatch) -> N
         assert db.connected == 1
         assert db.created_tables == 1
         assert _FakeCleanupService.instances[0].started is True
+        assert _FakeAlertEmitterService.instances[0].started is True
         assert _FakeCleanupService.instances[0].redis_client is None
         assert _FakeCleanupService.instances[0].kwargs["retention_days"] == 30
 
     assert db.disconnected == 1
     assert _FakeCleanupService.instances[0].stopped is True
+    assert _FakeAlertEmitterService.instances[0].stopped is True
     assert _FakeStreamSubscriber.instances == []
 
 
@@ -259,6 +296,7 @@ async def test_lifespan_postgres_missing_tables_fails_fast(monkeypatch) -> None:
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
     monkeypatch.setattr(main_module, "init_database", lambda _url: db)
     monkeypatch.setattr(main_module, "CleanupService", _FakeCleanupService)
+    monkeypatch.setattr(main_module, "AlertEmitterService", _FakeAlertEmitterService)
 
     with pytest.raises(RuntimeError, match="missing required tables"):
         async with main_module.lifespan(FastAPI()):
@@ -284,6 +322,7 @@ async def test_lifespan_with_redis_starts_and_stops_subscriber(monkeypatch) -> N
     monkeypatch.setattr(main_module, "init_database", lambda _url: db)
     monkeypatch.setattr(main_module, "get_database", lambda: db)
     monkeypatch.setattr(main_module, "CleanupService", _FakeCleanupService)
+    monkeypatch.setattr(main_module, "AlertEmitterService", _FakeAlertEmitterService)
     monkeypatch.setattr(main_module, "StreamSubscriber", _FakeStreamSubscriber)
 
     async def fake_connect_redis(_url: str) -> object:
@@ -300,9 +339,11 @@ async def test_lifespan_with_redis_starts_and_stops_subscriber(monkeypatch) -> N
         assert _FakeStreamSubscriber.instances[0].redis_client is redis_client
         assert _FakeCleanupService.instances[0].redis_client is redis_client
         assert _FakeCleanupService.instances[0].kwargs["interval_hours"] == 1
+        assert _FakeAlertEmitterService.instances[0].started is True
 
     assert _FakeStreamSubscriber.instances[0].stopped is True
     assert _FakeCleanupService.instances[0].stopped is True
+    assert _FakeAlertEmitterService.instances[0].stopped is True
     assert close_calls["count"] == 1
     assert db.disconnected == 1
 
@@ -337,4 +378,5 @@ def test_main_uses_settings_for_uvicorn(monkeypatch) -> None:
 def test_app_registers_health_and_api_routes() -> None:
     paths = {getattr(route, "path", "") for route in main_module.app.routes}
     assert "/health" in paths
+    assert "/ready" in paths
     assert "/api/v1/jobs" in paths

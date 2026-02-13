@@ -3,29 +3,26 @@
 import logging
 import math
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from shared.schemas import (
+from shared.contracts import (
     DispatchReasonMetrics,
-    FunctionDetailResponse,
     FunctionConfig,
+    FunctionDetailResponse,
     FunctionInfo,
     FunctionsListResponse,
     FunctionType,
     Run,
 )
 
-from server.db.repository import FunctionJobStats, FunctionWaitStats, JobRepository
+from server.db.repositories import FunctionJobStats, FunctionWaitStats, JobRepository
 from server.db.session import get_database
-from server.routes.functions_utils import set_function_pause_state
-from server.services import (
-    emit_function_alerts,
-    get_function_definitions,
+from server.routes.functions_utils import PauseStatePayload, set_function_pause_state
+from server.services.jobs import (
     get_function_dispatch_reason_stats,
     get_function_queue_depth_stats,
 )
-from server.services.workers import list_worker_instances
+from server.services.registry import get_function_definitions, list_worker_instances
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +88,14 @@ async def list_functions(
 
     Stats are computed from job history for the last 24 hours.
     """
+    functions = await collect_functions_snapshot(type=type)
+    return FunctionsListResponse(functions=functions, total=len(functions))
+
+
+async def collect_functions_snapshot(
+    type: FunctionType | None = None,
+) -> list[FunctionInfo]:
+    """Collect function snapshot rows for API responses/background alerting."""
     functions: list[FunctionInfo] = []
     now = datetime.now(UTC)
     day_ago = now - timedelta(hours=24)
@@ -195,11 +200,7 @@ async def list_functions(
         )
 
     functions.sort(key=lambda f: (-f.queue_backlog, -f.runs_24h, f.name, f.key))
-    try:
-        await emit_function_alerts(functions)
-    except Exception as exc:
-        logger.debug("Failed to emit function alerts: %s", exc)
-    return FunctionsListResponse(functions=functions, total=len(functions))
+    return functions
 
 
 @router.get("/{name}", response_model=FunctionDetailResponse)
@@ -258,8 +259,8 @@ async def get_function(name: str) -> FunctionDetailResponse:
             repo = JobRepository(session)
 
             stats = await repo.get_stats(function=function_key, start_date=day_ago)
-            runs_24h = stats["total"]
-            success_rate = round(stats["success_rate"], 1)
+            runs_24h = stats.total
+            success_rate = round(stats.success_rate, 1)
             wait_stats = await repo.get_function_wait_stats(
                 start_date=day_ago,
                 function=function_key,
@@ -351,8 +352,9 @@ async def get_function(name: str) -> FunctionDetailResponse:
         recent_runs=recent_runs,
     )
 
+
 @router.post("/{name}/pause")
-async def pause_function(name: str) -> dict[str, Any]:
+async def pause_function(name: str) -> PauseStatePayload:
     """Pause dispatch for a function key."""
     try:
         payload = await set_function_pause_state(name, paused=True)
@@ -366,7 +368,7 @@ async def pause_function(name: str) -> dict[str, Any]:
 
 
 @router.post("/{name}/resume")
-async def resume_function(name: str) -> dict[str, Any]:
+async def resume_function(name: str) -> PauseStatePayload:
     """Resume dispatch for a function key."""
     try:
         payload = await set_function_pause_state(name, paused=False)

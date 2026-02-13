@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
-from shared.models import Job, JobStatus
+from shared.domain.jobs import Job, JobStatus
 from upnext.engine.queue.base import BaseQueue
-from upnext.engine.status import StatusPublisher
+from upnext.engine.status import StatusPublisher, StatusPublisherConfig
 from upnext.sdk.parallel import first_completed, gather, map_tasks, submit_many
 from upnext.sdk.task import Future
 from upnext.sdk.worker import Worker
@@ -59,6 +59,22 @@ async def test_worker_rejects_duplicate_task_names() -> None:
             return 2
 
     assert "same" in worker.tasks
+
+
+def test_worker_event_reuses_existing_handle_for_pattern() -> None:
+    worker = Worker(name="event-dedupe-worker")
+
+    first = worker.event("order.created")
+    second = worker.event("order.created")
+
+    assert first is second
+    assert worker.events["order.created"] is first
+
+
+def test_worker_event_rejects_empty_pattern() -> None:
+    worker = Worker(name="event-validate-worker")
+    with pytest.raises(ValueError, match="non-empty"):
+        worker.event("   ")
 
 
 @pytest.mark.asyncio
@@ -218,3 +234,139 @@ async def test_status_publisher_uses_approximate_trim_when_supported() -> None:
     call = redis_stub.calls[0]
     assert call["kwargs"].get("approximate") is True
     assert call["kwargs"].get("maxlen") == publisher._config.max_stream_len  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_status_publisher_buffers_and_flushes_after_transient_failure() -> None:
+    class _FlakyRedis:
+        def __init__(self) -> None:
+            self.remaining_failures = 1
+            self.calls: list[dict[str, Any]] = []
+
+        async def xadd(
+            self, stream: str, payload: dict[str, str], **kwargs: Any
+        ) -> str:
+            if self.remaining_failures > 0:
+                self.remaining_failures -= 1
+                raise RuntimeError("transient write failure")
+            self.calls.append({"stream": stream, "payload": payload, "kwargs": kwargs})
+            return "1-0"
+
+    redis_stub = _FlakyRedis()
+    publisher = StatusPublisher(
+        redis_stub,
+        worker_id="worker-buffer",
+        config=StatusPublisherConfig(
+            retry_attempts=0,
+            pending_buffer_size=16,
+            pending_flush_batch_size=16,
+        ),
+    )
+
+    await publisher.record("job.progress", "job-1", progress=0.25)
+    assert publisher.pending_count == 1
+
+    await publisher.record("job.progress", "job-2", progress=0.5)
+    assert publisher.pending_count == 0
+    assert len(redis_stub.calls) == 2
+    assert redis_stub.calls[0]["payload"]["job_id"] == "job-1"
+    assert redis_stub.calls[1]["payload"]["job_id"] == "job-2"
+
+
+@pytest.mark.asyncio
+async def test_status_publisher_strict_mode_raises_on_publish_failure() -> None:
+    class _AlwaysFailRedis:
+        async def xadd(self, *_args: Any, **_kwargs: Any) -> str:
+            raise RuntimeError("write failed")
+
+    publisher = StatusPublisher(
+        _AlwaysFailRedis(),
+        worker_id="worker-strict",
+        config=StatusPublisherConfig(
+            retry_attempts=0,
+            strict=True,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to publish status event"):
+        await publisher.record("job.progress", "job-strict", progress=0.9)
+
+
+@pytest.mark.asyncio
+async def test_status_publisher_uses_durable_fallback_and_flushes_on_next_record(
+    fake_redis, monkeypatch
+) -> None:
+    original_xadd = fake_redis.xadd
+    state = {"should_fail": True}
+
+    async def flaky_xadd(*args: Any, **kwargs: Any):  # noqa: ANN002, ANN003
+        if state["should_fail"]:
+            raise RuntimeError("stream unavailable")
+        return await original_xadd(*args, **kwargs)
+
+    monkeypatch.setattr(fake_redis, "xadd", flaky_xadd)
+
+    durable_key = "upnext:status:pending:test-next-record"
+    publisher = StatusPublisher(
+        fake_redis,
+        worker_id="worker-durable",
+        config=StatusPublisherConfig(
+            retry_attempts=0,
+            pending_buffer_size=4,
+            pending_flush_batch_size=8,
+            durable_buffer_key=durable_key,
+            durable_buffer_maxlen=32,
+        ),
+    )
+
+    await publisher.record("job.progress", "job-1", progress=0.1)
+    assert publisher.pending_count == 0
+    assert await fake_redis.llen(durable_key) == 1
+
+    state["should_fail"] = False
+    await publisher.record("job.progress", "job-2", progress=0.2)
+    assert await fake_redis.llen(durable_key) == 0
+
+    rows = await fake_redis.xrange("upnext:status:events", count=10)
+    assert len(rows) == 2
+    assert rows[0][1][b"job_id"] == b"job-1"
+    assert rows[1][1][b"job_id"] == b"job-2"
+
+
+@pytest.mark.asyncio
+async def test_status_publisher_close_flushes_durable_buffer(
+    fake_redis, monkeypatch
+) -> None:
+    original_xadd = fake_redis.xadd
+    state = {"should_fail": True}
+
+    async def flaky_xadd(*args: Any, **kwargs: Any):  # noqa: ANN002, ANN003
+        if state["should_fail"]:
+            raise RuntimeError("stream unavailable")
+        return await original_xadd(*args, **kwargs)
+
+    monkeypatch.setattr(fake_redis, "xadd", flaky_xadd)
+
+    durable_key = "upnext:status:pending:test-close"
+    publisher = StatusPublisher(
+        fake_redis,
+        worker_id="worker-durable-close",
+        config=StatusPublisherConfig(
+            retry_attempts=0,
+            pending_buffer_size=4,
+            pending_flush_batch_size=8,
+            durable_buffer_key=durable_key,
+            durable_buffer_maxlen=32,
+        ),
+    )
+
+    await publisher.record("job.progress", "job-close-1", progress=0.1)
+    assert await fake_redis.llen(durable_key) == 1
+
+    state["should_fail"] = False
+    await publisher.close(timeout_seconds=1.0)
+
+    assert await fake_redis.llen(durable_key) == 0
+    rows = await fake_redis.xrange("upnext:status:events", count=10)
+    assert len(rows) == 1
+    assert rows[0][1][b"job_id"] == b"job-close-1"

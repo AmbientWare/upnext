@@ -35,7 +35,18 @@ export function RunbookPanels({
 
   return (
     <div className={cn("grid grid-cols-1 xl:grid-cols-3 gap-3", className)}>
-      <Panel title="Top Failing Functions" contentClassName="p-0">
+      <Panel
+        title="Top Failing Functions"
+        titleRight={(
+          <a
+            href="/docs"
+            className="text-[10px] text-muted-foreground hover:text-foreground underline"
+          >
+            Dispatch Reason Docs
+          </a>
+        )}
+        contentClassName="p-0"
+      >
         {isPending ? (
           <EmptyState label="Loading runbook data..." />
         ) : failing.length === 0 ? (
@@ -121,4 +132,3 @@ export function RunbookPanels({
     </div>
   );
 }
-

@@ -4,8 +4,8 @@ import asyncio
 import time
 
 import pytest
-from shared.models import Job
-from shared.models import JobStatus
+from shared.domain.jobs import Job
+from shared.domain.jobs import JobStatus
 from upnext.engine.queue.redis.queue import RedisQueue
 
 

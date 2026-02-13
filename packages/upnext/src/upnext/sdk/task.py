@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from upnext.engine.queue.base import BaseQueue
 
@@ -9,17 +10,11 @@ from upnext.engine.queue.base import BaseQueue
 @dataclass
 class TaskResult[T]:
     """
-    Result of a task execution.
-
-    Always returned regardless of outcome. Check `status` to determine
-    whether the task succeeded, failed, or was cancelled.
+    Result of a successful task execution.
 
     Example:
         result = await my_task.wait(order_id="123")
-        if result.ok:
-            print(result.value)
-        else:
-            print(f"Failed: {result.error}")
+        print(result.value)
     """
 
     value: T | None
@@ -89,13 +84,14 @@ class Future[T]:
 
         Raises:
             TimeoutError: If timeout reached before completion
+            TaskExecutionError: If the task completed with failed/cancelled status
         """
         status = await self._queue.subscribe_job(self._job_id, timeout=timeout)
         job = await self._queue.get_job(self._job_id)
         if not job:
             raise RuntimeError(f"Job {self._job_id} not found after completion")
 
-        return TaskResult(
+        task_result = TaskResult(
             value=job.result,
             job_id=job.id,
             function=job.function,
@@ -108,6 +104,9 @@ class Future[T]:
             parent_id=job.parent_id,
             root_id=job.root_id,
         )
+        if not task_result.ok:
+            raise TaskExecutionError(task_result)
+        return task_result
 
     async def cancel(self) -> bool:
         """
@@ -117,3 +116,17 @@ class Future[T]:
             True if cancelled, False if already complete
         """
         return await self._queue.cancel(self._job_id)
+
+
+class TaskExecutionError(RuntimeError):
+    """Raised when a task finishes with failed/cancelled status."""
+
+    def __init__(self, task_result: TaskResult[Any]) -> None:
+        self.task_result = task_result
+        self.job_id = task_result.job_id
+        self.status = task_result.status
+        self.error = task_result.error
+        message = self.error or (
+            f"Job {self.job_id} completed with non-success status '{self.status}'"
+        )
+        super().__init__(message)

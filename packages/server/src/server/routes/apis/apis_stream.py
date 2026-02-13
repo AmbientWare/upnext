@@ -4,8 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from shared.events import API_REQUESTS_STREAM
-from shared.schemas import (
+from shared.contracts import (
     ApiRequestEvent,
     ApiRequestEventsResponse,
     ApiRequestSnapshotEvent,
@@ -13,11 +12,12 @@ from shared.schemas import (
     ApisSnapshotEvent,
     ApiTrendsSnapshotEvent,
 )
+from shared.keys import API_REQUESTS_STREAM
 
 from server.config import get_settings
 from server.routes.apis.apis_root import get_api, get_api_trends, list_apis
 from server.routes.apis.apis_utils import parse_api_request_event
-from server.services import get_redis
+from server.services.redis import get_redis
 
 api_stream_router = APIRouter(tags=["apis"])
 

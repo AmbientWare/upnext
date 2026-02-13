@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TypedDict
 
-from shared.schemas import FunctionConfig
-from shared.workers import FUNCTION_KEY_PREFIX
+from shared.contracts import FunctionConfig
+from shared.keys import function_definition_key
 
 from server.services.redis import get_redis
 
 
+class PauseStatePayload(TypedDict):
+    key: str
+    paused: bool
+
+
 async def set_function_pause_state(
     function_key: str, *, paused: bool
-) -> dict[str, Any] | None:
+) -> PauseStatePayload | None:
     """
     Persist pause state for a function definition.
 
@@ -21,7 +26,7 @@ async def set_function_pause_state(
         Dict payload if function exists, else None.
     """
     redis_client = await get_redis()
-    redis_key = f"{FUNCTION_KEY_PREFIX}:{function_key}"
+    redis_key = function_definition_key(function_key)
     raw = await redis_client.get(redis_key)
     if not raw:
         return None
@@ -45,7 +50,4 @@ async def set_function_pause_state(
         # Preserve expiring keys even when TTL rounds down to zero.
         await redis_client.setex(redis_key, max(1, int(ttl)), encoded)
 
-    return {
-        "key": function_key,
-        "paused": paused,
-    }
+    return PauseStatePayload(key=function_key, paused=paused)

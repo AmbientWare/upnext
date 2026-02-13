@@ -19,7 +19,7 @@ from typing import Any, TypeVar
 import redis.asyncio as aioredis
 import uvicorn
 from fastapi import APIRouter, FastAPI
-from shared.api import API_INSTANCE_PREFIX, API_INSTANCE_TTL
+from shared.keys import API_INSTANCE_TTL, api_instance_key
 
 from upnext.config import get_settings
 from upnext.sdk.middleware import ApiTrackingConfig, ApiTrackingMiddleware
@@ -365,7 +365,7 @@ class Api:
         """Write instance data to Redis with TTL."""
         if not self._redis or not self._api_id:
             return
-        key = f"{API_INSTANCE_PREFIX}:{self._api_id}"
+        key = api_instance_key(self._api_id)
         await self._redis.setex(key, API_INSTANCE_TTL, self._instance_data())
 
     async def _heartbeat_loop(self) -> None:
@@ -395,7 +395,7 @@ class Api:
             # Remove instance key
             if self._api_id:
                 try:
-                    await self._redis.delete(f"{API_INSTANCE_PREFIX}:{self._api_id}")
+                    await self._redis.delete(api_instance_key(self._api_id))
                 except Exception:
                     pass
 

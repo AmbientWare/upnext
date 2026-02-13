@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
-from shared.models import Job, JobStatus
+from shared.domain.jobs import Job, JobStatus
 from upnext.sdk.context import Context, set_current_context
+from upnext.sdk.task import TaskExecutionError
 from upnext.sdk.worker import Worker
 
 
@@ -10,6 +11,7 @@ class RecordingQueue:
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
         self.subscribe_timeouts: list[float | None] = []
+        self.terminal_status: str = JobStatus.COMPLETE.value
 
     async def enqueue(self, job: Job, *, delay: float = 0.0) -> str:
         assert delay == 0.0
@@ -18,14 +20,21 @@ class RecordingQueue:
 
     async def subscribe_job(self, job_id: str, timeout: float | None = None) -> str:
         self.subscribe_timeouts.append(timeout)
-        return JobStatus.COMPLETE.value
+        return self.terminal_status
 
     async def get_job(self, job_id: str) -> Job | None:
         job = self.jobs.get(job_id)
         if job is None:
             return None
-        job.status = JobStatus.COMPLETE
-        job.result = {"job_id": job_id}
+        if self.terminal_status == JobStatus.COMPLETE.value:
+            job.status = JobStatus.COMPLETE
+            job.result = {"job_id": job_id}
+        elif self.terminal_status == JobStatus.FAILED.value:
+            job.status = JobStatus.FAILED
+            job.error = "child failed"
+        elif self.terminal_status == JobStatus.CANCELLED.value:
+            job.status = JobStatus.CANCELLED
+            job.error = "child cancelled"
         return job
 
     async def cancel(self, job_id: str) -> bool:
@@ -126,3 +135,30 @@ async def test_task_wait_idempotent_uses_timeout_and_validates_key() -> None:
 
     with pytest.raises(ValueError, match="idempotency_key must be a non-empty string"):
         await process.submit_idempotent("   ", name="abc")
+
+
+@pytest.mark.asyncio
+async def test_task_wait_bubbles_failed_child_status_as_exception() -> None:
+    worker = Worker(name="test-worker")
+
+    @worker.task(timeout=12)
+    async def process(v: int) -> int:
+        return v + 1
+
+    queue = RecordingQueue()
+    queue.terminal_status = JobStatus.FAILED.value
+    process._queue = queue  # type: ignore[assignment]
+
+    with pytest.raises(TaskExecutionError, match="child failed"):
+        await process.wait(v=3)
+
+
+def test_task_handle_does_not_expose_run_after_api() -> None:
+    worker = Worker(name="test-worker")
+
+    @worker.task
+    async def process(name: str) -> str:
+        return name
+
+    assert not hasattr(process, "submit_after")
+    assert not hasattr(process, "wait_after")

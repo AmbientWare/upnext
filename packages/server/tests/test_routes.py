@@ -7,26 +7,23 @@ from typing import AsyncIterator, cast
 import pytest
 import server.routes.apis as apis_route
 import server.routes.apis.apis_root as apis_root_route
-import server.routes.artifacts as artifacts_route
+import server.routes.artifacts.artifacts_root as artifacts_root_route
 import server.routes.artifacts.artifacts_stream as artifacts_stream_route
-import server.routes.artifacts.job_artifacts as job_artifacts_route
 import server.routes.dashboard as dashboard_route
-import server.routes.events as events_route
-import server.routes.events.events_root as events_root_route
 import server.routes.functions as functions_route
 import server.routes.functions_utils as functions_utils_route
+import server.routes.health as health_route
 import server.routes.jobs as jobs_route
 import server.routes.jobs.jobs_root as jobs_root_route
 import server.routes.jobs.jobs_stream as jobs_stream_route
 import server.routes.workers as workers_route
 import server.routes.workers.workers_root as workers_root_route
 import server.routes.workers.workers_stream as workers_stream_route
+import server.services.apis.tracking as api_tracking_module
 from fastapi import HTTPException, Response
-from server.db.repository import JobRepository
-from server.services.queue import QueuedJobSnapshot
-from shared.models import Job
-from shared.events import ARTIFACT_EVENTS_STREAM, BatchEventItem, BatchEventRequest
-from shared.schemas import (
+from server.db.repositories import JobRepository
+from server.services.jobs.metrics import QueuedJobSnapshot
+from shared.contracts import (
     ApiInstance,
     ArtifactType,
     CreateArtifactRequest,
@@ -37,7 +34,9 @@ from shared.schemas import (
     WorkerInstance,
     WorkerStats,
 )
-from shared.workers import FUNCTION_KEY_PREFIX
+from shared.domain.jobs import Job
+from shared.keys import ARTIFACT_EVENTS_STREAM
+from shared.keys.workers import FUNCTION_KEY_PREFIX
 from sqlalchemy.exc import IntegrityError
 
 
@@ -82,6 +81,7 @@ async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
     stats = await jobs_route.get_job_stats(function="fn.list", after=None, before=None)
     assert stats.total == 1
     assert stats.success_count == 1
+    assert stats.avg_duration_ms == pytest.approx(1000.0, abs=0.1)
 
     trends = await jobs_route.get_job_trends(hours=2, function="fn.list", type=None)
     assert len(trends.hourly) == 2
@@ -111,6 +111,7 @@ async def test_jobs_routes_handle_missing_database_and_not_found(monkeypatch) ->
     stats = await jobs_route.get_job_stats(function=None, after=None, before=None)
     assert stats.total == 0
     assert stats.success_rate == 100.0
+    assert stats.avg_duration_ms is None
 
     trends = await jobs_route.get_job_trends(hours=3, function=None, type=None)
     assert len(trends.hourly) == 3
@@ -119,9 +120,152 @@ async def test_jobs_routes_handle_missing_database_and_not_found(monkeypatch) ->
         await jobs_route.get_job_timeline("missing")
     assert timeline_exc.value.status_code == 404
 
-    with pytest.raises(HTTPException, match="Job not found") as job_exc:
-        await jobs_route.get_job("missing")
-    assert job_exc.value.status_code == 404
+
+@pytest.mark.asyncio
+async def test_health_route_includes_alert_metrics(monkeypatch) -> None:
+    class _SessionStub:
+        async def __aenter__(self) -> "_SessionStub":
+            return self
+
+        async def __aexit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def execute(self, _query) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    class _DatabaseStub:
+        def session(self) -> _SessionStub:
+            return _SessionStub()
+
+    class _RedisStub:
+        async def ping(self) -> bool:
+            return True
+
+    class _SettingsStub:
+        version = "0.0.1"
+        redis_url = "redis://localhost:6379"
+
+    async def _get_redis() -> _RedisStub:
+        return _RedisStub()
+
+    monkeypatch.setattr(health_route, "get_settings", lambda: _SettingsStub())
+    monkeypatch.setattr(health_route, "get_database", lambda: _DatabaseStub())
+    monkeypatch.setattr(health_route, "get_redis", _get_redis)
+    monkeypatch.setattr(
+        health_route,
+        "get_alert_delivery_stats",
+        lambda: {"sent": 2, "failures": 1},
+    )
+
+    payload = await health_route.health_check()
+    assert payload.status == "ok"
+    assert payload.metrics.alerts.sent == 2
+    assert payload.metrics.readiness.database.status == "ok"
+    assert payload.metrics.readiness.redis.status == "ok"
+
+    ready_response = Response()
+    ready_payload = await health_route.readiness_check(ready_response)
+    assert ready_response.status_code == 200
+    assert ready_payload.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_readiness_route_returns_503_when_dependencies_fail(monkeypatch) -> None:
+    class _SettingsStub:
+        version = "0.0.1"
+        redis_url = "redis://localhost:6379"
+
+    async def _get_redis():
+        raise RuntimeError("redis unavailable")
+
+    def _get_database():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(health_route, "get_settings", lambda: _SettingsStub())
+    monkeypatch.setattr(health_route, "get_database", _get_database)
+    monkeypatch.setattr(health_route, "get_redis", _get_redis)
+
+    liveness = await health_route.health_check()
+    assert liveness.status == "degraded"
+    assert liveness.metrics.readiness.database.status == "error"
+    assert liveness.metrics.readiness.redis.status == "error"
+
+    ready_response = Response()
+    readiness = await health_route.readiness_check(ready_response)
+    assert ready_response.status_code == 503
+    assert readiness.status == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_readiness_requires_redis_in_production(monkeypatch) -> None:
+    class _SessionStub:
+        async def __aenter__(self) -> "_SessionStub":
+            return self
+
+        async def __aexit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def execute(self, _query) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    class _DatabaseStub:
+        def session(self) -> _SessionStub:
+            return _SessionStub()
+
+    class _SettingsStub:
+        version = "0.0.1"
+        redis_url = None
+        is_production = True
+        readiness_require_redis = False
+
+    monkeypatch.setattr(health_route, "get_settings", lambda: _SettingsStub())
+    monkeypatch.setattr(health_route, "get_database", lambda: _DatabaseStub())
+
+    liveness = await health_route.health_check()
+    assert liveness.status == "degraded"
+    assert liveness.metrics.readiness.database.status == "ok"
+    assert liveness.metrics.readiness.redis.status == "error"
+
+    ready_response = Response()
+    readiness = await health_route.readiness_check(ready_response)
+    assert ready_response.status_code == 503
+    assert readiness.status == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_readiness_allows_missing_redis_in_development(monkeypatch) -> None:
+    class _SessionStub:
+        async def __aenter__(self) -> "_SessionStub":
+            return self
+
+        async def __aexit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def execute(self, _query) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    class _DatabaseStub:
+        def session(self) -> _SessionStub:
+            return _SessionStub()
+
+    class _SettingsStub:
+        version = "0.0.1"
+        redis_url = None
+        is_production = False
+        readiness_require_redis = False
+
+    monkeypatch.setattr(health_route, "get_settings", lambda: _SettingsStub())
+    monkeypatch.setattr(health_route, "get_database", lambda: _DatabaseStub())
+
+    liveness = await health_route.health_check()
+    assert liveness.status == "ok"
+    assert liveness.metrics.readiness.database.status == "ok"
+    assert liveness.metrics.readiness.redis.status == "skipped"
+
+    ready_response = Response()
+    readiness = await health_route.readiness_check(ready_response)
+    assert ready_response.status_code == 200
+    assert readiness.status == "ok"
 
 
 @pytest.mark.asyncio
@@ -303,15 +447,16 @@ async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
     await fake_redis.setex("upnext:result:job-456", 3_600, failed.to_json().encode())
 
     cancel_out = await jobs_route.cancel_job("job-123")
-    assert cancel_out["job_id"] == "job-123"
-    assert cancel_out["cancelled"] is True
+    assert cancel_out.job_id == "job-123"
+    assert cancel_out.cancelled is True
     assert await fake_redis.get(queued_key) is None
     cancelled_result = await fake_redis.get("upnext:result:job-123")
     assert cancelled_result is not None
     assert Job.from_json(cancelled_result.decode()).status.value == "cancelled"
 
     retry_out = await jobs_route.retry_job("job-456")
-    assert retry_out == {"job_id": "job-456", "retried": True}
+    assert retry_out.job_id == "job-456"
+    assert retry_out.retried is True
     retried_job = await fake_redis.get("upnext:job:fn.retry:job-456")
     assert retried_job is not None
     assert Job.from_json(retried_job.decode()).status.value == "queued"
@@ -506,7 +651,9 @@ async def test_functions_pause_and_resume_routes_persist_pause_state(
         f"{FUNCTION_KEY_PREFIX}:fn.invalid",
         json.dumps({"name": "bad-shape"}),
     )
-    with pytest.raises(HTTPException, match="Invalid function definition") as invalid_exc:
+    with pytest.raises(
+        HTTPException, match="Invalid function definition"
+    ) as invalid_exc:
         await functions_route.pause_function("fn.invalid")
     assert invalid_exc.value.status_code == 409
 
@@ -675,8 +822,12 @@ async def test_dashboard_returns_defaults_when_database_unavailable(
         return WorkerStats(total=0)
 
     class FakeReader:
-        async def get_summary(self) -> dict[str, float]:
-            return {"requests_24h": 0, "avg_latency_ms": 0, "error_rate": 0}
+        async def get_summary(self) -> api_tracking_module.ApiMetricsSummary:
+            return api_tracking_module.ApiMetricsSummary(
+                requests_24h=0,
+                avg_latency_ms=0.0,
+                error_rate=0.0,
+            )
 
     async def fake_reader() -> FakeReader:
         return FakeReader()
@@ -738,8 +889,12 @@ async def test_dashboard_includes_queue_depth_when_database_available(
         return WorkerStats(total=1)
 
     class FakeReader:
-        async def get_summary(self) -> dict[str, float]:
-            return {"requests_24h": 0, "avg_latency_ms": 0, "error_rate": 0}
+        async def get_summary(self) -> api_tracking_module.ApiMetricsSummary:
+            return api_tracking_module.ApiMetricsSummary(
+                requests_24h=0,
+                avg_latency_ms=0.0,
+                error_rate=0.0,
+            )
 
     async def fake_reader() -> FakeReader:
         return FakeReader()
@@ -831,8 +986,12 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
         return WorkerStats(total=2)
 
     class FakeReader:
-        async def get_summary(self) -> dict[str, float]:
-            return {"requests_24h": 0, "avg_latency_ms": 0, "error_rate": 0}
+        async def get_summary(self) -> api_tracking_module.ApiMetricsSummary:
+            return api_tracking_module.ApiMetricsSummary(
+                requests_24h=0,
+                avg_latency_ms=0.0,
+                error_rate=0.0,
+            )
 
     async def fake_reader() -> FakeReader:
         return FakeReader()
@@ -903,11 +1062,11 @@ async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) ->
         raise IntegrityError("insert", {}, Exception("fk race"))
 
     monkeypatch.setattr(
-        job_artifacts_route.ArtifactRepository, "create", raise_integrity
+        artifacts_root_route.ArtifactRepository, "create", raise_integrity
     )
 
     response = Response()
-    out = await artifacts_route.create_artifact(
+    out = await artifacts_root_route.create_artifact(
         "job-art-race",
         CreateArtifactRequest(name="summary", type=ArtifactType.JSON, data={"x": 1}),
         response,
@@ -933,10 +1092,10 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
                                         "type": "artifact.created",
                                         "at": "2026-02-09T12:00:00Z",
                                         "job_id": "job-a",
-                                        "artifact_id": 1,
+                                        "artifact_id": "artifact-1",
                                         "pending_id": None,
                                         "artifact": {
-                                            "id": 1,
+                                            "id": "artifact-1",
                                             "job_id": "job-a",
                                             "name": "summary",
                                             "type": "json",
@@ -961,10 +1120,10 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
                                         "type": "artifact.created",
                                         "at": "2026-02-09T12:00:01Z",
                                         "job_id": "job-b",
-                                        "artifact_id": 2,
+                                        "artifact_id": "artifact-2",
                                         "pending_id": None,
                                         "artifact": {
-                                            "id": 2,
+                                            "id": "artifact-2",
                                             "job_id": "job-b",
                                             "name": "skip-me",
                                             "type": "json",
@@ -998,7 +1157,9 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
 
     monkeypatch.setattr(artifacts_stream_route, "get_redis", _get_redis)
 
-    response = await artifacts_route.stream_job_artifacts("job-a", _RequestStub())
+    response = await artifacts_stream_route.stream_job_artifacts(
+        "job-a", _RequestStub()
+    )
     body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
     open_frame = await anext(body)
     event_frame = await anext(body)
@@ -1007,64 +1168,22 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
     payload = json.loads(event_frame.removeprefix("data: ").strip())
     assert payload["type"] == "artifact.created"
     assert payload["job_id"] == "job-a"
-    assert payload["artifact_id"] == 1
-
-
-@pytest.mark.asyncio
-async def test_event_batch_reports_processed_and_errors(monkeypatch) -> None:
-    async def fake_process_event(
-        event_type: str, data: dict, worker_id: str | None
-    ) -> bool:
-        if event_type == "bad.event":
-            raise RuntimeError("bad")
-        return event_type != "ignored.event"
-
-    monkeypatch.setattr(events_root_route, "process_event", fake_process_event)
-
-    req = BatchEventRequest(
-        events=[
-            BatchEventItem(
-                type="job.started",
-                job_id="a",
-                worker_id="w",
-                timestamp=1,
-                data={},
-            ),
-            BatchEventItem(
-                type="ignored.event",
-                job_id="b",
-                worker_id="w",
-                timestamp=2,
-                data={},
-            ),
-            BatchEventItem(
-                type="bad.event",
-                job_id="c",
-                worker_id="w",
-                timestamp=3,
-                data={},
-            ),
-        ]
-    )
-
-    out = await events_route.ingest_batch(req)
-    assert out.processed == 1
-    assert out.errors == 1
+    assert payload["artifact_id"] == "artifact-1"
 
 
 @pytest.mark.asyncio
 async def test_apis_route_merges_tracked_and_active_instances(monkeypatch) -> None:
     class FakeMetricsReader:
-        async def get_apis(self) -> list[dict]:
+        async def get_apis(self) -> list[api_tracking_module.ApiMetricsByName]:
             return [
-                {
-                    "name": "tracked-api",
-                    "endpoint_count": 1,
-                    "requests_24h": 10,
-                    "avg_latency_ms": 20,
-                    "error_rate": 0,
-                    "requests_per_min": 0.5,
-                }
+                api_tracking_module.ApiMetricsByName(
+                    name="tracked-api",
+                    endpoint_count=1,
+                    requests_24h=10,
+                    avg_latency_ms=20.0,
+                    error_rate=0.0,
+                    requests_per_min=0.5,
+                )
             ]
 
     async def fake_reader() -> FakeMetricsReader:
