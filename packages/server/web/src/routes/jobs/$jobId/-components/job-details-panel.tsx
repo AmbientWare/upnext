@@ -79,8 +79,8 @@ export function JobDetailsPanel({ job }: JobDetailsPanelProps) {
           <Separator />
 
           <div className="space-y-1.5">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Metadata</div>
-            <JsonBlock value={job.metadata} emptyLabel="No metadata" />
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Checkpoint</div>
+            <JsonBlock value={job.checkpoint} emptyLabel="No checkpoint" />
           </div>
 
           <div className="space-y-1.5">

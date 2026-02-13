@@ -23,4 +23,4 @@ COPY examples examples/
 RUN uv sync --frozen --no-dev --package upnext
 
 # Default command - can be overridden
-CMD ["uv", "run", "upnext", "run", "examples/service.py"]
+CMD ["uv", "run", "--no-sync", "upnext", "run", "examples/service.py"]

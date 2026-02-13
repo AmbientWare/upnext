@@ -182,7 +182,7 @@ export async function retryJob(jobId: string): Promise<JobRetryResponse> {
 }
 
 export function getArtifactContentUrl(
-  artifactId: number,
+  artifactId: string | number,
   options: { download?: boolean } = {}
 ): string {
   const searchParams = new URLSearchParams();

@@ -188,10 +188,13 @@ function patchExistingJob(
 }
 
 function createJobFromPatch(patch: Partial<Job> & { id: string }): Job {
+  const jobType = patch.job_type ?? "task";
   return {
     id: patch.id,
     function: patch.function ?? "",
     function_name: patch.function_name ?? patch.function ?? "",
+    job_type: jobType,
+    source: patch.source ?? { type: "task" },
     status: "active",
     created_at: patch.created_at ?? null,
     scheduled_at: null,
@@ -205,7 +208,10 @@ function createJobFromPatch(patch: Partial<Job> & { id: string }): Job {
     root_id: patch.root_id ?? patch.id,
     progress: 0,
     kwargs: {},
-    metadata: patch.metadata ?? {},
+    checkpoint: null,
+    checkpoint_at: null,
+    dlq_replayed_from: null,
+    dlq_failed_at: null,
     result: null,
     error: null,
     duration_ms: null,

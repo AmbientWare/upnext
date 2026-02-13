@@ -10,6 +10,7 @@ import server.routes.apis.apis_root as apis_root_route
 import server.routes.apis.apis_stream as apis_stream_route
 import server.routes.apis.apis_utils as apis_utils_route
 import server.routes.artifacts.artifacts_root as artifacts_root_route
+import server.routes.artifacts.artifacts_stream as artifacts_stream_route
 import server.routes.artifacts.artifacts_utils as artifacts_utils_route
 import server.routes.functions as functions_route
 import server.routes.jobs.jobs_stream as jobs_stream_route
@@ -131,6 +132,51 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
     with pytest.raises(HTTPException, match="Artifact not found") as delete_missing_exc:
         await artifacts_root_route.delete_artifact(created.id)
     assert delete_missing_exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_job_scoped_artifact_routes_are_available(
+    sqlite_db, monkeypatch
+) -> None:
+    now = datetime.now(UTC)
+    async with sqlite_db.session() as session:
+        jobs = JobRepository(session)
+        await jobs.record_job(
+            {
+                "job_id": "artifact-job-path",
+                "function": "fn.artifact",
+                "function_name": "artifact",
+                "status": "active",
+                "root_id": "artifact-job-path",
+                "created_at": now,
+            }
+        )
+
+    monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
+    monkeypatch.setattr(artifacts_stream_route.artifacts_root_route, "get_database", lambda: sqlite_db)
+
+    app = FastAPI()
+    app.include_router(v1_router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        create_response = await client.post(
+            "/api/v1/jobs/artifact-job-path/artifacts",
+            json={"name": "summary", "type": "text", "data": "hello"},
+        )
+        assert create_response.status_code == 200
+        created = create_response.json()
+        assert created["job_id"] == "artifact-job-path"
+
+        list_response = await client.get(
+            "/api/v1/jobs/artifact-job-path/artifacts",
+        )
+        assert list_response.status_code == 200
+        listed = list_response.json()
+        assert listed["total"] == 1
+        assert listed["artifacts"][0]["id"] == created["id"]
 
 
 @pytest.mark.asyncio

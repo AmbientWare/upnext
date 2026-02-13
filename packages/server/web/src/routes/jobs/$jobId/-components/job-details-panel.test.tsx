@@ -9,6 +9,8 @@ function mkJob(): Job {
     id: "job-details-1",
     function: "fn.long",
     function_name: "fn.long",
+    job_type: "task",
+    source: { type: "task" },
     status: "complete",
     created_at: "2026-02-08T10:00:00Z",
     scheduled_at: "2026-02-08T10:00:00Z",
@@ -24,10 +26,13 @@ function mkJob(): Job {
     kwargs: {
       arg: "x".repeat(120),
     },
-    metadata: {
+    checkpoint: {
       stream_key:
         "upnext:fn:very_long_function_name:stream:with:extra:segments:that:force:horizontal:overflow",
     },
+    checkpoint_at: "2026-02-08T10:00:05Z",
+    dlq_replayed_from: null,
+    dlq_failed_at: null,
     result: null,
     error: null,
     duration_ms: 9000,
@@ -39,7 +44,7 @@ describe("JobDetailsPanel", () => {
     const { container } = render(<JobDetailsPanel job={mkJob()} />);
 
     expect(screen.getByText("Job Details")).toBeInTheDocument();
-    expect(screen.getByText("Metadata")).toBeInTheDocument();
+    expect(screen.getByText("Checkpoint")).toBeInTheDocument();
     expect(screen.getByText("Arguments")).toBeInTheDocument();
 
     const horizontalScrollContainers = container.querySelectorAll(".overflow-x-auto");

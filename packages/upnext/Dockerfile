@@ -26,4 +26,4 @@ WORKDIR /app/packages/upnext
 ENV PYTHONUNBUFFERED=1
 
 # Default: show CLI help (no examples are bundled into the image)
-CMD ["uv", "run", "upnext", "--help"]
+CMD ["uv", "run", "--no-sync", "upnext", "--help"]
