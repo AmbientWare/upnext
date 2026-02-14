@@ -1,6 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
-import { Activity, LayoutDashboard, Code2, Server, Globe } from "lucide-react";
+import { Activity, LayoutDashboard, Code2, Lock, Server, Globe } from "lucide-react";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -8,6 +8,7 @@ const navItems = [
   { label: "APIs", href: "/apis", icon: Globe },
   { label: "Workers", href: "/workers", icon: Server },
   { label: "Functions", href: "/functions", icon: Code2 },
+  { label: "Secrets", href: "/secrets", icon: Lock },
 ];
 
 export function Sidebar() {

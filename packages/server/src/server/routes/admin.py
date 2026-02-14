@@ -3,10 +3,6 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-
-from server.db.repositories import AuthRepository
-from server.db.session import Database
-from server.routes.depends import require_database
 from shared.contracts.admin import (
     AdminApiKeyCreatedResponse,
     AdminApiKeyResponse,
@@ -20,9 +16,16 @@ from shared.contracts.admin import (
     UpdateUserRequest,
 )
 
+from server.auth import require_admin
+from server.db.repositories import AuthRepository
+from server.db.session import Database
+from server.routes.depends import require_database
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(
+    prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)]
+)
 
 
 # ---- Users ----
@@ -208,9 +211,7 @@ async def delete_api_key(
             raise HTTPException(status_code=404, detail="API key not found")
 
 
-@router.patch(
-    "/users/{user_id}/api-keys/{key_id}", response_model=AdminApiKeyResponse
-)
+@router.patch("/users/{user_id}/api-keys/{key_id}", response_model=AdminApiKeyResponse)
 async def toggle_api_key(
     user_id: str,
     key_id: str,

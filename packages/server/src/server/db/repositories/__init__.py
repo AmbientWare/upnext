@@ -1,5 +1,5 @@
-from server.db.repositories.auth_repository import AuthRepository, hash_api_key
 from server.db.repositories.artifacts_repository import ArtifactRepository
+from server.db.repositories.auth_repository import AuthRepository, hash_api_key
 from server.db.repositories.jobs_repository import JobRepository
 from server.db.repositories.models import (
     ArtifactRecord,
@@ -9,6 +9,7 @@ from server.db.repositories.models import (
     JobRecordCreate,
     PendingArtifactRecord,
 )
+from server.db.repositories.secrets_repository import SecretsRepository
 
 __all__ = [
     "AuthRepository",
@@ -21,4 +22,5 @@ __all__ = [
     "JobRepository",
     "JobRecordCreate",
     "PendingArtifactRecord",
+    "SecretsRepository",
 ]

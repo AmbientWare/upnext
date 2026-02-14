@@ -56,7 +56,7 @@ class _FakeDatabase:
 
     async def get_missing_tables(self, required_tables: set[str]) -> list[str]:
         self.checked_tables += 1
-        assert required_tables == {"job_history", "artifacts", "pending_artifacts", "users", "api_keys"}
+        assert required_tables == {"job_history", "artifacts", "pending_artifacts", "users", "api_keys", "secrets"}
         return list(self.missing_tables)
 
 

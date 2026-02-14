@@ -15,7 +15,7 @@ from server.db.repositories import AuthRepository
 from server.db.session import get_database, init_database
 from server.logging import configure_logging
 from server.middleware import CorrelationIDMiddleware
-from server.routes import health_router, v1_admin_router, v1_public_router, v1_router
+from server.routes import health_router, v1_public_router, v1_router
 from server.services.events import (
     StreamSubscriber,
     StreamSubscriberConfig,
@@ -64,7 +64,14 @@ async def lifespan(_app: FastAPI):
         await db.create_tables()
     else:
         logger.info("Database connected (PostgreSQL)")
-        required_tables = {"job_history", "artifacts", "pending_artifacts", "users", "api_keys"}
+        required_tables = {
+            "job_history",
+            "artifacts",
+            "pending_artifacts",
+            "users",
+            "api_keys",
+            "secrets",
+        }
         missing_tables = await db.get_missing_tables(required_tables)
         if missing_tables:
             raise RuntimeError(
@@ -183,7 +190,6 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(v1_public_router)
 app.include_router(v1_router)
-app.include_router(v1_admin_router)
 
 # Static files directory (built frontend)
 # Prefer packaged assets (`server/static`) and fall back to monorepo path.

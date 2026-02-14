@@ -31,6 +31,7 @@ from shared.keys import (
 )
 
 from upnext.config import get_settings
+from upnext.engine.backend_api import BackendAPI
 from upnext.engine.cron import calculate_next_cron_run
 from upnext.engine.function_identity import build_function_key
 from upnext.engine.handlers import EventHandle, TaskHandle
@@ -43,6 +44,7 @@ from upnext.engine.registry import (
 )
 from upnext.engine.status import StatusPublisher, StatusPublisherConfig
 from upnext.sdk.context import Context, set_current_context
+from upnext.sdk.secrets import fetch_and_inject_secrets
 from upnext.types import SyncExecutor
 
 logger = logging.getLogger(__name__)
@@ -100,6 +102,7 @@ class Worker:
         None  # Executor pool size. Default: min(32, concurrency) for thread, cpu_count for process.
     )
     redis_url: str | None = None  # Uses config.settings.redis_url if not specified
+    secrets: list[str] = field(default_factory=list)
 
     # Signal handling (set to False when signals are handled at a higher level)
     handle_signals: bool = True
@@ -620,6 +623,14 @@ class Worker:
         """
 
         worker_id = self.initialize(worker_id_prefix="worker")
+
+        # Fetch and inject secrets before building the function catalog
+        if self.secrets:
+            backend = BackendAPI()
+            try:
+                await fetch_and_inject_secrets(self.secrets, backend)
+            finally:
+                await backend.close()
 
         catalog = self._build_function_catalog()
 

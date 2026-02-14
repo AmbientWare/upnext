@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, Self
+from urllib.parse import quote
 
 import aiohttp
 from pydantic import TypeAdapter
@@ -65,6 +66,27 @@ class BackendAPI:
     async def request(self, method: str, url: str, **kwargs: Any) -> Any:
         session = await self._ensure_session()
         return await session.request(method, url, **kwargs)
+
+    async def get_secret(self, name: str) -> dict[str, str] | None:
+        """Fetch a secret's decrypted values by name.
+
+        Returns the data dict on success, None on 404.
+        Raises on connection errors or unexpected HTTP status codes so callers
+        can distinguish "not found" from "server unreachable".
+        """
+
+        url = f"{self._base_url}/secrets/by-name/{quote(name, safe='')}"
+        session = await self._ensure_session()
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                result = await resp.json()
+                return result.get("data", {})
+            if resp.status == 404:
+                return None
+            text = await resp.text()
+            raise RuntimeError(
+                f"Failed to fetch secret '{name}': HTTP {resp.status} — {text}"
+            )
 
     async def create_artifact(
         self, job_id: str, payload: CreateArtifactRequest

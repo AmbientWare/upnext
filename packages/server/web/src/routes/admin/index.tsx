@@ -55,6 +55,18 @@ export const Route = createFileRoute("/admin/")({
 });
 
 function AdminPage() {
+  return (
+    <div className="p-4 h-full flex flex-col overflow-hidden">
+      <UsersTab />
+    </div>
+  );
+}
+
+// =============================================================================
+// Users Tab
+// =============================================================================
+
+function UsersTab() {
   const [createUserOpen, setCreateUserOpen] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [apiKeyUserId, setApiKeyUserId] = useState<string | null>(null);
@@ -73,7 +85,7 @@ function AdminPage() {
     : users;
 
   return (
-    <div className="p-4 h-full flex flex-col gap-4 overflow-hidden">
+    <div className="h-full flex flex-col gap-4">
       <div className="shrink-0 flex items-center gap-2">
         <div className="relative w-full sm:max-w-80">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -545,3 +557,4 @@ function ApiKeyDialog({
     </Dialog>
   );
 }
+

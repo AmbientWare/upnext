@@ -90,6 +90,20 @@ class ApiKey(Base):
         return f"<ApiKey(id={self.id!r}, prefix={self.key_prefix!r}, user_id={self.user_id!r})>"
 
 
+class Secret(Base):
+    """Named secrets containing encrypted key-value pairs."""
+
+    __tablename__ = "secrets"
+
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    encrypted_data: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (Index("ix_secrets_name", "name"),)
+
+    def __repr__(self) -> str:
+        return f"<Secret(id={self.id!r}, name={self.name!r})>"
+
+
 class JobHistory(Base):
     """
     Job history stored in database.

@@ -1,9 +1,33 @@
+import logging
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
+from cryptography.fernet import Fernet
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared._version import __version__
+
+logger = logging.getLogger(__name__)
+
+_UPNEXT_HOME = Path.home() / ".upnext"
+_SECRET_KEY_FILE = _UPNEXT_HOME / "secret_key"
+
+
+def _get_or_create_secret_key() -> str:
+    """Read a persisted Fernet key from disk, or generate and save one."""
+    if _SECRET_KEY_FILE.exists():
+        return _SECRET_KEY_FILE.read_text().strip()
+
+    _SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    key = Fernet.generate_key().decode()
+    _SECRET_KEY_FILE.write_text(key)
+    logger.info("Generated new secret key at %s", _SECRET_KEY_FILE)
+    logger.warning(
+        "For production, set UPNEXT_SECRET_KEY to a secure random string. Fernet compatible."
+    )
+
+    return key
 
 
 class Environments(StrEnum):
@@ -44,10 +68,14 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     api_key: str | None = None
 
+    # Encryption key for secrets storage.
+    # Auto-generated and persisted to ~/.upnext/secret_key if not set via env.
+    secret_key: str = ""
+
     # Artifact storage
     artifact_max_upload_bytes: int = 256 * 1024 * 1024  # 256 MB
     artifact_storage_backend: Literal["local", "s3"] = "local"
-    artifact_storage_local_root: str = ".upnext/artifacts"
+    artifact_storage_local_root: str = str(_UPNEXT_HOME / "artifacts")
     artifact_storage_s3_bucket: str | None = None
     artifact_storage_s3_prefix: str = "upnext/artifacts"
     artifact_storage_s3_region: str | None = None
@@ -127,6 +155,10 @@ class Settings(BaseSettings):
         origins = [origin.strip() for origin in self.cors_allow_origins.split(",")]
         cleaned = [origin for origin in origins if origin]
         return cleaned or ["*"]
+
+    def model_post_init(self, __context: object) -> None:
+        if not self.secret_key:
+            self.secret_key = _get_or_create_secret_key()
 
 
 @lru_cache

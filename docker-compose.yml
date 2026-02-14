@@ -63,7 +63,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://upnext:upnext@postgres:5432/upnext
       UPNEXT_REDIS_URL: redis://redis:6379
       UPNEXT_ARTIFACT_STORAGE_BACKEND: local
-      UPNEXT_ARTIFACT_STORAGE_LOCAL_ROOT: /var/lib/upnext/artifacts
+      UPNEXT_ARTIFACT_STORAGE_LOCAL_ROOT: /root/.upnext/artifacts
       UPNEXT_AUTH_ENABLED: "true"
       UPNEXT_API_KEY: "changeme"
       HOST: 0.0.0.0
@@ -71,7 +71,7 @@ services:
     volumes:
       - ./packages/server/src:/app/packages/server/src
       - ./packages/shared/src:/app/packages/shared/src
-      - server_artifacts:/var/lib/upnext/artifacts
+      - server_upnext_home:/root/.upnext
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,4 +138,4 @@ services:
 volumes:
   redis_data:
   postgres_data:
-  server_artifacts:
+  server_upnext_home:

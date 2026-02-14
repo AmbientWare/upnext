@@ -22,6 +22,8 @@ import type {
   FunctionsListResponse,
   JobListResponse,
   JobTrendsResponse,
+  SecretDetail,
+  SecretsListResponse,
   WorkersListResponse,
 } from "./types";
 import { getStoredApiKey } from "./auth";
@@ -463,6 +465,60 @@ export async function toggleAdminApiKey(
 }
 
 // =============================================================================
+// Secrets
+// =============================================================================
+
+export async function getSecrets(): Promise<SecretsListResponse> {
+  const response = await apiFetch(`${API_BASE}/secrets`);
+  return handleResponse<SecretsListResponse>(response);
+}
+
+export async function getSecret(secretId: string): Promise<SecretDetail> {
+  const response = await apiFetch(
+    `${API_BASE}/secrets/${encodeURIComponent(secretId)}`
+  );
+  return handleResponse<SecretDetail>(response);
+}
+
+export async function createSecret(data: {
+  name: string;
+  data: Record<string, string>;
+}): Promise<SecretDetail> {
+  const response = await apiFetch(`${API_BASE}/secrets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<SecretDetail>(response);
+}
+
+export async function updateSecret(
+  secretId: string,
+  data: { name?: string; data?: Record<string, string> }
+): Promise<SecretDetail> {
+  const response = await apiFetch(
+    `${API_BASE}/secrets/${encodeURIComponent(secretId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }
+  );
+  return handleResponse<SecretDetail>(response);
+}
+
+export async function deleteSecret(secretId: string): Promise<void> {
+  const response = await apiFetch(
+    `${API_BASE}/secrets/${encodeURIComponent(secretId)}`,
+    { method: "DELETE" }
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new ApiError(response.status, response.statusText, text);
+  }
+}
+
+// =============================================================================
 // Query Keys (for TanStack Query)
 // =============================================================================
 
@@ -491,4 +547,6 @@ export const queryKeys = {
   adminUsers: ["admin", "users"] as const,
   adminUserApiKeys: (userId: string) =>
     ["admin", "users", userId, "api-keys"] as const,
+  secrets: ["secrets"] as const,
+  secret: (secretId: string) => ["secrets", secretId] as const,
 };
