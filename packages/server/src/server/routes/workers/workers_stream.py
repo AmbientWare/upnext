@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
@@ -14,39 +15,33 @@ from server.routes.workers.workers_utils import (
     STREAMABLE_WORKER_EVENTS,
     parse_worker_signal_type,
 )
+from server.routes.sse import SSE_BLOCK_MS, SSE_CACHE_TTL_SECONDS, SSE_HEADERS, SSE_READ_COUNT
 from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
 worker_stream_router = APIRouter(tags=["workers"])
 _WORKERS_CACHE_LOCK = asyncio.Lock()
-_WORKERS_CACHE_TTL_SECONDS = 0.75
-_workers_snapshot_cache: tuple[float, str | None, int, Any] | None = None
+_workers_snapshot_cache: tuple[float, str | None, Any] | None = None
 
 
 async def _get_cached_workers_snapshot(*, event_token: str | None = None) -> Any:
     global _workers_snapshot_cache
-    now = asyncio.get_running_loop().time()
+    now = time.monotonic()
     cached = _workers_snapshot_cache
-    provider_id = id(list_workers_route)
     if cached and cached[0] > now:
-        if cached[2] == provider_id and (
-            event_token is None or cached[1] == event_token
-        ):
-            return cached[3]
+        if event_token is None or cached[1] == event_token:
+            return cached[2]
 
     async with _WORKERS_CACHE_LOCK:
         cached = _workers_snapshot_cache
         if cached and cached[0] > now:
-            if cached[2] == provider_id and (
-                event_token is None or cached[1] == event_token
-            ):
-                return cached[3]
+            if event_token is None or cached[1] == event_token:
+                return cached[2]
         snapshot = await list_workers_route()
         _workers_snapshot_cache = (
-            now + _WORKERS_CACHE_TTL_SECONDS,
+            now + SSE_CACHE_TTL_SECONDS,
             event_token,
-            provider_id,
             snapshot,
         )
         return snapshot
@@ -78,8 +73,8 @@ async def stream_workers(request: Request) -> StreamingResponse:
 
                 result = await redis_client.xread(
                     {WORKER_EVENTS_STREAM: last_id},
-                    count=200,
-                    block=15_000,
+                    count=SSE_READ_COUNT,
+                    block=SSE_BLOCK_MS,
                 )
                 if not result:
                     yield ": keep-alive\n\n"
@@ -109,12 +104,12 @@ async def stream_workers(request: Request) -> StreamingResponse:
                 yield f"data: {event.model_dump_json()}\n\n"
         except asyncio.CancelledError:
             return
+        except Exception as exc:
+            logger.warning("Workers stream error: %s", exc)
+            yield "event: error\ndata: {\"error\": \"stream disconnected\"}\n\n"
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
     )

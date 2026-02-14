@@ -7,6 +7,7 @@ from typing import Any, Self
 
 from shared.domain import Job
 
+from upnext.config import get_settings
 from upnext.types import (
     CheckpointCommand,
     CommandQueueLike,
@@ -58,6 +59,10 @@ class Context:
     function: str = ""
     function_name: str = ""
 
+    # Progress coalescing thresholds
+    progress_min_delta: float = 0.01
+    progress_min_interval_seconds: float = 0.2
+
     # internal
     _cmd_queue: CommandQueueLike | None = field(default=None, repr=False)
     _cancelled: bool = field(default=False, repr=False)
@@ -90,6 +95,7 @@ class Context:
         else:
             root_id = job.id
 
+        settings = get_settings()
         return cls(
             job_id=job.id,
             job_key=job.key,
@@ -101,6 +107,8 @@ class Context:
             timeout=job.timeout,
             function=job.function,
             function_name=job.function_name,
+            progress_min_delta=settings.progress_min_delta,
+            progress_min_interval_seconds=settings.progress_min_interval_seconds,
         )
 
     @property
@@ -137,8 +145,8 @@ class Context:
         if self._cmd_queue is not None:
             # Coalesce noisy progress updates before they hit queue/Redis/DB paths.
             now = time.monotonic()
-            min_delta = 0.01
-            min_interval_seconds = 0.2
+            min_delta = self.progress_min_delta
+            min_interval_seconds = self.progress_min_interval_seconds
             is_terminal_progress = progress >= 1.0
             changed_message = message != self._last_progress_message
             changed_progress = (

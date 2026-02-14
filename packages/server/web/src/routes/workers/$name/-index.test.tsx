@@ -90,8 +90,8 @@ describe("WorkerDetailPage", () => {
       expect(screen.getByRole("heading", { name: "worker-a" })).toBeInTheDocument();
     });
 
-    expect(screen.getByText("3/5")).toBeInTheDocument();
-    expect(screen.getByText("Completed Jobs")).toBeInTheDocument();
+    expect(screen.getByText("60%")).toBeInTheDocument();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("alpha")).toBeInTheDocument();
     expect(screen.getByText("beta")).toBeInTheDocument();
   });

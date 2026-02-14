@@ -9,6 +9,7 @@ from upnext.engine import run_services
 from upnext.sdk import (
     Api,
     Context,
+    TaskTimeoutError,
     Worker,
     create_artifact,
     create_artifact_sync,
@@ -20,6 +21,7 @@ __all__ = [
     "Api",
     "ArtifactType",
     "Context",
+    "TaskTimeoutError",
     "Worker",
     "SyncExecutor",
     "__version__",

@@ -29,14 +29,14 @@ describe("upnext-api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await getJobs({ function: "fn.key", status: ["active", "failed"], limit: 20, offset: 10 });
+    await getJobs({ function: "fn.key", status: ["active", "failed"], limit: 20, cursor: "job-abc" });
 
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toContain("function=fn.key");
     expect(url).toContain("status=active");
     expect(url).toContain("status=failed");
     expect(url).toContain("limit=20");
-    expect(url).toContain("offset=10");
+    expect(url).toContain("cursor=job-abc");
   });
 
   it("throws timeout ApiError when request exceeds timeout", async () => {

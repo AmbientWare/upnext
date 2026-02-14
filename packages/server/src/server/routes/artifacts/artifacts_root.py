@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from shared.contracts import (
     ArtifactCreateResponse,
     ArtifactDeleteResponse,
@@ -17,13 +17,15 @@ from shared.contracts import (
 )
 from sqlalchemy.exc import IntegrityError
 
+from server.config import get_settings
 from server.db.repositories import ArtifactRepository, JobRepository
-from server.db.session import get_database
+from server.db.session import Database
 from server.routes.artifacts.artifacts_utils import (
     artifact_sha256,
     encode_artifact_payload,
     publish_artifact_event,
 )
+from server.routes.depends import require_database
 from server.services.storage import get_artifact_storage
 
 logger = logging.getLogger(__name__)
@@ -43,7 +45,10 @@ artifact_root_router = APIRouter(tags=["artifacts"])
     },
 )
 async def create_artifact(
-    job_id: str, request: CreateArtifactRequest, response: Response
+    job_id: str,
+    request: CreateArtifactRequest,
+    response: Response,
+    db: Database = Depends(require_database),
 ) -> ArtifactCreateResponse:
     """Create an artifact for a specific job."""
     try:
@@ -55,15 +60,16 @@ async def create_artifact(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     size_bytes = len(content)
+    max_bytes = get_settings().artifact_max_upload_bytes
+    if size_bytes > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Artifact too large ({size_bytes} bytes). Max allowed: {max_bytes} bytes.",
+        )
     content_hash = artifact_sha256(content)
     storage = get_artifact_storage()
     storage_key = storage.build_artifact_storage_key(job_id, request.name)
     storage_backend = storage.backend_name
-
-    try:
-        db = get_database()
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Database not available")
 
     try:
         await storage.put(key=storage_key, content=content, content_type=content_type)
@@ -182,14 +188,18 @@ async def create_artifact(
             raise
 
 
-@artifact_root_router.get("", response_model=ArtifactListResponse)
-async def list_artifacts(job_id: str) -> ArtifactListResponse:
+@artifact_root_router.get(
+    "",
+    response_model=ArtifactListResponse,
+    responses={
+        503: {"model": ErrorResponse, "description": "Database not available."},
+    },
+)
+async def list_artifacts(
+    job_id: str,
+    db: Database = Depends(require_database),
+) -> ArtifactListResponse:
     """List all artifacts for a job."""
-    try:
-        db = get_database()
-    except RuntimeError:
-        return ArtifactListResponse(artifacts=[], total=0)
-
     async with db.session() as session:
         repo = ArtifactRepository(session)
         artifacts = await repo.list_by_job(job_id)
@@ -208,13 +218,11 @@ async def list_artifacts(job_id: str) -> ArtifactListResponse:
         503: {"model": ErrorResponse, "description": "Database not available."},
     },
 )
-async def get_artifact(artifact_id: str) -> ArtifactResponse:
+async def get_artifact(
+    artifact_id: str,
+    db: Database = Depends(require_database),
+) -> ArtifactResponse:
     """Get an artifact by ID."""
-    try:
-        db = get_database()
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Database not available")
-
     async with db.session() as session:
         repo = ArtifactRepository(session)
         artifact = await repo.get_by_id(artifact_id)
@@ -238,13 +246,9 @@ async def get_artifact(artifact_id: str) -> ArtifactResponse:
 async def get_artifact_content(
     artifact_id: str,
     download: bool = Query(False, description="Force download as attachment"),
+    db: Database = Depends(require_database),
 ) -> Response:
     """Get raw artifact content bytes."""
-    try:
-        db = get_database()
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Database not available")
-
     async with db.session() as session:
         repo = ArtifactRepository(session)
         artifact = await repo.get_by_id(artifact_id)
@@ -280,13 +284,11 @@ async def get_artifact_content(
         503: {"model": ErrorResponse, "description": "Database not available."},
     },
 )
-async def delete_artifact(artifact_id: str) -> ArtifactDeleteResponse:
+async def delete_artifact(
+    artifact_id: str,
+    db: Database = Depends(require_database),
+) -> ArtifactDeleteResponse:
     """Delete an artifact."""
-    try:
-        db = get_database()
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Database not available")
-
     async with db.session() as session:
         repo = ArtifactRepository(session)
         artifact = await repo.get_by_id(artifact_id)

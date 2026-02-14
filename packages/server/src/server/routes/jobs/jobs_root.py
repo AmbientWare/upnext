@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from shared.contracts import (
     FunctionType,
     JobCancelResponse,
@@ -16,7 +16,9 @@ from shared.contracts import (
 from shared.domain import JobStatus
 
 from server.db.repositories import JobHourlyTrendRow, JobRepository
-from server.db.session import get_database
+from server.db.repositories.jobs_repository import InvalidCursorError
+from server.db.session import Database
+from server.routes.depends import require_database
 from server.routes.jobs.jobs_utils import (
     job_history_to_response,
 )
@@ -31,6 +33,8 @@ from server.services.registry import get_function_definitions
 
 router = APIRouter(tags=["jobs"])
 
+VALID_STATUSES = {s.value for s in JobStatus}
+
 
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
@@ -40,31 +44,39 @@ async def list_jobs(
     after: datetime | None = Query(None, description="Filter by created after"),
     before: datetime | None = Query(None, description="Filter by created before"),
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
-    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    cursor: str | None = Query(None, description="Job ID cursor for pagination"),
+    db: Database = Depends(require_database),
 ) -> JobListResponse:
     """
     List job history with optional filtering.
 
-    Returns paginated list of completed jobs.
+    Returns paginated list of jobs using cursor-based pagination.
+    Pass `cursor` (a job ID) to fetch the next page of results.
     """
-    try:
-        db = get_database()
-    except RuntimeError:
-        return JobListResponse(jobs=[], total=0, has_more=False)
+    if status:
+        invalid = [s for s in status if s not in VALID_STATUSES]
+        if invalid:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid status values: {invalid}. Valid: {sorted(VALID_STATUSES)}",
+            )
 
     async with db.session() as session:
         repo = JobRepository(session)
 
-        # Get one more than limit to check if there are more
-        jobs = await repo.list_jobs(
-            function=function,
-            status=status,
-            worker_id=worker_id,
-            start_date=after,
-            end_date=before,
-            limit=limit + 1,
-            offset=offset,
-        )
+        try:
+            jobs = await repo.list_jobs(
+                function=function,
+                status=status,
+                worker_id=worker_id,
+                start_date=after,
+                end_date=before,
+                limit=limit + 1,
+                cursor=cursor,
+            )
+        except InvalidCursorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         total = await repo.count_jobs(
             function=function,
             status=status,
@@ -73,17 +85,18 @@ async def list_jobs(
             end_date=before,
         )
 
-        # Check if there are more results
         has_more = len(jobs) > limit
         if has_more:
             jobs = jobs[:limit]
 
         job_responses = [job_history_to_response(job) for job in jobs]
+        next_cursor = jobs[-1].id if has_more and jobs else None
 
         return JobListResponse(
             jobs=job_responses,
             total=total,
             has_more=has_more,
+            next_cursor=next_cursor,
         )
 
 
@@ -92,24 +105,9 @@ async def get_job_stats(
     function: str | None = Query(None, description="Filter by function key"),
     after: datetime | None = Query(None, description="Filter by start date"),
     before: datetime | None = Query(None, description="Filter by end date"),
+    db: Database = Depends(require_database),
 ) -> JobStatsResponse:
-    """
-    Get aggregate job statistics.
-
-    Returns counts and success rates for jobs.
-    """
-    try:
-        db = get_database()
-    except RuntimeError:
-        return JobStatsResponse(
-            total=0,
-            success_count=0,
-            failure_count=0,
-            cancelled_count=0,
-            success_rate=100.0,
-            avg_duration_ms=None,
-        )
-
+    """Get aggregate job statistics."""
     async with db.session() as session:
         repo = JobRepository(session)
 
@@ -134,18 +132,13 @@ async def get_job_trends(
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     function: str | None = Query(None, description="Filter by function key"),
     type: FunctionType | None = Query(None, description="Filter by function type"),
+    db: Database = Depends(require_database),
 ) -> JobTrendsResponse:
     """
     Get hourly job trends for charts.
 
     Returns job counts grouped by hour and status for the specified time period.
     """
-    try:
-        db = get_database()
-    except RuntimeError:
-        # Return empty hours when no database
-        return _empty_trends(hours)
-
     allowed_functions: list[str] | None = None
     if type is not None:
         try:
@@ -222,17 +215,15 @@ def _empty_trends(hours: int) -> JobTrendsResponse:
 
 
 @router.get("/{job_id}/timeline", response_model=JobListResponse)
-async def get_job_timeline(job_id: str) -> JobListResponse:
+async def get_job_timeline(
+    job_id: str,
+    db: Database = Depends(require_database),
+) -> JobListResponse:
     """
     Get one job's full execution timeline (root job + descendant jobs).
 
     Descendants are identified recursively via parent_id.
     """
-    try:
-        db = get_database()
-    except RuntimeError:
-        raise HTTPException(status_code=404, detail="Job not found")
-
     async with db.session() as session:
         repo = JobRepository(session)
         jobs = await repo.list_job_subtree(job_id)
@@ -247,17 +238,11 @@ async def get_job_timeline(job_id: str) -> JobListResponse:
 
 
 @router.get("/{job_id}", response_model=JobHistoryResponse)
-async def get_job(job_id: str) -> JobHistoryResponse:
-    """
-    Get a specific job by ID.
-
-    Returns job details.
-    """
-    try:
-        db = get_database()
-    except RuntimeError:
-        raise HTTPException(status_code=404, detail="Job not found")
-
+async def get_job(
+    job_id: str,
+    db: Database = Depends(require_database),
+) -> JobHistoryResponse:
+    """Get a specific job by ID."""
     async with db.session() as session:
         repo = JobRepository(session)
         job = await repo.get_by_id(job_id)

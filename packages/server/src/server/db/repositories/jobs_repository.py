@@ -22,6 +22,10 @@ from server.db.tables import JobHistory
 SelectT = TypeVar("SelectT", bound=Select[Any])
 
 
+class InvalidCursorError(ValueError):
+    """Raised when a pagination cursor references a non-existent job."""
+
+
 class JobRepository:
     """
     Repository for job history operations.
@@ -156,10 +160,10 @@ class JobRepository:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         limit: int = 100,
-        offset: int = 0,
+        cursor: str | None = None,
     ) -> list[JobHistory]:
         """
-        List jobs with optional filtering.
+        List jobs with optional filtering using cursor-based pagination.
 
         Args:
             function: Filter by function key
@@ -168,7 +172,7 @@ class JobRepository:
             start_date: Filter by created_at >= start_date
             end_date: Filter by created_at <= end_date
             limit: Maximum results to return
-            offset: Number of results to skip
+            cursor: Job ID to paginate after (returns jobs older than this)
 
         Returns:
             List of matching jobs
@@ -186,7 +190,23 @@ class JobRepository:
             end_date=end_date,
         )
 
-        query = query.limit(limit).offset(offset)
+        if cursor:
+            cursor_job = await self.get_by_id(cursor)
+            if cursor_job is None:
+                raise InvalidCursorError(
+                    f"Cursor job '{cursor}' not found. "
+                    "The referenced job may have been deleted."
+                )
+            if cursor_job.created_at:
+                query = query.where(
+                    (JobHistory.created_at < cursor_job.created_at)
+                    | (
+                        (JobHistory.created_at == cursor_job.created_at)
+                        & (JobHistory.id < cursor)
+                    )
+                )
+
+        query = query.limit(limit)
 
         result = await self._session.execute(query)
         return list(result.scalars().all())
@@ -519,10 +539,6 @@ class JobRepository:
         result = await self._session.execute(query)
         return list(result.scalars().all())
 
-    async def list_old_job_ids(self, retention_days: int = 30) -> list[str]:
-        """Backward-compatible alias for cleanup callers."""
-        return await self.list_old_ids(retention_days=retention_days)
-
     async def delete_by_ids(self, ids: list[str]) -> int:
         """Delete jobs by explicit ID set."""
         if not ids:
@@ -530,7 +546,3 @@ class JobRepository:
         query = delete(JobHistory).where(JobHistory.id.in_(ids))
         result = await self._session.execute(query)
         return int(result.rowcount or 0)  # type: ignore
-
-    async def delete_jobs(self, job_ids: list[str]) -> int:
-        """Backward-compatible alias for cleanup callers."""
-        return await self.delete_by_ids(job_ids)

@@ -60,8 +60,6 @@ async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
             }
         )
 
-    monkeypatch.setattr(jobs_root_route, "get_database", lambda: sqlite_db)
-
     listed = await jobs_route.list_jobs(
         function="fn.list",
         status=None,
@@ -69,21 +67,26 @@ async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
         after=None,
         before=None,
         limit=100,
-        offset=0,
+        cursor=None,
+        db=sqlite_db,
     )
     assert listed.total == 1
     assert listed.jobs[0].id == "job-list-1"
 
-    fetched = await jobs_route.get_job("job-list-1")
+    fetched = await jobs_route.get_job("job-list-1", db=sqlite_db)
     assert fetched.id == "job-list-1"
     assert fetched.duration_ms == 1000
 
-    stats = await jobs_route.get_job_stats(function="fn.list", after=None, before=None)
+    stats = await jobs_route.get_job_stats(
+        function="fn.list", after=None, before=None, db=sqlite_db
+    )
     assert stats.total == 1
     assert stats.success_count == 1
     assert stats.avg_duration_ms == pytest.approx(1000.0, abs=0.1)
 
-    trends = await jobs_route.get_job_trends(hours=2, function="fn.list", type=None)
+    trends = await jobs_route.get_job_trends(
+        hours=2, function="fn.list", type=None, db=sqlite_db
+    )
     assert len(trends.hourly) == 2
     assert sum(hour.complete for hour in trends.hourly) == 1
     assert sum(hour.failed for hour in trends.hourly) == 0
@@ -91,34 +94,17 @@ async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
 
 @pytest.mark.asyncio
 async def test_jobs_routes_handle_missing_database_and_not_found(monkeypatch) -> None:
-    def no_db():
+    import server.routes.depends as depends_module
+    from server.routes.depends import require_database
+
+    def _no_db():
         raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr(jobs_root_route, "get_database", no_db)
+    monkeypatch.setattr(depends_module, "get_database", _no_db)
 
-    listed = await jobs_route.list_jobs(
-        function=None,
-        status=None,
-        worker_id=None,
-        after=None,
-        before=None,
-        limit=100,
-        offset=0,
-    )
-    assert listed.total == 0
-    assert listed.jobs == []
-
-    stats = await jobs_route.get_job_stats(function=None, after=None, before=None)
-    assert stats.total == 0
-    assert stats.success_rate == 100.0
-    assert stats.avg_duration_ms is None
-
-    trends = await jobs_route.get_job_trends(hours=3, function=None, type=None)
-    assert len(trends.hourly) == 3
-
-    with pytest.raises(HTTPException, match="Job not found") as timeline_exc:
-        await jobs_route.get_job_timeline("missing")
-    assert timeline_exc.value.status_code == 404
+    with pytest.raises(HTTPException) as list_exc:
+        require_database()
+    assert list_exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -542,7 +528,7 @@ async def test_jobs_timeline_returns_recursive_subtree(sqlite_db) -> None:
             }
         )
 
-    out = await jobs_route.get_job_timeline("root-job")
+    out = await jobs_route.get_job_timeline("root-job", db=sqlite_db)
     assert out.total == 2
     assert [job.id for job in out.jobs] == ["root-job", "child-job"]
 
@@ -597,9 +583,8 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
 
     monkeypatch.setattr(functions_route, "get_function_definitions", fake_defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", fake_workers)
-    monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
 
-    out = await functions_route.list_functions(type=None)
+    out = await functions_route.list_functions(type=None, db=sqlite_db)
     assert out.total == 1
     fn = out.functions[0]
     assert fn.key == "task_key"
@@ -802,60 +787,20 @@ async def test_workers_stream_returns_503_when_redis_unavailable(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_dashboard_returns_defaults_when_database_unavailable(
+async def test_dashboard_returns_503_when_database_unavailable(
     monkeypatch,
 ) -> None:
-    def no_db():
+    import server.routes.depends as depends_module
+    from server.routes.depends import require_database
+
+    def _no_db():
         raise RuntimeError("db unavailable")
 
-    class _QueueDepth:
-        running = 3
-        waiting = 0
-        claimed = 3
-        scheduled_due = 0
-        scheduled_future = 0
-        backlog = 3
-        capacity = 10
-        total = 6
+    monkeypatch.setattr(depends_module, "get_database", _no_db)
 
-    async def fake_queue_depth() -> _QueueDepth:
-        return _QueueDepth()
-
-    async def fake_worker_stats() -> WorkerStats:
-        return WorkerStats(total=0)
-
-    class FakeReader:
-        async def get_summary_window(
-            self, *, minutes: int
-        ) -> api_tracking_module.ApiMetricsSummary:
-            _ = minutes
-            return api_tracking_module.ApiMetricsSummary(
-                requests_24h=0,
-                avg_latency_ms=0.0,
-                error_rate=0.0,
-            )
-
-    async def fake_reader() -> FakeReader:
-        return FakeReader()
-
-    monkeypatch.setattr(dashboard_route, "get_database", no_db)
-    monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
-    monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
-    monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
-
-    out = await dashboard_route.get_dashboard_stats()
-    assert out.runs.total == 0
-    assert out.runs.window_minutes == 24 * 60
-    assert out.runs.jobs_per_min == 0.0
-    assert out.queue.running == 3
-    assert out.queue.waiting == 0
-    assert out.queue.claimed == 3
-    assert out.queue.scheduled_due == 0
-    assert out.queue.scheduled_future == 0
-    assert out.queue.backlog == 3
-    assert out.queue.capacity == 10
-    assert out.queue.total == 6
-    assert out.recent_runs == []
+    with pytest.raises(HTTPException) as exc:
+        require_database()
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -916,12 +861,11 @@ async def test_dashboard_includes_queue_depth_when_database_available(
     async def fake_reader() -> FakeReader:
         return FakeReader()
 
-    monkeypatch.setattr(dashboard_route, "get_database", lambda: sqlite_db)
     monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
     monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
 
-    out = await dashboard_route.get_dashboard_stats()
+    out = await dashboard_route.get_dashboard_stats(db=sqlite_db)
     assert out.queue.running == 4
     assert out.queue.waiting == 1
     assert out.queue.claimed == 5
@@ -933,10 +877,9 @@ async def test_dashboard_includes_queue_depth_when_database_available(
 
 
 @pytest.mark.asyncio
-async def test_dashboard_window_stats_use_requested_minutes(monkeypatch) -> None:
-    def no_db():
-        raise RuntimeError("db unavailable")
-
+async def test_dashboard_window_stats_use_requested_minutes(
+    sqlite_db, monkeypatch
+) -> None:
     class _QueueDepth:
         running = 1
         waiting = 0
@@ -972,12 +915,11 @@ async def test_dashboard_window_stats_use_requested_minutes(monkeypatch) -> None
     async def fake_reader() -> FakeReader:
         return FakeReader()
 
-    monkeypatch.setattr(dashboard_route, "get_database", no_db)
     monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
     monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
 
-    out = await dashboard_route.get_dashboard_stats(window_minutes=5)
+    out = await dashboard_route.get_dashboard_stats(window_minutes=5, db=sqlite_db)
     assert out.runs.window_minutes == 5
     assert out.runs.total == 0
     assert out.runs.jobs_per_min == 0.0
@@ -1106,14 +1048,13 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
         ]
 
     monkeypatch.setattr(dashboard_route, "get_settings", lambda: _Settings())
-    monkeypatch.setattr(dashboard_route, "get_database", lambda: sqlite_db)
     monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
     monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
     monkeypatch.setattr(dashboard_route, "get_function_definitions", fake_defs)
     monkeypatch.setattr(dashboard_route, "get_oldest_queued_jobs", fake_oldest)
 
-    out = await dashboard_route.get_dashboard_stats()
+    out = await dashboard_route.get_dashboard_stats(db=sqlite_db)
     assert out.top_failing_functions[0].key == "fn.fail"
     assert out.top_failing_functions[0].name == "Orders Processor"
     assert out.top_failing_functions[0].failures == 2
@@ -1124,7 +1065,7 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
     assert out.oldest_queued_jobs[0].id == "job-q-1"
     assert out.oldest_queued_jobs[0].source == "stream"
 
-    filtered = await dashboard_route.get_dashboard_stats(failing_min_rate=70.0)
+    filtered = await dashboard_route.get_dashboard_stats(failing_min_rate=70.0, db=sqlite_db)
     assert filtered.top_failing_functions == []
 
 
@@ -1155,6 +1096,7 @@ async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) ->
         "job-art-race",
         CreateArtifactRequest(name="summary", type=ArtifactType.JSON, data={"x": 1}),
         response,
+        db=sqlite_db,
     )
 
     assert response.status_code == 202

@@ -84,6 +84,7 @@ class Future[T]:
 
         Raises:
             TimeoutError: If timeout reached before completion
+            TaskTimeoutError: If the task failed due to a timeout during execution
             TaskExecutionError: If the task completed with failed/cancelled status
         """
         status = await self._queue.subscribe_job(self._job_id, timeout=timeout)
@@ -105,6 +106,9 @@ class Future[T]:
             root_id=job.root_id,
         )
         if not task_result.ok:
+            error_msg = task_result.error or ""
+            if "timed out" in error_msg or "TimeoutError" in error_msg:
+                raise TaskTimeoutError(task_result)
             raise TaskExecutionError(task_result)
         return task_result
 
@@ -130,3 +134,8 @@ class TaskExecutionError(RuntimeError):
             f"Job {self.job_id} completed with non-success status '{self.status}'"
         )
         super().__init__(message)
+
+
+class TaskTimeoutError(TaskExecutionError):
+    """Raised when a task exceeds its configured timeout."""
+    pass

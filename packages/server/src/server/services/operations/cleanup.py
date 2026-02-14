@@ -160,7 +160,7 @@ class CleanupService:
                 )
                 expired_pending = len(stale_pending_rows)
 
-                old_job_ids = await job_repo.list_old_job_ids(
+                old_job_ids = await job_repo.list_old_ids(
                     retention_days=self._retention_days
                 )
                 old_artifact_rows = await artifact_repo.list_by_job_ids(old_job_ids)

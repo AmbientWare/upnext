@@ -174,12 +174,12 @@ export function LiveActivityPanel({
       getJobs({
         ...jobsWindowParams,
         limit: WINDOW_PAGE_SIZE,
-        offset: pageParam,
+        cursor: pageParam || undefined,
       }),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage, allPages) => {
-      if (!lastPage.has_more) return undefined;
-      return allPages.reduce((sum, page) => sum + page.jobs.length, 0);
+    initialPageParam: "" as string,
+    getNextPageParam: (lastPage) => {
+      if (!lastPage.has_more || !lastPage.next_cursor) return undefined;
+      return lastPage.next_cursor;
     },
     enabled: !live && Boolean(bounds),
     staleTime: Number.POSITIVE_INFINITY,

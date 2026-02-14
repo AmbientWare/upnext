@@ -35,12 +35,24 @@ from shared.contracts import DispatchReason, FunctionConfig, MissedRunPolicy
 from shared.keys import (
     QUEUE_CONSUMER_GROUP,
     QUEUE_KEY_PREFIX,
+    dispatch_events_stream_key as shared_dispatch_events_stream_key,
+    dispatch_reasons_key as shared_dispatch_reasons_key,
+    function_dedup_key as shared_function_dedup_key,
     function_definition_key,
     function_definition_pattern,
+    function_dlq_stream_key as shared_function_dlq_stream_key,
+    function_rate_limit_key as shared_function_rate_limit_key,
+    function_scheduled_key as shared_function_scheduled_key,
     function_scheduled_pattern,
+    function_stream_key as shared_function_stream_key,
     function_stream_pattern,
+    job_cancelled_key as shared_job_cancelled_key,
+    job_index_key as shared_job_index_key,
+    job_key as shared_job_key,
     job_match_pattern,
+    job_result_key as shared_job_result_key,
     job_status_channel,
+    queue_key,
 )
 from shared.queue_mutations import (
     delete_stream_entries_for_job as shared_delete_stream_entries_for_job,
@@ -86,6 +98,7 @@ class _StreamClaim:
 
     stream_key: str
     msg_id: str
+    created_at: float = 0.0
 
 
 class RedisQueue(BaseQueue):
@@ -201,6 +214,7 @@ class RedisQueue(BaseQueue):
         self._dispatch_event_emit_cache: dict[tuple[str, str], float] = {}
         self._fair_dequeue_cursor = 0
         self._stream_claims: dict[str, _StreamClaim] = {}
+        self._stream_claims_total: int = 0
 
         # Components (created on start)
         self._fetcher = None
@@ -254,6 +268,16 @@ class RedisQueue(BaseQueue):
         if self._sweeper:
             await self._sweeper.stop()
             self._sweeper = None
+
+        # Remove this consumer from all initialized consumer groups.
+        if self._client:
+            for stream_key in self._initialized_streams:
+                try:
+                    await self._client.xgroup_delconsumer(
+                        stream_key, self._consumer_group, self._consumer_id
+                    )
+                except Exception:
+                    pass
 
         if self._client:
             await self._client.aclose()
@@ -337,14 +361,20 @@ class RedisQueue(BaseQueue):
             return await client.evalsha(refreshed_sha, num_keys, *args)
 
     async def _ensure_consumer_group(self, stream_key: str) -> None:
-        """Ensure consumer group exists for a stream."""
+        """Ensure consumer group exists for a stream.
+
+        Uses ``id="$"`` so newly-created groups only consume messages
+        produced *after* creation, avoiding a full history replay on
+        first boot.  Existing groups (``BUSYGROUP``) keep their
+        current last-delivered-id.
+        """
         if stream_key in self._initialized_streams:
             return
 
         client = await self._ensure_connected()
         try:
             await client.xgroup_create(
-                stream_key, self._consumer_group, id="0", mkstream=True
+                stream_key, self._consumer_group, id="$", mkstream=True
             )
         except redis.ResponseError as e:
             if "BUSYGROUP" not in str(e):
@@ -353,47 +383,48 @@ class RedisQueue(BaseQueue):
         self._initialized_streams.add(stream_key)
 
     # =========================================================================
-    # KEY HELPERS
+    # KEY HELPERS — delegate to shared key builders
     # =========================================================================
 
     def _key(self, *parts: str) -> str:
-        return ":".join([self._key_prefix, *parts])
+        """Generic key builder for keys without a shared helper."""
+        return queue_key(*parts, key_prefix=self._key_prefix)
 
     def _stream_key(self, function: str) -> str:
-        return self._key("fn", function, "stream")
+        return shared_function_stream_key(function, key_prefix=self._key_prefix)
 
     def _scheduled_key(self, function: str) -> str:
-        return self._key("fn", function, "scheduled")
+        return shared_function_scheduled_key(function, key_prefix=self._key_prefix)
 
     def _dedup_key(self, function: str) -> str:
-        return self._key("fn", function, "dedup")
+        return shared_function_dedup_key(function, key_prefix=self._key_prefix)
 
     def _dlq_stream_key(self, function: str) -> str:
-        return self._key("fn", function, "dlq")
+        return shared_function_dlq_stream_key(function, key_prefix=self._key_prefix)
 
     def _dispatch_reasons_key(self, function: str) -> str:
-        return self._key("dispatch_reasons", function)
+        return shared_dispatch_reasons_key(function, key_prefix=self._key_prefix)
 
     def _dispatch_events_stream_key(self) -> str:
-        return self._key("dispatch_events")
+        return shared_dispatch_events_stream_key(key_prefix=self._key_prefix)
 
     def _job_key(self, job: Job) -> str:
-        return self._key("job", job.function, job.id)
+        return shared_job_key(job.function, job.id, key_prefix=self._key_prefix)
 
     def _job_index_key(self, job_id: str) -> str:
-        return self._key("job_index", job_id)
+        return shared_job_index_key(job_id, key_prefix=self._key_prefix)
 
     def _result_key(self, job_id: str) -> str:
-        return self._key("result", job_id)
+        return shared_job_result_key(job_id, key_prefix=self._key_prefix)
 
     def _cancel_marker_key(self, job_id: str) -> str:
-        return self._key("cancelled", job_id)
+        return shared_job_cancelled_key(job_id, key_prefix=self._key_prefix)
 
     def _function_def_key(self, function: str) -> str:
         return function_definition_key(function)
 
     def _rate_limit_key(self, function: str) -> str:
-        return self._key("fn", function, "rate_limit")
+        return shared_function_rate_limit_key(function, key_prefix=self._key_prefix)
 
     def _cron_window_token(self, run_at: float) -> str:
         # Millisecond token is stable for schedule-window dedupe keys.
@@ -420,7 +451,7 @@ class RedisQueue(BaseQueue):
         if not owner:
             return (False, None)
 
-        owner_job_key = self._key("job", function, owner)
+        owner_job_key = shared_job_key(function, owner, key_prefix=self._key_prefix)
         scheduled_score = await client.zscore(self._scheduled_key(function), owner)
         owner_exists = scheduled_score is not None or bool(
             await client.exists(owner_job_key)
@@ -712,13 +743,37 @@ class RedisQueue(BaseQueue):
         self._group_active_count_cache.clear()
 
     def _set_stream_claim(self, job_id: str, *, stream_key: str, msg_id: str) -> None:
-        self._stream_claims[job_id] = _StreamClaim(stream_key=stream_key, msg_id=msg_id)
+        self._stream_claims[job_id] = _StreamClaim(
+            stream_key=stream_key, msg_id=msg_id, created_at=time.monotonic()
+        )
 
     def _peek_stream_claim(self, job_id: str) -> _StreamClaim | None:
         return self._stream_claims.get(job_id)
 
     def _pop_stream_claim(self, job_id: str) -> _StreamClaim | None:
-        return self._stream_claims.pop(job_id, None)
+        claim = self._stream_claims.pop(job_id, None)
+        self._stream_claims_total += 1
+        if self._stream_claims_total % 10_000 == 0:
+            logger.debug(
+                "Stream claims snapshot: total_pops=%d active=%d",
+                self._stream_claims_total,
+                len(self._stream_claims),
+            )
+            self._cleanup_stale_claims()
+        return claim
+
+    def _cleanup_stale_claims(self) -> None:
+        """Remove orphaned stream claims older than claim_timeout_ms * 10."""
+        cutoff = time.monotonic() - (self._claim_timeout_ms * 10 / 1000.0)
+        stale = [
+            jid
+            for jid, c in self._stream_claims.items()
+            if c.created_at < cutoff
+        ]
+        for jid in stale:
+            del self._stream_claims[jid]
+        if stale:
+            logger.debug("Cleaned up %d stale stream claims", len(stale))
 
     async def _acquire_rate_limit_token(
         self,
@@ -1245,7 +1300,7 @@ class RedisQueue(BaseQueue):
                 else function_raw or "unknown"
             )
 
-            job_key = self._key("job", function, job_id)
+            job_key = shared_job_key(function, job_id, key_prefix=self._key_prefix)
 
         job_data = await client.get(job_key)
         if not job_data:
@@ -1793,6 +1848,91 @@ class RedisQueue(BaseQueue):
             if cursor == 0:
                 break
         return None
+
+    # =========================================================================
+    # MAINTENANCE - consumer group cleanup
+    # =========================================================================
+
+    async def cleanup_stale_consumer_groups(self) -> int:
+        """Remove consumer groups with no pending messages and no active consumers.
+
+        Scans all function streams and destroys groups that have been idle for
+        more than 1 hour. Skips the primary consumer group used by this queue.
+
+        Returns:
+            Number of consumer groups destroyed.
+        """
+        client = await self._ensure_connected()
+        destroyed = 0
+        idle_threshold_ms = 3_600_000  # 1 hour
+
+        cursor = 0
+        while True:
+            cursor, keys = await client.scan(
+                cursor=cursor,
+                match=function_stream_pattern(key_prefix=self._key_prefix),
+                count=100,
+            )
+
+            for stream_key in keys:
+                key_str = (
+                    stream_key.decode()
+                    if isinstance(stream_key, bytes)
+                    else stream_key
+                )
+                try:
+                    groups = await client.xinfo_groups(key_str)
+                except redis.ResponseError:
+                    continue
+
+                for group in groups:
+                    if not isinstance(group, dict):
+                        continue
+                    name = group.get("name", group.get(b"name", b""))
+                    if isinstance(name, bytes):
+                        name = name.decode()
+                    # Never destroy the active consumer group
+                    if name == self._consumer_group:
+                        continue
+                    pending = group.get("pending", group.get(b"pending", 0))
+                    if isinstance(pending, bytes):
+                        pending = int(pending)
+                    if pending > 0:
+                        continue
+                    consumers = group.get("consumers", group.get(b"consumers", 0))
+                    if isinstance(consumers, bytes):
+                        consumers = int(consumers)
+                    last_delivered = group.get(
+                        "last-delivered-id", group.get(b"last-delivered-id", b"0-0")
+                    )
+                    if isinstance(last_delivered, bytes):
+                        last_delivered = last_delivered.decode()
+                    # Extract timestamp from stream ID (ms since epoch)
+                    try:
+                        ts_ms = int(last_delivered.split("-")[0])
+                    except (ValueError, IndexError):
+                        ts_ms = 0
+                    idle_ms = int(time.time() * 1000) - ts_ms if ts_ms > 0 else idle_threshold_ms + 1
+                    if consumers == 0 and idle_ms > idle_threshold_ms:
+                        try:
+                            await client.xgroup_destroy(key_str, name)
+                            destroyed += 1
+                            logger.debug(
+                                "Destroyed stale consumer group %s on %s",
+                                name,
+                                key_str,
+                            )
+                        except redis.ResponseError:
+                            pass
+
+            if cursor == 0:
+                break
+
+        if destroyed:
+            logger.info(
+                "Cleaned up %d stale consumer groups", destroyed
+            )
+        return destroyed
 
     # =========================================================================
     # OPTIONAL - stats
@@ -2403,7 +2543,7 @@ class RedisQueue(BaseQueue):
         if current_job_id:
             scheduled_key = self._scheduled_key(job.function)
             scheduled_score = await client.zscore(scheduled_key, current_job_id)
-            job_key = self._key("job", job.function, current_job_id)
+            job_key = shared_job_key(job.function, current_job_id, key_prefix=self._key_prefix)
             if scheduled_score is not None or await client.exists(job_key):
                 # A cron run is already present; no extra catch-up enqueue needed.
                 return False

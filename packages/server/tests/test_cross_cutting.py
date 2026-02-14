@@ -204,7 +204,7 @@ async def test_outage_then_replay_recovers_without_duplicates(
 
 @pytest.mark.asyncio
 async def test_job_trends_route_zero_fills_missing_hours(
-    sqlite_db, monkeypatch
+    sqlite_db,
 ) -> None:
     now = datetime.now(UTC)
 
@@ -221,8 +221,9 @@ async def test_job_trends_route_zero_fills_missing_hours(
             }
         )
 
-    monkeypatch.setattr(jobs_root_route, "get_database", lambda: sqlite_db)
-    out = await jobs_root_route.get_job_trends(hours=4, function="fn.trend", type=None)
+    out = await jobs_root_route.get_job_trends(
+        hours=4, function="fn.trend", type=None, db=sqlite_db
+    )
 
     assert len(out.hourly) == 4
     hours = [item.hour for item in out.hourly]

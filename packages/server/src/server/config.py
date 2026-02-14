@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     debug: bool = False
+    log_format: Literal["text", "json"] = "text"
     api_docs_url_template: str = "http://{host}:{port}/docs"
     api_request_events_default_limit: int = 200
     cors_allow_origins: str = "*"
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
     readiness_require_redis: bool = False
 
     # Artifact storage
+    artifact_max_upload_bytes: int = 256 * 1024 * 1024  # 256 MB
     artifact_storage_backend: Literal["local", "s3"] = "local"
     artifact_storage_local_root: str = ".upnext/artifacts"
     artifact_storage_s3_bucket: str | None = None
@@ -84,6 +86,7 @@ class Settings(BaseSettings):
     alert_p95_duration_ms_threshold: float = 30_000.0
     alert_p95_wait_ms_threshold: float = 10_000.0
     alert_queue_backlog_threshold: int = 100
+    alert_invalid_event_rate_threshold: int = 50
     alert_poll_interval_seconds: float = 60.0
 
     # Runbook dashboard panel settings.

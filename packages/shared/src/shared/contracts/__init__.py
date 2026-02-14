@@ -31,6 +31,12 @@ from shared.contracts.artifacts import (
     ErrorResponse,
 )
 from shared.contracts.common import DispatchReason, FunctionType, MissedRunPolicy
+from shared.contracts.dlq import (
+    DeadLetterEntryResponse,
+    DeadLetterListResponse,
+    DeadLetterPurgeResponse,
+    DeadLetterReplayResponse,
+)
 from shared.contracts.dashboard import (
     ApiStats,
     DashboardStats,
@@ -60,9 +66,17 @@ from shared.contracts.functions import (
 from shared.contracts.health import (
     AlertDeliveryStats,
     DependencyHealth,
+    DlqHealthSummary,
+    EventProcessingStats,
     HealthMetrics,
     HealthResponse,
+    QueueHealthSummary,
     ReadinessMetrics,
+)
+from shared.contracts.metrics import (
+    FunctionQueueMetrics,
+    QueueMetricsResponse,
+    QueueMetricsTotals,
 )
 from shared.contracts.jobs import (
     JobCancelResponse,
@@ -124,6 +138,10 @@ __all__ = [
     "FunctionType",
     "MissedRunPolicy",
     "DispatchReason",
+    "DeadLetterEntryResponse",
+    "DeadLetterListResponse",
+    "DeadLetterReplayResponse",
+    "DeadLetterPurgeResponse",
     "RunStats",
     "QueueStats",
     "ApiStats",
@@ -146,9 +164,15 @@ __all__ = [
     "FunctionDetailResponse",
     "AlertDeliveryStats",
     "DependencyHealth",
+    "DlqHealthSummary",
+    "EventProcessingStats",
     "HealthMetrics",
     "HealthResponse",
+    "QueueHealthSummary",
     "ReadinessMetrics",
+    "FunctionQueueMetrics",
+    "QueueMetricsResponse",
+    "QueueMetricsTotals",
     "JobHistoryResponse",
     "JobListResponse",
     "JobStatsResponse",

@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from shared.contracts import (
     ApiStats,
     DashboardStats,
@@ -18,7 +18,8 @@ from shared.contracts import (
 
 from server.config import get_settings
 from server.db.repositories import JobRepository
-from server.db.session import get_database
+from server.db.session import Database
+from server.routes.depends import require_database
 from server.services.apis import ApiMetricsSummary, get_metrics_reader
 from server.services.jobs import get_oldest_queued_jobs, get_queue_depth_stats
 from server.services.registry import get_function_definitions, get_worker_stats
@@ -34,6 +35,7 @@ SUPPORTED_DASHBOARD_WINDOWS: tuple[int, ...] = (1, 5, 15, 60, 1440)
 async def get_dashboard_stats(
     window_minutes: Annotated[int, Query(ge=1, le=24 * 60)] = 24 * 60,
     failing_min_rate: Annotated[float, Query(ge=0.0, le=100.0)] = 0.0,
+    db: Database = Depends(require_database),
 ) -> DashboardStats:
     """
     Get aggregated dashboard statistics.
@@ -87,132 +89,118 @@ async def get_dashboard_stats(
     except RuntimeError:
         function_name_map = {}
 
-    try:
-        db = get_database()
-        async with db.session() as session:
-            repo = JobRepository(session)
+    async with db.session() as session:
+        repo = JobRepository(session)
 
-            stats_window = await repo.get_stats(start_date=window_ago)
+        stats_window = await repo.get_stats(start_date=window_ago)
 
-            run_stats = RunStats(
-                total=stats_window.total,
-                success_rate=stats_window.success_rate,
-                window_minutes=window_minutes,
-                jobs_per_min=round(stats_window.total / max(1, window_minutes), 2),
-            )
+        run_stats = RunStats(
+            total=stats_window.total,
+            success_rate=stats_window.success_rate,
+            window_minutes=window_minutes,
+            jobs_per_min=round(stats_window.total / max(1, window_minutes), 2),
+        )
 
-            function_stats = await repo.get_function_job_stats(start_date=window_ago)
-            top_candidates: list[TopFailingFunction] = []
-            for function_key, item in function_stats.items():
-                if item.runs < 1 or item.failures < 1:
-                    continue
-                failure_rate = round((item.failures / item.runs) * 100, 2)
-                if failure_rate < failing_min_rate:
-                    continue
-                top_candidates.append(
-                    TopFailingFunction(
-                        key=function_key,
-                        name=function_name_map.get(function_key, function_key),
-                        runs=item.runs,
-                        failures=item.failures,
-                        failure_rate=failure_rate,
-                        last_run_at=item.last_run_at,
-                    )
-                )
-            top_candidates.sort(
-                key=lambda row: (
-                    -row.failures,
-                    -row.failure_rate,
-                    -row.runs,
-                    row.name,
+        function_stats = await repo.get_function_job_stats(start_date=window_ago)
+        top_candidates: list[TopFailingFunction] = []
+        for function_key, item in function_stats.items():
+            if item.runs < 1 or item.failures < 1:
+                continue
+            failure_rate = round((item.failures / item.runs) * 100, 2)
+            if failure_rate < failing_min_rate:
+                continue
+            top_candidates.append(
+                TopFailingFunction(
+                    key=function_key,
+                    name=function_name_map.get(function_key, function_key),
+                    runs=item.runs,
+                    failures=item.failures,
+                    failure_rate=failure_rate,
+                    last_run_at=item.last_run_at,
                 )
             )
-            top_failing_functions = top_candidates[
-                : max(0, settings.dashboard_top_failing_limit)
-            ]
-
-            stuck_rows = await repo.list_stuck_active_jobs(
-                started_before=now
-                - timedelta(seconds=max(0, settings.dashboard_stuck_active_seconds)),
-                limit=max(0, settings.dashboard_stuck_active_limit),
+        top_candidates.sort(
+            key=lambda row: (
+                -row.failures,
+                -row.failure_rate,
+                -row.runs,
+                row.name,
             )
-            for stuck in stuck_rows:
-                started_at = as_utc_aware(stuck.started_at)
-                if started_at is None:
-                    continue
-                age_seconds = max(0.0, (now - started_at).total_seconds())
-                stuck_active_jobs.append(
-                    StuckActiveJob(
-                        id=stuck.id,
-                        function=stuck.function,
-                        function_name=stuck.function_name,
-                        worker_id=stuck.worker_id,
-                        started_at=started_at.isoformat(),
-                        age_seconds=round(age_seconds, 2),
-                    )
+        )
+        top_failing_functions = top_candidates[
+            : max(0, settings.dashboard_top_failing_limit)
+        ]
+
+        stuck_rows = await repo.list_stuck_active_jobs(
+            started_before=now
+            - timedelta(seconds=max(0, settings.dashboard_stuck_active_seconds)),
+            limit=max(0, settings.dashboard_stuck_active_limit),
+        )
+        for stuck in stuck_rows:
+            started_at = as_utc_aware(stuck.started_at)
+            if started_at is None:
+                continue
+            age_seconds = max(0.0, (now - started_at).total_seconds())
+            stuck_active_jobs.append(
+                StuckActiveJob(
+                    id=stuck.id,
+                    function=stuck.function,
+                    function_name=stuck.function_name,
+                    worker_id=stuck.worker_id,
+                    started_at=started_at.isoformat(),
+                    age_seconds=round(age_seconds, 2),
                 )
+            )
 
-            # Get recent runs (last 10)
-            recent_jobs = await repo.list_jobs(limit=10)
-            for job in recent_jobs:
-                duration_ms = None
-                if job.started_at and job.completed_at:
-                    duration_ms = (
-                        job.completed_at - job.started_at
-                    ).total_seconds() * 1000
+        # Get recent runs (last 10)
+        recent_jobs = await repo.list_jobs(limit=10)
+        for job in recent_jobs:
+            duration_ms = None
+            if job.started_at and job.completed_at:
+                duration_ms = (job.completed_at - job.started_at).total_seconds() * 1000
 
-                recent_runs.append(
-                    Run(
-                        id=job.id,
-                        function=job.function,
-                        function_name=job.function_name,
-                        status=job.status,
-                        started_at=job.started_at.isoformat()
-                        if job.started_at
-                        else None,
-                        completed_at=job.completed_at.isoformat()
-                        if job.completed_at
-                        else None,
-                        duration_ms=duration_ms,
-                        error=job.error,
-                        worker_id=job.worker_id,
-                        attempts=job.attempts or 1,
-                        progress=job.progress or 0.0,
-                    )
+            recent_runs.append(
+                Run(
+                    id=job.id,
+                    function=job.function,
+                    function_name=job.function_name,
+                    status=job.status,
+                    started_at=job.started_at.isoformat() if job.started_at else None,
+                    completed_at=job.completed_at.isoformat()
+                    if job.completed_at
+                    else None,
+                    duration_ms=duration_ms,
+                    error=job.error,
+                    worker_id=job.worker_id,
+                    attempts=job.attempts or 1,
+                    progress=job.progress or 0.0,
                 )
+            )
 
-            # Get recent failures (last 10)
-            failed_jobs = await repo.list_jobs(status="failed", limit=10)
-            for job in failed_jobs:
-                duration_ms = None
-                if job.started_at and job.completed_at:
-                    duration_ms = (
-                        job.completed_at - job.started_at
-                    ).total_seconds() * 1000
+        # Get recent failures (last 10)
+        failed_jobs = await repo.list_jobs(status="failed", limit=10)
+        for job in failed_jobs:
+            duration_ms = None
+            if job.started_at and job.completed_at:
+                duration_ms = (job.completed_at - job.started_at).total_seconds() * 1000
 
-                recent_failures.append(
-                    Run(
-                        id=job.id,
-                        function=job.function,
-                        function_name=job.function_name,
-                        status=job.status,
-                        started_at=job.started_at.isoformat()
-                        if job.started_at
-                        else None,
-                        completed_at=job.completed_at.isoformat()
-                        if job.completed_at
-                        else None,
-                        duration_ms=duration_ms,
-                        error=job.error,
-                        worker_id=job.worker_id,
-                        attempts=job.attempts or 1,
-                        progress=job.progress or 0.0,
-                    )
+            recent_failures.append(
+                Run(
+                    id=job.id,
+                    function=job.function,
+                    function_name=job.function_name,
+                    status=job.status,
+                    started_at=job.started_at.isoformat() if job.started_at else None,
+                    completed_at=job.completed_at.isoformat()
+                    if job.completed_at
+                    else None,
+                    duration_ms=duration_ms,
+                    error=job.error,
+                    worker_id=job.worker_id,
+                    attempts=job.attempts or 1,
+                    progress=job.progress or 0.0,
                 )
-
-    except RuntimeError:
-        # Database not available
-        logger.debug("Database not available for dashboard stats")
+            )
 
     oldest_queued = await get_oldest_queued_jobs(
         limit=max(0, settings.dashboard_oldest_queued_limit),

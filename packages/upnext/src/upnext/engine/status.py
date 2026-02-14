@@ -100,6 +100,8 @@ class StatusPublisher:
         self._pending: deque[dict[str, str]] = deque()
         self._dropped_pending = 0
         self._durable_lock_ttl_seconds = 5
+        self._last_capacity_warning_at: float = 0.0
+        self._last_drop_warning_at: float = 0.0
 
     @property
     def pending_count(self) -> int:
@@ -292,9 +294,32 @@ class StatusPublisher:
 
     def _buffer_pending(self, payload: dict[str, str]) -> None:
         max_size = max(1, self._config.pending_buffer_size)
+        now = time.monotonic()
+
+        # Warn when buffer is near capacity (rate-limited to once per 30s)
+        if (
+            len(self._pending) >= max_size * 0.9
+            and now - self._last_capacity_warning_at >= 30.0
+        ):
+            self._last_capacity_warning_at = now
+            logger.warning(
+                "Status pending buffer at %d/%d (%.0f%% capacity)",
+                len(self._pending),
+                max_size,
+                len(self._pending) / max_size * 100,
+            )
+
         if len(self._pending) >= max_size:
             self._pending.popleft()
             self._dropped_pending += 1
+            # Warn on drops (rate-limited to once per 30s)
+            if now - self._last_drop_warning_at >= 30.0:
+                self._last_drop_warning_at = now
+                logger.warning(
+                    "Status pending buffer overflow: dropped %d events total",
+                    self._dropped_pending,
+                )
+
         self._pending.append(payload)
 
     async def record_job_started(

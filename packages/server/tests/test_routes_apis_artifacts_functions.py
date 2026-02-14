@@ -77,7 +77,7 @@ def test_calculate_artifact_size_handles_supported_payload_types() -> None:
 
 @pytest.mark.asyncio
 async def test_artifact_routes_create_list_get_delete_round_trip(
-    sqlite_db, monkeypatch
+    sqlite_db,
 ) -> None:
     now = datetime.now(UTC)
     async with sqlite_db.session() as session:
@@ -93,14 +93,12 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
             }
         )
 
-    monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
-    monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
-
     create_response = Response()
     created = await artifacts_root_route.create_artifact(
         "artifact-job-1",
         CreateArtifactRequest(name="summary", type=ArtifactType.TEXT, data="hello"),
         create_response,
+        db=sqlite_db,
     )
     assert isinstance(created, ArtifactResponse)
     assert create_response.status_code == 200
@@ -109,29 +107,29 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
     assert created.type == ArtifactType.TEXT
     assert created.size_bytes == 5
 
-    listed = await artifacts_root_route.list_artifacts("artifact-job-1")
+    listed = await artifacts_root_route.list_artifacts("artifact-job-1", db=sqlite_db)
     assert listed.total == 1
     assert listed.artifacts[0].id == created.id
     assert listed.artifacts[0].storage_backend == "local"
     assert listed.artifacts[0].storage_key
 
-    fetched = await artifacts_root_route.get_artifact(created.id)
+    fetched = await artifacts_root_route.get_artifact(created.id, db=sqlite_db)
     assert fetched.id == created.id
     assert fetched.job_id == "artifact-job-1"
 
-    content = await artifacts_root_route.get_artifact_content(created.id)
+    content = await artifacts_root_route.get_artifact_content(created.id, db=sqlite_db)
     assert content.body == b"hello"
 
-    deleted = await artifacts_root_route.delete_artifact(created.id)
+    deleted = await artifacts_root_route.delete_artifact(created.id, db=sqlite_db)
     assert deleted.status == "deleted"
     assert deleted.id == created.id
 
     with pytest.raises(HTTPException, match="Artifact not found") as get_missing_exc:
-        await artifacts_root_route.get_artifact(created.id)
+        await artifacts_root_route.get_artifact(created.id, db=sqlite_db)
     assert get_missing_exc.value.status_code == 404
 
     with pytest.raises(HTTPException, match="Artifact not found") as delete_missing_exc:
-        await artifacts_root_route.delete_artifact(created.id)
+        await artifacts_root_route.delete_artifact(created.id, db=sqlite_db)
     assert delete_missing_exc.value.status_code == 404
 
 
@@ -153,11 +151,11 @@ async def test_job_scoped_artifact_routes_are_available(
             }
         )
 
-    monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
-    monkeypatch.setattr(artifacts_stream_route.artifacts_root_route, "get_database", lambda: sqlite_db)
+    from server.routes.depends import require_database
 
     app = FastAPI()
     app.include_router(v1_router)
+    app.dependency_overrides[require_database] = lambda: sqlite_db
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -182,10 +180,8 @@ async def test_job_scoped_artifact_routes_are_available(
 
 @pytest.mark.asyncio
 async def test_create_artifact_queues_pending_when_job_row_missing(
-    sqlite_db, monkeypatch
+    sqlite_db,
 ) -> None:
-    monkeypatch.setattr(artifacts_root_route, "get_database", lambda: sqlite_db)
-
     response = Response()
     queued = await artifacts_root_route.create_artifact(
         "missing-job",
@@ -193,6 +189,7 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
             name="payload", type=ArtifactType.JSON, data={"ok": True}
         ),
         response,
+        db=sqlite_db,
     )
     assert isinstance(queued, ArtifactQueuedResponse)
     assert response.status_code == 202
@@ -216,54 +213,39 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
     assert rows[0].name == "payload"
     assert rows[0].size_bytes == len(json.dumps({"ok": True}).encode("utf-8"))
 
-    listed = await artifacts_root_route.list_artifacts("missing-job")
+    listed = await artifacts_root_route.list_artifacts("missing-job", db=sqlite_db)
     assert listed.total == 0
     assert listed.artifacts == []
 
 
 @pytest.mark.asyncio
 async def test_artifact_routes_handle_database_unavailable(monkeypatch) -> None:
+    import server.routes.depends as depends_module
+    from server.routes.depends import require_database
+
     def _no_db():
         raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr(artifacts_root_route, "get_database", _no_db)
-    monkeypatch.setattr(artifacts_root_route, "get_database", _no_db)
+    monkeypatch.setattr(depends_module, "get_database", _no_db)
 
-    with pytest.raises(HTTPException, match="Database not available") as create_exc:
-        await artifacts_root_route.create_artifact(
-            "job-1",
-            CreateArtifactRequest(name="x", type=ArtifactType.TEXT, data="payload"),
-            Response(),
-        )
-    assert create_exc.value.status_code == 503
-
-    listed = await artifacts_root_route.list_artifacts("job-1")
-    assert listed.total == 0
-    assert listed.artifacts == []
-
-    with pytest.raises(HTTPException, match="Database not available") as get_exc:
-        await artifacts_root_route.get_artifact("1")
-    assert get_exc.value.status_code == 503
-
-    with pytest.raises(HTTPException, match="Database not available") as del_exc:
-        await artifacts_root_route.delete_artifact("1")
-    assert del_exc.value.status_code == 503
+    with pytest.raises(HTTPException, match="Database not available") as exc:
+        require_database()
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
-async def test_list_functions_handles_runtime_failures(monkeypatch) -> None:
-    async def _fail_defs() -> dict:
-        raise RuntimeError("definitions unavailable")
+async def test_list_functions_returns_503_when_database_unavailable(monkeypatch) -> None:
+    import server.routes.depends as depends_module
+    from server.routes.depends import require_database
 
     def _no_db():
         raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr(functions_route, "get_function_definitions", _fail_defs)
-    monkeypatch.setattr(functions_route, "get_database", _no_db)
+    monkeypatch.setattr(depends_module, "get_database", _no_db)
 
-    out = await functions_route.list_functions(type=None)
-    assert out.total == 0
-    assert out.functions == []
+    with pytest.raises(HTTPException) as exc:
+        require_database()
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -371,9 +353,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
-    monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
-
-    all_functions = await functions_route.list_functions(type=None)
+    all_functions = await functions_route.list_functions(type=None, db=sqlite_db)
     assert all_functions.total == 2
 
     by_key = {item.key: item for item in all_functions.functions}
@@ -399,13 +379,15 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
     assert set(event.workers) == {"host-1", "workerid"}
     assert event.active is True
 
-    event_only = await functions_route.list_functions(type=FunctionType.EVENT)
+    event_only = await functions_route.list_functions(type=FunctionType.EVENT, db=sqlite_db)
     assert event_only.total == 1
     assert event_only.functions[0].key == "fn.event"
 
 
 @pytest.mark.asyncio
-async def test_list_functions_has_no_alert_delivery_side_effect(monkeypatch) -> None:
+async def test_list_functions_has_no_alert_delivery_side_effect(
+    sqlite_db, monkeypatch
+) -> None:
     async def _defs() -> dict[str, FunctionConfig]:
         return {
             "fn.task": FunctionConfig(
@@ -435,14 +417,9 @@ async def test_list_functions_has_no_alert_delivery_side_effect(monkeypatch) -> 
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
-    monkeypatch.setattr(
-        functions_route,
-        "get_database",
-        lambda: (_ for _ in ()).throw(RuntimeError("db unavailable")),
-    )
     monkeypatch.setattr(alerts_module, "emit_function_alerts", _emit_raises)
 
-    out = await functions_route.list_functions(type=None)
+    out = await functions_route.list_functions(type=None, db=sqlite_db)
     assert out.total == 1
     assert out.functions[0].key == "fn.task"
 
@@ -546,9 +523,7 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
-    monkeypatch.setattr(functions_route, "get_database", lambda: sqlite_db)
-
-    detail = await functions_route.get_function("fn.detail")
+    detail = await functions_route.get_function("fn.detail", db=sqlite_db)
     assert detail.type == FunctionType.CRON
     assert detail.runs_24h == 3
     assert detail.success_rate == 33.3
@@ -572,25 +547,18 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
 
 
 @pytest.mark.asyncio
-async def test_get_function_defaults_when_backends_unavailable(monkeypatch) -> None:
-    async def _fail_defs() -> dict:
-        raise RuntimeError("defs down")
+async def test_get_function_returns_503_when_database_unavailable(monkeypatch) -> None:
+    import server.routes.depends as depends_module
+    from server.routes.depends import require_database
 
     def _no_db():
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(functions_route, "get_function_definitions", _fail_defs)
-    monkeypatch.setattr(functions_route, "get_database", _no_db)
+    monkeypatch.setattr(depends_module, "get_database", _no_db)
 
-    detail = await functions_route.get_function("fn.missing")
-    assert detail.key == "fn.missing"
-    assert detail.name == "fn.missing"
-    assert detail.type == FunctionType.TASK
-    assert detail.active is False
-    assert detail.workers == []
-    assert detail.runs_24h == 0
-    assert detail.success_rate == 100.0
-    assert detail.recent_runs == []
+    with pytest.raises(HTTPException) as exc:
+        require_database()
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -1139,3 +1107,31 @@ async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
     assert first["trends"]["hourly"][0]["success_2xx"] == 1
     assert second["type"] == "apis.trends.snapshot"
     assert second["trends"]["hourly"][0]["success_2xx"] == 2
+
+
+@pytest.mark.asyncio
+async def test_dlq_routes_map_non_runtime_redis_errors_to_503(monkeypatch) -> None:
+    """DLQ routes must catch any exception from the service layer — not just RuntimeError."""
+    import server.routes.dlq as dlq_route
+    import server.services.dlq as dlq_service
+
+    async def _raise_connection_error(*_args, **_kwargs):
+        raise ConnectionError("redis connection lost")
+
+    monkeypatch.setattr(dlq_service, "list_dead_letters", _raise_connection_error)
+    monkeypatch.setattr(dlq_service, "get_dlq_count", _raise_connection_error)
+    monkeypatch.setattr(dlq_service, "get_dead_letter_entry", _raise_connection_error)
+    monkeypatch.setattr(dlq_service, "delete_dead_letter", _raise_connection_error)
+    monkeypatch.setattr(dlq_service, "purge_dead_letters", _raise_connection_error)
+
+    with pytest.raises(HTTPException) as list_exc:
+        await dlq_route.list_function_dead_letters("fn.test", limit=10)
+    assert list_exc.value.status_code == 503
+
+    with pytest.raises(HTTPException) as delete_exc:
+        await dlq_route.delete_function_dead_letter("fn.test", "1234-0")
+    assert delete_exc.value.status_code == 503
+
+    with pytest.raises(HTTPException) as purge_exc:
+        await dlq_route.purge_function_dead_letters("fn.test")
+    assert purge_exc.value.status_code == 503

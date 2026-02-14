@@ -141,7 +141,6 @@ async def test_list_jobs_filters_and_pagination(sqlite_db) -> None:
             status=["failed"],
             worker_id="worker-a",
             limit=1,
-            offset=0,
         )
         total = await repo.count_jobs(
             function="fn.target",

@@ -48,6 +48,7 @@ class JobListResponse(BaseModel):
     jobs: list[JobHistoryResponse]
     total: int
     has_more: bool = False
+    next_cursor: str | None = None
 
 
 class JobStatsResponse(BaseModel):

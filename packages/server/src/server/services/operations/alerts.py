@@ -38,6 +38,7 @@ class FunctionAlertType(StrEnum):
     LATENCY_P95 = "function_latency_p95"
     QUEUE_WAIT_P95 = "function_queue_wait_p95"
     QUEUE_BACKLOG = "function_queue_backlog"
+    INVALID_EVENT_RATE = "invalid_event_rate"
 
 
 class FunctionAlert(BaseModel):
@@ -162,6 +163,41 @@ def get_alert_delivery_stats() -> AlertDeliveryStats:
     )
 
 
+async def _emit_alerts(alerts: list[FunctionAlert]) -> int:
+    """Deliver alerts to the configured webhook. Returns count sent."""
+    if not alerts:
+        return 0
+
+    settings = get_settings()
+    webhook = settings.alert_webhook_url
+    if not webhook:
+        return 0
+
+    _ALERT_DELIVERY_STATS.attempted += len(alerts)
+    _ALERT_DELIVERY_STATS.last_attempt_at = datetime.now(UTC).isoformat()
+
+    payload = {
+        "source": "upnext-server",
+        "at": datetime.now(UTC).isoformat(),
+        "alerts": [alert.model_dump() for alert in alerts],
+    }
+    timeout_seconds = max(0.1, settings.alert_webhook_timeout_seconds)
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(webhook, json=payload)
+            response.raise_for_status()
+    except Exception as exc:
+        logger.warning("Failed to deliver alert webhook: %s", exc)
+        _ALERT_DELIVERY_STATS.failures += len(alerts)
+        _ALERT_DELIVERY_STATS.last_error = str(exc)
+        return 0
+
+    _ALERT_DELIVERY_STATS.sent += len(alerts)
+    _ALERT_DELIVERY_STATS.last_sent_at = datetime.now(UTC).isoformat()
+    _ALERT_DELIVERY_STATS.last_error = None
+    return len(alerts)
+
+
 async def emit_function_alerts(functions: list[FunctionInfo]) -> int:
     """
     Emit threshold-based function alerts to a configured webhook.
@@ -169,15 +205,13 @@ async def emit_function_alerts(functions: list[FunctionInfo]) -> int:
     Returns number of alerts sent.
     """
     settings = get_settings()
-    webhook = settings.alert_webhook_url
-    if not webhook:
+    if not settings.alert_webhook_url:
         return 0
 
     alerts = build_function_alerts(functions)
     if not alerts:
         return 0
 
-    _ALERT_DELIVERY_STATS.last_attempt_at = datetime.now(UTC).isoformat()
     redis_client = None
     try:
         redis_client = await get_redis()
@@ -202,27 +236,7 @@ async def emit_function_alerts(functions: list[FunctionInfo]) -> int:
         _ALERT_DELIVERY_STATS.skipped_cooldown += len(alerts)
         return 0
 
-    _ALERT_DELIVERY_STATS.attempted += len(selected)
-    payload = {
-        "source": "upnext-server",
-        "at": datetime.now(UTC).isoformat(),
-        "alerts": [alert.model_dump() for alert in selected],
-    }
-    timeout_seconds = max(0.1, settings.alert_webhook_timeout_seconds)
-    try:
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            response = await client.post(webhook, json=payload)
-            response.raise_for_status()
-    except Exception as exc:
-        logger.warning("Failed to deliver alert webhook: %s", exc)
-        _ALERT_DELIVERY_STATS.failures += len(selected)
-        _ALERT_DELIVERY_STATS.last_error = str(exc)
-        return 0
-
-    _ALERT_DELIVERY_STATS.sent += len(selected)
-    _ALERT_DELIVERY_STATS.last_sent_at = datetime.now(UTC).isoformat()
-    _ALERT_DELIVERY_STATS.last_error = None
-    return len(selected)
+    return await _emit_alerts(selected)
 
 
 class AlertEmitterService:
@@ -232,6 +246,7 @@ class AlertEmitterService:
         self._interval_seconds = max(5.0, interval_seconds)
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._last_invalid_event_total: int = 0
 
     async def start(self) -> None:
         if self._task is not None:
@@ -259,6 +274,7 @@ class AlertEmitterService:
 
                 functions = await collect_functions_snapshot(type=None)
                 await emit_function_alerts(functions)
+                await self._check_invalid_event_rate()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # pragma: no cover - best effort background loop
@@ -271,3 +287,45 @@ class AlertEmitterService:
                 )
             except TimeoutError:
                 continue
+
+    async def _check_invalid_event_rate(self) -> None:
+        """Check subscriber discard counters and emit alert on high rate."""
+        from server.services.events import get_event_processing_stats
+
+        settings = get_settings()
+        threshold = settings.alert_invalid_event_rate_threshold
+        if threshold <= 0:
+            return
+
+        stats = get_event_processing_stats()
+        current_total = stats.total_discarded
+        delta = current_total - self._last_invalid_event_total
+        self._last_invalid_event_total = current_total
+
+        if delta >= threshold:
+            logger.warning(
+                "High invalid event rate: %d discarded events in last poll interval "
+                "(threshold: %d). Breakdown: %s",
+                delta,
+                threshold,
+                stats,
+            )
+            # Emit as a system-level alert to webhook.
+            webhook = settings.alert_webhook_url
+            if not webhook:
+                return
+            now_iso = datetime.now(UTC).isoformat()
+            alert = FunctionAlert(
+                type=FunctionAlertType.INVALID_EVENT_RATE,
+                function="__system__",
+                function_name="Event Subscriber",
+                value=float(delta),
+                threshold=float(threshold),
+                metric="invalid_events_per_interval",
+                at=now_iso,
+                message=(
+                    f"Invalid event rate {delta} exceeds threshold {threshold} "
+                    f"per poll interval"
+                ),
+            )
+            await _emit_alerts([alert])

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
@@ -22,7 +23,10 @@ from server.services.apis.request_events import (
     stream_id_ceil,
     stream_id_floor,
 )
+from server.routes.sse import SSE_BLOCK_MS, SSE_HEADERS, SSE_READ_COUNT
 from server.services.redis import get_redis
+
+logger = logging.getLogger(__name__)
 
 api_stream_router = APIRouter(tags=["apis"])
 
@@ -58,8 +62,8 @@ async def stream_api_trends(
 
                 result = await redis_client.xread(
                     {API_REQUESTS_STREAM: last_id},
-                    count=200,
-                    block=15_000,
+                    count=SSE_READ_COUNT,
+                    block=SSE_BLOCK_MS,
                 )
                 if not result:
                     yield ": keep-alive\n\n"
@@ -85,14 +89,14 @@ async def stream_api_trends(
                 yield f"data: {event.model_dump_json()}\n\n"
         except asyncio.CancelledError:
             return
+        except Exception as exc:
+            logger.warning("API trends stream error: %s", exc)
+            yield 'event: error\ndata: {"error": "stream disconnected"}\n\n'
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
     )
 
 
@@ -200,7 +204,7 @@ async def stream_api_request_events(
                 result = await redis_client.xread(
                     {API_REQUESTS_STREAM: last_id},
                     count=100,
-                    block=15_000,
+                    block=SSE_BLOCK_MS,
                 )
                 if not result:
                     yield ": keep-alive\n\n"
@@ -220,14 +224,14 @@ async def stream_api_request_events(
                         yield f"data: {payload.model_dump_json()}\n\n"
         except asyncio.CancelledError:
             return
+        except Exception as exc:
+            logger.warning("API request events stream error: %s", exc)
+            yield 'event: error\ndata: {"error": "stream disconnected"}\n\n'
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
     )
 
 
@@ -257,8 +261,8 @@ async def stream_apis(request: Request) -> StreamingResponse:
 
                 result = await redis_client.xread(
                     {API_REQUESTS_STREAM: last_id},
-                    count=200,
-                    block=15_000,
+                    count=SSE_READ_COUNT,
+                    block=SSE_BLOCK_MS,
                 )
                 if not result:
                     yield ": keep-alive\n\n"
@@ -283,14 +287,14 @@ async def stream_apis(request: Request) -> StreamingResponse:
                 yield f"data: {event.model_dump_json()}\n\n"
         except asyncio.CancelledError:
             return
+        except Exception as exc:
+            logger.warning("APIs list stream error: %s", exc)
+            yield 'event: error\ndata: {"error": "stream disconnected"}\n\n'
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
     )
 
 
@@ -320,8 +324,8 @@ async def stream_api(api_name: str, request: Request) -> StreamingResponse:
 
                 result = await redis_client.xread(
                     {API_REQUESTS_STREAM: last_id},
-                    count=200,
-                    block=15_000,
+                    count=SSE_READ_COUNT,
+                    block=SSE_BLOCK_MS,
                 )
                 if not result:
                     yield ": keep-alive\n\n"
@@ -350,12 +354,12 @@ async def stream_api(api_name: str, request: Request) -> StreamingResponse:
                 yield f"data: {event.model_dump_json()}\n\n"
         except asyncio.CancelledError:
             return
+        except Exception as exc:
+            logger.warning("API detail stream error: %s", exc)
+            yield 'event: error\ndata: {"error": "stream disconnected"}\n\n'
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
     )

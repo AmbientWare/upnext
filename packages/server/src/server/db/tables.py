@@ -14,6 +14,7 @@ from shared.domain import JobType
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -119,6 +120,14 @@ class JobHistory(Base):
         Index("ix_job_history_worker_id", "worker_id"),
         Index("ix_job_history_parent_id", "parent_id"),
         Index("ix_job_history_root_id", "root_id"),
+        # Compound indexes for dashboard and trend queries
+        Index("ix_job_history_function_status", "function", "status"),
+        Index("ix_job_history_created_at_status", "created_at", "status"),
+        # Enforce valid status values
+        CheckConstraint(
+            "status IN ('pending', 'queued', 'active', 'complete', 'failed', 'cancelled', 'retrying')",
+            name="ck_job_history_status",
+        ),
     )
 
     def __repr__(self) -> str:

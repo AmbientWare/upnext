@@ -70,7 +70,7 @@ function mkJob(partial: Partial<Job> & Pick<Job, "id">): Job {
 }
 
 function emptyList(): JobListResponse {
-  return { jobs: [], total: 0, has_more: false };
+  return { jobs: [], total: 0, has_more: false, next_cursor: null };
 }
 
 function renderWithQueryClient(client: QueryClient, children: ReactNode) {
@@ -167,6 +167,7 @@ describe("EventStreamProvider", () => {
       jobs: [mkJob({ id: "root-1", root_id: "root-1", status: "active" })],
       total: 1,
       has_more: false,
+      next_cursor: null,
     } satisfies JobListResponse);
 
     renderWithQueryClient(client, (
@@ -231,6 +232,7 @@ describe("EventStreamProvider", () => {
       jobs: [mkJob({ id: "job-p", function: "fn.p", function_name: "P", progress: 0 })],
       total: 1,
       has_more: false,
+      next_cursor: null,
     } satisfies JobListResponse);
 
     renderWithQueryClient(client, (
@@ -556,11 +558,13 @@ describe("EventStreamProvider", () => {
       jobs: [mkJob({ id: "job-live", function: "fn.a", function_name: "A", progress: 0 })],
       total: 1,
       has_more: false,
+      next_cursor: null,
     });
     client.setQueryData<JobListResponse>(windowJobsKey, {
       jobs: [mkJob({ id: "job-window", function: "fn.a", function_name: "A", progress: 0 })],
       total: 1,
       has_more: false,
+      next_cursor: null,
     });
 
     client.setQueryData<ApiRequestEventsResponse>(liveApiEventsKey, {

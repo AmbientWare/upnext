@@ -115,7 +115,7 @@ export interface GetJobsParams {
   after?: string;
   before?: string;
   limit?: number;
-  offset?: number;
+  cursor?: string;
 }
 
 export async function getJobs(params: GetJobsParams = {}): Promise<JobListResponse> {
@@ -129,7 +129,7 @@ export async function getJobs(params: GetJobsParams = {}): Promise<JobListRespon
   if (params.after) searchParams.set("after", params.after);
   if (params.before) searchParams.set("before", params.before);
   if (params.limit !== undefined) searchParams.set("limit", String(params.limit));
-  if (params.offset !== undefined) searchParams.set("offset", String(params.offset));
+  if (params.cursor) searchParams.set("cursor", params.cursor);
 
   const query = searchParams.toString();
   const url = `${API_BASE}/jobs${query ? `?${query}` : ""}`;

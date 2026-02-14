@@ -21,7 +21,9 @@ from typing import Any, TypeAlias
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
+from redis.typing import EncodableT, FieldT
 from shared.contracts import (
+    EventProcessingStats,
     EventType,
     JobCheckpointEvent,
     JobCompletedEvent,
@@ -152,13 +154,13 @@ class StreamSubscriber:
         return self._task is not None and not self._task.done()
 
     @property
-    def discarded_event_stats(self) -> dict[str, int]:
+    def discarded_event_stats(self) -> EventProcessingStats:
         """Monotonic discard counters useful for diagnostics and alerts."""
-        return {
-            "invalid_envelope": self._invalid_envelope_total,
-            "invalid_payload": self._invalid_payload_total,
-            "unsupported_type": self._unsupported_type_total,
-        }
+        return EventProcessingStats(
+            invalid_envelope=self._invalid_envelope_total,
+            invalid_payload=self._invalid_payload_total,
+            unsupported_type=self._unsupported_type_total,
+        )
 
     async def start(self) -> None:
         """Start the subscriber background task."""
@@ -525,17 +527,19 @@ class StreamSubscriber:
 
         ack_ids: list[str] = []
         for invalid in summary.invalid_events:
-            payload: dict[str, str] = {
+            payload: dict[FieldT, EncodableT] = {
                 "event_id": invalid.event_id,
                 "reason": invalid.reason,
                 "error": invalid.error,
                 "received_at": datetime.now(UTC).isoformat(),
                 "data": json.dumps(invalid.raw, default=str),
             }
-            if invalid.worker_id:
-                payload["worker_id"] = invalid.worker_id
-            if invalid.event_type:
-                payload["event_type"] = invalid.event_type
+            worker_id = invalid.worker_id
+            if worker_id is not None:
+                payload["worker_id"] = worker_id
+            event_type = invalid.event_type
+            if event_type is not None:
+                payload["event_type"] = event_type
 
             try:
                 if self._config.invalid_events_stream_maxlen > 0:

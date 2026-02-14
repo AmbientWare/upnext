@@ -116,7 +116,7 @@ describe("ApiDetailPage", () => {
       expect(screen.getByRole("heading", { name: "orders" })).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Open FastAPI Docs")).toHaveAttribute("href", "http://localhost:8001/docs");
+    expect(screen.getByText("Docs")).toHaveAttribute("href", "http://localhost:8001/docs");
     expect(screen.getAllByText("/orders").length).toBeGreaterThan(0);
     expect(screen.getAllByText("/orders/create").length).toBeGreaterThan(0);
     expect(screen.getAllByText("2 routes").length).toBeGreaterThan(0);

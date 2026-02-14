@@ -46,6 +46,8 @@ class Sweeper:
         self._stop_event = asyncio.Event()
         self._min_sleep_seconds = SWEEPER_MIN_SLEEP_SECONDS
         self._max_sleep_seconds = SWEEPER_MAX_SLEEP_SECONDS
+        self._sweep_count: int = 0
+        self._consumer_group_cleanup_interval: int = 100
 
     async def start(self) -> None:
         """Start the background sweep loop."""
@@ -155,6 +157,13 @@ class Sweeper:
 
     async def _do_sweep(self) -> None:
         """Move due scheduled jobs to their streams."""
+        self._sweep_count += 1
+        if self._sweep_count % self._consumer_group_cleanup_interval == 0:
+            try:
+                await self._queue.cleanup_stale_consumer_groups()
+            except Exception as e:
+                logger.debug("Consumer group cleanup error: %s", e)
+
         client = await self._queue._ensure_connected()
         now = time.time()
 

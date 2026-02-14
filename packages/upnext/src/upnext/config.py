@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     status_shutdown_flush_timeout_seconds: float = 2.0
     status_publish_strict: bool = False
 
+    # Progress coalescing controls
+    progress_min_delta: float = 0.01
+    progress_min_interval_seconds: float = 0.2
+
     # API tracking controls
     api_tracking_normalize_paths: bool = True
     api_tracking_registry_refresh_seconds: int = 60

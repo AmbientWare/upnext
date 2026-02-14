@@ -53,6 +53,11 @@ def function_dlq_stream_key(
     return queue_key("fn", function, "dlq", key_prefix=key_prefix)
 
 
+def function_dlq_stream_pattern(*, key_prefix: str = QUEUE_KEY_PREFIX) -> str:
+    """SCAN pattern for all function dead-letter stream keys."""
+    return queue_key("fn", "*", "dlq", key_prefix=key_prefix)
+
+
 def function_rate_limit_key(
     function: str,
     *,

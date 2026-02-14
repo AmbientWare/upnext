@@ -10,6 +10,7 @@ from shared.keys import (
     EVENTS_PUBSUB_CHANNEL,
 )
 
+from server.routes.sse import SSE_HEADERS, SSE_PUBSUB_TIMEOUT_SECONDS
 from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ async def stream_events(request: Request) -> StreamingResponse:
                     break
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True,
-                    timeout=15.0,
+                    timeout=SSE_PUBSUB_TIMEOUT_SECONDS,
                 )
                 if message and message.get("type") == "message":
                     data = message.get("data")
@@ -50,7 +51,9 @@ async def stream_events(request: Request) -> StreamingResponse:
 
         except asyncio.CancelledError:
             pass
-
+        except Exception as exc:
+            logger.warning("Events stream error: %s", exc)
+            yield "event: error\ndata: {\"error\": \"stream disconnected\"}\n\n"
         finally:
             await pubsub.unsubscribe(EVENTS_PUBSUB_CHANNEL)
             await pubsub.close()
@@ -58,9 +61,5 @@ async def stream_events(request: Request) -> StreamingResponse:
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=SSE_HEADERS,
     )

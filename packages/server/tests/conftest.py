@@ -3,12 +3,22 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
 import pytest_asyncio
 from fakeredis.aioredis import FakeRedis
 
 from server.db.session import Database
 from server.db.session import init_database as _init_database
 import server.db.session as session_module
+from server.routes.jobs.jobs_stream import clear_trends_cache
+
+
+@pytest.fixture(autouse=True)
+def _clear_trends_cache() -> None:
+    """Clear the module-level trends snapshot cache between tests."""
+    clear_trends_cache()
+    yield  # type: ignore[misc]
+    clear_trends_cache()
 
 
 @pytest_asyncio.fixture

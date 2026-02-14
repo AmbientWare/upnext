@@ -34,11 +34,43 @@ class ReadinessMetrics(BaseModel):
     )
 
 
+class QueueHealthSummary(BaseModel):
+    """Queue depth summary surfaced by health endpoints."""
+
+    running: int = 0
+    waiting: int = 0
+    claimed: int = 0
+    backlog: int = 0
+    capacity: int = 0
+
+
+class DlqHealthSummary(BaseModel):
+    """Dead-letter queue summary surfaced by health endpoints."""
+
+    total_entries: int = 0
+    functions_affected: int = 0
+
+
+class EventProcessingStats(BaseModel):
+    """Subscriber event processing counters surfaced by health endpoints."""
+
+    invalid_envelope: int = 0
+    invalid_payload: int = 0
+    unsupported_type: int = 0
+
+    @property
+    def total_discarded(self) -> int:
+        return self.invalid_envelope + self.invalid_payload + self.unsupported_type
+
+
 class HealthMetrics(BaseModel):
     """Structured health metrics payload."""
 
     alerts: AlertDeliveryStats = Field(default_factory=AlertDeliveryStats)
     readiness: ReadinessMetrics = Field(default_factory=ReadinessMetrics)
+    queue: QueueHealthSummary = Field(default_factory=QueueHealthSummary)
+    dlq: DlqHealthSummary = Field(default_factory=DlqHealthSummary)
+    events: EventProcessingStats = Field(default_factory=EventProcessingStats)
 
 
 class HealthResponse(BaseModel):
@@ -53,7 +85,10 @@ class HealthResponse(BaseModel):
 __all__ = [
     "AlertDeliveryStats",
     "DependencyHealth",
+    "DlqHealthSummary",
+    "EventProcessingStats",
     "HealthMetrics",
     "HealthResponse",
+    "QueueHealthSummary",
     "ReadinessMetrics",
 ]

@@ -1,3 +1,4 @@
+export { ErrorBoundary } from "./error-boundary";
 export { StatusIcon } from "./status-icon";
 export { StatusBadge } from "./status-badge";
 export { StatusDot } from "./status-dot";

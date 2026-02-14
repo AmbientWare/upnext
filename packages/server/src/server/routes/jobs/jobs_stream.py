@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +15,13 @@ from server.routes.jobs.jobs_utils import (
     STREAMABLE_EVENTS,
     extract_stream_function_key,
 )
+from server.routes.sse import (
+    SSE_BLOCK_MS,
+    SSE_CACHE_MAX_SIZE,
+    SSE_CACHE_TTL_SECONDS,
+    SSE_HEADERS,
+    SSE_READ_COUNT,
+)
 from server.services.redis import get_redis
 from server.shared_utils import get_stream_text_field
 
@@ -21,11 +29,29 @@ logger = logging.getLogger(__name__)
 
 jobs_stream_router = APIRouter(tags=["jobs"])
 _TRENDS_CACHE_LOCK = asyncio.Lock()
-_TRENDS_CACHE_TTL_SECONDS = 0.75
 _trends_snapshot_cache: dict[
-    tuple[int, str | None, str | None, int],
+    tuple[int, str | None, str | None],
     tuple[float, str | None, Any],
 ] = {}
+
+
+def clear_trends_cache() -> None:
+    """Clear the module-level trends snapshot cache.
+
+    Intended for test teardown so cached state does not leak across tests.
+    """
+    _trends_snapshot_cache.clear()
+
+
+def _evict_expired_cache_entries() -> None:
+    """Remove expired entries from the trends cache (TTL-based eviction)."""
+    now = time.monotonic()
+    expired = [k for k, v in _trends_snapshot_cache.items() if v[0] <= now]
+    for k in expired:
+        del _trends_snapshot_cache[k]
+    # Hard cap as safety net
+    if len(_trends_snapshot_cache) > SSE_CACHE_MAX_SIZE:
+        _trends_snapshot_cache.clear()
 
 
 async def _get_cached_job_trends_snapshot(
@@ -40,9 +66,8 @@ async def _get_cached_job_trends_snapshot(
         hours,
         function,
         func_type_filter.value if func_type_filter else None,
-        id(get_job_trends),
     )
-    now = asyncio.get_running_loop().time()
+    now = time.monotonic()
     cached = _trends_snapshot_cache.get(key)
     if cached and cached[0] > now:
         if event_token is None or cached[1] == event_token:
@@ -60,12 +85,11 @@ async def _get_cached_job_trends_snapshot(
             type=func_type_filter,
         )
         _trends_snapshot_cache[key] = (
-            now + _TRENDS_CACHE_TTL_SECONDS,
+            now + SSE_CACHE_TTL_SECONDS,
             event_token,
             snapshot,
         )
-        if len(_trends_snapshot_cache) > 256:
-            _trends_snapshot_cache.clear()
+        _evict_expired_cache_entries()
         return snapshot
 
 
@@ -107,8 +131,8 @@ async def stream_job_trends(
 
                 result = await redis_client.xread(
                     {EVENTS_STREAM: last_id},
-                    count=200,
-                    block=15_000,
+                    count=SSE_READ_COUNT,
+                    block=SSE_BLOCK_MS,
                 )
                 if not result:
                     yield ": keep-alive\n\n"
@@ -147,12 +171,12 @@ async def stream_job_trends(
                 yield f"data: {event.model_dump_json()}\n\n"
         except asyncio.CancelledError:
             return
+        except Exception as exc:
+            logger.warning("Job trends stream error: %s", exc)
+            yield "event: error\ndata: {\"error\": \"stream disconnected\"}\n\n"
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
     )

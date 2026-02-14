@@ -12,10 +12,13 @@ from pydantic import BaseModel
 
 from server.config import get_settings
 from server.db.session import get_database, init_database
+from server.logging import configure_logging
+from server.middleware import CorrelationIDMiddleware
 from server.routes import health_router, v1_router
 from server.services.events import (
     StreamSubscriber,
     StreamSubscriberConfig,
+    register_subscriber,
 )
 from server.services.operations import (
     AlertEmitterService,
@@ -26,11 +29,9 @@ from server.services.redis import (
     connect_redis,
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure logging (supports UPNEXT_LOG_FORMAT=json for structured output).
+_boot_settings = get_settings()
+configure_logging(log_format=_boot_settings.log_format, debug=_boot_settings.debug)
 logger = logging.getLogger(__name__)
 
 
@@ -90,6 +91,7 @@ async def lifespan(_app: FastAPI):
             ),
         )
         await subscriber.start()
+        register_subscriber(subscriber)
     else:
         logger.info("Redis not configured (UPNEXT_REDIS_URL not set)")
 
@@ -141,6 +143,9 @@ app = FastAPI(
     version=app_settings.version,
     lifespan=lifespan,
 )
+
+# Add correlation ID middleware (runs before CORS so the ID is on every response)
+app.add_middleware(CorrelationIDMiddleware)
 
 # Add CORS middleware
 allow_origins = app_settings.cors_allow_origins_list

@@ -6,6 +6,7 @@ import {
 } from "@/components/providers/event-stream-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/layout";
+import { ErrorBoundary } from "@/components/shared";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -63,11 +64,13 @@ function RootLayout() {
 
           {/* Main Content */}
           <main className="flex-1 overflow-hidden">
-            <EventStreamProvider streams={streamSubscriptions} pauseWhenHidden>
-              <div key={router.location.pathname} className="route-fade h-full">
-                <Outlet />
-              </div>
-            </EventStreamProvider>
+            <ErrorBoundary>
+              <EventStreamProvider streams={streamSubscriptions} pauseWhenHidden>
+                <div key={router.location.pathname} className="route-fade h-full">
+                  <Outlet />
+                </div>
+              </EventStreamProvider>
+            </ErrorBoundary>
           </main>
         </div>
       </div>
