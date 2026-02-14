@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 import upnext
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 from shared.domain.jobs import Job, JobStatus
 from shared.keys.api import API_INSTANCE_PREFIX
 from upnext.config import ThroughputMode, get_settings
@@ -311,6 +311,26 @@ def test_api_route_helpers_and_repr() -> None:
     assert any(route["path"] == "/v1/users" for route in routes)
     assert any(route["path"] == "/orders/{order_id}" for route in routes)
     assert "routes=" in repr(api)
+
+
+def test_api_from_fastapi_adopts_existing_app_and_routes() -> None:
+    app = FastAPI(title="existing-service")
+
+    @app.get("/existing")
+    async def existing() -> dict[str, str]:
+        return {"ok": "true"}
+
+    api = Api.from_fastapi(app, redis_url=None)
+
+    assert api.app is app
+    assert api.name == "existing-service"
+    assert any(route["path"] == "/existing" for route in api.routes)
+
+    @api.get("/new")
+    async def new() -> dict[str, str]:
+        return {"ok": "true"}
+
+    assert any(route["path"] == "/new" for route in api.routes)
 
 
 @pytest.mark.asyncio

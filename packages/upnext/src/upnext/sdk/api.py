@@ -94,6 +94,23 @@ class Api:
             )
         return self._app
 
+    @classmethod
+    def from_fastapi(
+        cls,
+        app: FastAPI,
+        *,
+        name: str | None = None,
+        **kwargs: Any,
+    ) -> "Api":
+        """Adopt an existing FastAPI app and manage it with UpNext.
+
+        Additional keyword arguments are forwarded to ``Api`` construction
+        (for example ``host``, ``port``, ``redis_url``, ``secrets``).
+        """
+        api = cls(name=name or app.title or "upnext-api", **kwargs)
+        api._app = app
+        return api
+
     def get(
         self,
         path: str,
