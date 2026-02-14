@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getStoredApiKey } from "@/lib/auth";
 
 export type EventSourceConnectionState =
   | "connecting"
@@ -22,6 +23,13 @@ interface UseEventSourceOptions {
   reconnectOnIdle?: boolean;
 }
 
+/**
+ * SSE hook backed by fetch() so we can send an Authorization header
+ * instead of leaking tokens in query parameters.
+ *
+ * Drop-in replacement for the previous EventSource-based hook — same
+ * callback surface and reconnect / idle behaviour.
+ */
 export function useEventSource(url: string, options: UseEventSourceOptions = {}) {
   const {
     enabled = true,
@@ -34,7 +42,6 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
   const [isPageVisible, setIsPageVisible] = useState(() =>
     typeof document === "undefined" ? true : document.visibilityState === "visible"
   );
-  const sourceRef = useRef<EventSource | null>(null);
   const onMessageRef = useRef(options.onMessage);
   const onErrorRef = useRef(options.onError);
   const onOpenRef = useRef(options.onOpen);
@@ -89,13 +96,11 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
     let hasConnected = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let currentSource: EventSource | null = null;
+    let abortController: AbortController | null = null;
     let currentState: EventSourceConnectionState | null = null;
 
     const emitState = (state: EventSourceConnectionState) => {
-      if (currentState === state) {
-        return;
-      }
+      if (currentState === state) return;
       currentState = state;
       onStateChangeRef.current?.(state);
     };
@@ -119,17 +124,17 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
         if (cancelled) return;
         onIdleRef.current?.();
         if (reconnectOnIdle) {
-          closeCurrentSource(false);
+          abortCurrent(false);
           scheduleReconnect();
         }
       }, idleTimeoutMs);
     };
 
-    const closeCurrentSource = (emitClose: boolean) => {
-      if (!currentSource) return;
-      currentSource.close();
-      currentSource = null;
-      sourceRef.current = null;
+    const abortCurrent = (emitClose: boolean) => {
+      if (abortController) {
+        abortController.abort();
+        abortController = null;
+      }
       if (emitClose) {
         onCloseRef.current?.();
       }
@@ -148,52 +153,112 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
       emitState("reconnecting");
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        createSource(true);
+        connect(true);
       }, delay);
     };
 
-    const createSource = (isReconnectAttempt: boolean) => {
+    const connect = async (isReconnectAttempt: boolean) => {
       if (cancelled) return;
       clearReconnectTimer();
       emitState(isReconnectAttempt ? "reconnecting" : "connecting");
 
-      const source = new EventSource(url);
-      currentSource = source;
-      sourceRef.current = source;
+      const controller = new AbortController();
+      abortController = controller;
 
-      source.addEventListener("open", (event) => {
+      const headers: Record<string, string> = {
+        Accept: "text/event-stream",
+      };
+      const apiKey = getStoredApiKey();
+      if (apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
+
+      let response: Response;
+      try {
+        response = await fetch(url, { headers, signal: controller.signal });
+      } catch {
         if (cancelled) return;
-        const reconnected = hasConnected;
-        hasConnected = true;
-        attempt = 0;
-        emitState("open");
-        scheduleIdleTimeout();
-        onOpenRef.current?.(event);
-        if (reconnected) {
-          onReconnectRef.current?.(event);
-        }
-      });
-      source.addEventListener("message", (event) => {
-        scheduleIdleTimeout();
-        onMessageRef.current?.(event as MessageEvent);
-      });
-      source.addEventListener("error", (event) => {
-        onErrorRef.current?.(event);
-        if (cancelled) return;
-        closeCurrentSource(false);
+        onErrorRef.current?.(new Event("error"));
+        abortCurrent(false);
         scheduleReconnect();
-      });
+        return;
+      }
+
+      if (cancelled) {
+        abortCurrent(false);
+        return;
+      }
+
+      if (!response.ok || !response.body) {
+        onErrorRef.current?.(new Event("error"));
+        abortCurrent(false);
+        scheduleReconnect();
+        return;
+      }
+
+      // Connection established
+      const reconnected = hasConnected;
+      hasConnected = true;
+      attempt = 0;
+      emitState("open");
+      scheduleIdleTimeout();
+      onOpenRef.current?.(new Event("open"));
+      if (reconnected) {
+        onReconnectRef.current?.(new Event("open"));
+      }
+
+      // Read the SSE stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (cancelled || done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // SSE events are separated by blank lines (\n\n)
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() ?? "";
+
+          for (const part of parts) {
+            if (!part.trim()) continue;
+
+            let data = "";
+            for (const line of part.split("\n")) {
+              if (line.startsWith("data:")) {
+                data += (data ? "\n" : "") + line.slice(5).trimStart();
+              }
+            }
+
+            if (data) {
+              scheduleIdleTimeout();
+              onMessageRef.current?.(new MessageEvent("message", { data }));
+            }
+          }
+        }
+      } catch {
+        // Stream read error (abort, network drop, etc.)
+      }
+
+      if (cancelled) return;
+
+      // Stream ended — schedule reconnect
+      onErrorRef.current?.(new Event("error"));
+      abortCurrent(false);
+      scheduleReconnect();
     };
 
-    createSource(false);
+    connect(false);
 
     return () => {
       cancelled = true;
       clearReconnectTimer();
       clearIdleTimer();
-      closeCurrentSource(true);
+      abortCurrent(true);
       emitState("closed");
-      sourceRef.current = null;
     };
   }, [
     effectiveEnabled,
@@ -203,6 +268,4 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
     reconnectMaxDelayMs,
     url,
   ]);
-
-  return sourceRef;
 }

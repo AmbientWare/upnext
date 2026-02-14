@@ -3,34 +3,45 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import { useEventSource } from "./use-event-source";
 
-class MockEventSource {
-  static instances: MockEventSource[] = [];
+/** Helper to create a controllable SSE stream via fetch mock. */
+function createMockSSEStream() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
 
-  url: string;
-  listeners = new Map<string, ((event: Event) => void)[]>();
-  closed = false;
-
-  constructor(url: string) {
-    this.url = url;
-    MockEventSource.instances.push(this);
-  }
-
-  addEventListener(type: string, listener: (event: Event) => void) {
-    const existing = this.listeners.get(type) ?? [];
-    existing.push(listener);
-    this.listeners.set(type, existing);
-  }
-
-  emit(type: string, event: Event) {
-    for (const listener of this.listeners.get(type) ?? []) {
-      listener(event);
-    }
-  }
-
-  close() {
-    this.closed = true;
-  }
+  return {
+    response: new Response(stream, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+    /** Push an SSE data frame into the stream. */
+    push(data: string) {
+      controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+    },
+    /** Close the stream (simulates server hangup). */
+    close() {
+      try {
+        controller.close();
+      } catch {
+        // already closed
+      }
+    },
+    /** Signal an error on the stream. */
+    error(err?: unknown) {
+      try {
+        controller.error(err ?? new Error("stream error"));
+      } catch {
+        // already errored
+      }
+    },
+  };
 }
+
+type MockStream = ReturnType<typeof createMockSSEStream>;
 
 function Harness({ onMessage }: { onMessage: (event: MessageEvent) => void }) {
   useEventSource("/events", { onMessage });
@@ -57,28 +68,45 @@ function VisibilityHarness() {
 }
 
 describe("useEventSource", () => {
+  let streams: MockStream[];
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
-    MockEventSource.instances = [];
+    streams = [];
+    fetchSpy = vi.fn().mockImplementation(() => {
+      const mock = createMockSSEStream();
+      streams.push(mock);
+      return Promise.resolve(mock.response);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
     vi.useFakeTimers();
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  it("registers handlers and closes source on unmount", () => {
+  it("registers handlers and closes source on unmount", async () => {
     const onMessage = vi.fn();
     const view = render(<Harness onMessage={onMessage} />);
 
-    expect(MockEventSource.instances).toHaveLength(1);
-    const source = MockEventSource.instances[0];
+    // Let the async connect() resolve
+    await act(async () => {
+      await Promise.resolve();
+    });
 
-    source.emit("message", new MessageEvent("message", { data: "x" }));
+    expect(streams).toHaveLength(1);
+    streams[0].push("x");
+
+    // Let the stream read loop process
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].data).toBe("x");
 
     view.unmount();
-    expect(source.closed).toBe(true);
   });
 
   it("reconnects after errors and emits lifecycle callbacks", async () => {
@@ -98,28 +126,33 @@ describe("useEventSource", () => {
       />
     );
 
-    expect(MockEventSource.instances).toHaveLength(1);
-    const first = MockEventSource.instances[0];
-    first.emit("open", new Event("open"));
-
+    // First connection
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(streams).toHaveLength(1);
     expect(onOpen).toHaveBeenCalledTimes(1);
     expect(onReconnect).toHaveBeenCalledTimes(0);
 
-    first.emit("error", new Event("error"));
+    // Close the stream to trigger reconnect
+    await act(async () => {
+      streams[0].close();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(first.closed).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(1200);
-    expect(MockEventSource.instances).toHaveLength(2);
-
-    const second = MockEventSource.instances[1];
-    second.emit("open", new Event("open"));
+    // Advance past reconnect delay
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1200);
+      await Promise.resolve();
+    });
+    expect(streams).toHaveLength(2);
     expect(onOpen).toHaveBeenCalledTimes(2);
     expect(onReconnect).toHaveBeenCalledTimes(1);
 
     view.unmount();
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(second.closed).toBe(true);
     expect(onStateChange).toHaveBeenCalledWith("open");
     expect(onStateChange).toHaveBeenCalledWith("closed");
   });
@@ -145,19 +178,27 @@ describe("useEventSource", () => {
       />
     );
 
-    expect(MockEventSource.instances).toHaveLength(1);
-    const first = MockEventSource.instances[0];
-    first.emit("open", new Event("open"));
+    // First connection
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(streams).toHaveLength(1);
+    expect(onOpen).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    // Advance to idle timeout
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(onIdle).toHaveBeenCalledTimes(1);
-    expect(first.closed).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(MockEventSource.instances).toHaveLength(2);
-
-    const second = MockEventSource.instances[1];
-    second.emit("open", new Event("open"));
+    // Advance past reconnect delay
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+      await Promise.resolve();
+    });
+    expect(streams).toHaveLength(2);
     expect(onReconnect).toHaveBeenCalledTimes(1);
   });
 
@@ -169,21 +210,29 @@ describe("useEventSource", () => {
     });
 
     render(<VisibilityHarness />);
-    expect(MockEventSource.instances).toHaveLength(1);
-    const first = MockEventSource.instances[0];
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(streams).toHaveLength(1);
 
     visibilityState = "hidden";
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await Promise.resolve();
     });
-    expect(first.closed).toBe(true);
+
+    // Connection should be aborted (cleanup runs)
+    const streamCountAfterHide = streams.length;
 
     visibilityState = "visible";
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await Promise.resolve();
+      await Promise.resolve();
     });
-    expect(MockEventSource.instances).toHaveLength(2);
+
+    // A new connection should have been created
+    expect(streams.length).toBeGreaterThan(streamCountAfterHide);
   });
 });

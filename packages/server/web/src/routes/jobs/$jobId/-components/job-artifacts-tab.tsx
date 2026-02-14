@@ -4,6 +4,7 @@ import {
   lazy,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,7 +23,7 @@ import {
   Image as ImageIcon,
   type LucideIcon,
 } from "lucide-react";
-import { getArtifactContentUrl, getJobArtifacts, queryKeys } from "@/lib/upnext-api";
+import { fetchArtifactBlobUrl, fetchArtifactText, getJobArtifacts, queryKeys } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { useEventSource } from "@/hooks/use-event-source";
 import type { Artifact, ArtifactListResponse, ArtifactStreamEvent } from "@/lib/types";
@@ -244,16 +245,36 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
     ? isSelectedPending
     : allArtifactsQueries.some((result) => result.isPending);
 
-  const selectedArtifactContentUrl = selectedArtifact
-    ? getArtifactContentUrl(selectedArtifact.id)
-    : null;
-
-  const selectedArtifactDownloadUrl = selectedArtifact
-    ? getArtifactContentUrl(selectedArtifact.id, { download: true })
-    : null;
-
   const selectedArtifactContentType = selectedArtifact?.content_type ?? selectedArtifact?.type ?? "";
   const selectedArtifactKind = selectedArtifact ? getArtifactKind(selectedArtifact) : null;
+  const isImagePreviewForQuery = selectedArtifactContentType.startsWith("image/");
+  const isPdfPreviewForQuery =
+    selectedArtifactContentType === "application/pdf" ||
+    selectedArtifact?.type === "file/pdf";
+  const needsBlobUrl = selectedArtifact && (isImagePreviewForQuery || isPdfPreviewForQuery);
+
+  // Fetch blob URL for image/PDF preview (sends Authorization header)
+  const { data: selectedArtifactBlobUrl } = useQuery({
+    queryKey: ["artifact", "blob", selectedArtifact?.id],
+    queryFn: async () => fetchArtifactBlobUrl(selectedArtifact!.id),
+    enabled: Boolean(needsBlobUrl),
+    staleTime: Infinity,
+  });
+
+  // Revoke blob URL on unmount / artifact change
+  const prevBlobUrl = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevBlobUrl.current && prevBlobUrl.current !== selectedArtifactBlobUrl) {
+      URL.revokeObjectURL(prevBlobUrl.current);
+    }
+    prevBlobUrl.current = selectedArtifactBlobUrl ?? null;
+    return () => {
+      if (prevBlobUrl.current) {
+        URL.revokeObjectURL(prevBlobUrl.current);
+        prevBlobUrl.current = null;
+      }
+    };
+  }, [selectedArtifactBlobUrl]);
   const selectedArtifactStatusMeta = selectedArtifact
     ? artifactStatusMeta[selectedArtifact.status] ?? fallbackArtifactStatusMeta
     : null;
@@ -281,7 +302,7 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
   } = useQuery({
     queryKey: ["artifact", "content-preview", selectedArtifact?.id],
     queryFn: async () => {
-      if (!selectedArtifactContentUrl) return "";
+      if (!selectedArtifact) return "";
       const controller = new AbortController();
       const timeoutId = globalThis.setTimeout(
         () => controller.abort(),
@@ -289,29 +310,23 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
       );
 
       try {
-        const response = await fetch(selectedArtifactContentUrl, {
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new Error(`Failed to load artifact content (${response.status})`);
+        const { text, contentLength } = await fetchArtifactText(
+          selectedArtifact.id,
+          { signal: controller.signal }
+        );
+
+        if (
+          contentLength != null &&
+          Number.isFinite(contentLength) &&
+          contentLength > MAX_TEXT_PREVIEW_BYTES
+        ) {
+          throw new Error(
+            `Artifact is too large for inline preview (>${formatBytes(
+              MAX_TEXT_PREVIEW_BYTES
+            )})`
+          );
         }
 
-        const contentLengthHeader = response.headers.get("content-length");
-        if (contentLengthHeader) {
-          const contentLength = Number(contentLengthHeader);
-          if (
-            Number.isFinite(contentLength) &&
-            contentLength > MAX_TEXT_PREVIEW_BYTES
-          ) {
-            throw new Error(
-              `Artifact is too large for inline preview (>${formatBytes(
-                MAX_TEXT_PREVIEW_BYTES
-              )})`
-            );
-          }
-        }
-
-        const text = await response.text();
         if (text.length > MAX_TEXT_PREVIEW_CHARS) {
           return `${text.slice(
             0,
@@ -326,7 +341,6 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
     },
     enabled: Boolean(
       selectedArtifact &&
-      selectedArtifactContentUrl &&
       isTextPreview &&
       !isTextPreviewTooLarge
     ),
@@ -392,16 +406,22 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
     onMessage: handleArtifactStreamMessage,
   });
 
-  const handleDownload = useCallback(() => {
-    if (!selectedArtifactDownloadUrl || !selectedArtifact) return;
-    const link = document.createElement("a");
-    link.href = selectedArtifactDownloadUrl;
-    link.rel = "noreferrer";
-    link.download = selectedArtifact.name || `artifact-${selectedArtifact.id}`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  }, [selectedArtifact, selectedArtifactDownloadUrl]);
+  const handleDownload = useCallback(async () => {
+    if (!selectedArtifact) return;
+    try {
+      const blobUrl = await fetchArtifactBlobUrl(selectedArtifact.id, { download: true });
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.rel = "noreferrer";
+      link.download = selectedArtifact.name || `artifact-${selectedArtifact.id}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // Download failed — silently ignore
+    }
+  }, [selectedArtifact]);
 
   if (isPending) {
     return (
@@ -574,9 +594,9 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem asChild disabled={!selectedArtifactContentUrl}>
+                    <DropdownMenuItem asChild disabled={!selectedArtifactBlobUrl}>
                       <a
-                        href={selectedArtifactContentUrl ?? "#"}
+                        href={selectedArtifactBlobUrl ?? "#"}
                         target="_blank"
                         rel="noreferrer"
                         className="cursor-pointer"
@@ -590,7 +610,7 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
                         event.preventDefault();
                         handleDownload();
                       }}
-                      disabled={!selectedArtifactDownloadUrl}
+                      disabled={!selectedArtifact}
                     >
                       <Download className="h-3.5 w-3.5" />
                       Download
@@ -599,7 +619,7 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
                 </DropdownMenu>
               </div>
             </div>
-            {isImagePreview && selectedArtifactContentUrl ? (
+            {isImagePreview && selectedArtifactBlobUrl ? (
               <div
                 className={cn(
                   PREVIEW_HEIGHT_CLASS,
@@ -607,7 +627,7 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
                 )}
               >
                 <img
-                  src={selectedArtifactContentUrl}
+                  src={selectedArtifactBlobUrl}
                   alt={selectedArtifact?.name ?? "Artifact preview"}
                   className={cn(
                     "select-none",
@@ -617,11 +637,11 @@ export function JobArtifactsTab({ jobs, selectedJobId }: JobArtifactsTabProps) {
                   )}
                 />
               </div>
-            ) : isPdfPreview && selectedArtifactContentUrl ? (
+            ) : isPdfPreview && selectedArtifactBlobUrl ? (
               <div className={cn(PREVIEW_HEIGHT_CLASS, "rounded border border-input bg-background overflow-hidden")}>
                 <iframe
                   title={selectedArtifact?.name ?? "Artifact preview"}
-                  src={selectedArtifactContentUrl}
+                  src={selectedArtifactBlobUrl}
                   className="h-full w-full"
                 />
               </div>

@@ -22,9 +22,6 @@ async def require_api_key(
     returns None so routes work without authentication.
 
     When enabled, expects an ``Authorization: Bearer <key>`` header.
-    Also accepts ``?token=<key>`` as a fallback for SSE EventSource and
-    browser-initiated requests (e.g. ``<img>`` tags) that cannot set
-    custom headers.
 
     The database is only accessed when auth is enabled, avoiding crashes
     in environments where the DB hasn't been initialised yet.
@@ -33,13 +30,11 @@ async def require_api_key(
     if not settings.auth_enabled:
         return None
 
-    # Extract key from Authorization header or ?token= query param
+    # Extract key from Authorization header
     raw_key: str | None = None
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         raw_key = auth_header.removeprefix("Bearer ").strip()
-    if not raw_key:
-        raw_key = request.query_params.get("token")
 
     if not raw_key:
         raise HTTPException(

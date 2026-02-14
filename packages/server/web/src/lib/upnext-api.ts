@@ -214,7 +214,7 @@ export async function retryJob(jobId: string): Promise<JobRetryResponse> {
   return handleResponse<JobRetryResponse>(response);
 }
 
-export function getArtifactContentUrl(
+function getArtifactContentUrl(
   artifactId: string | number,
   options: { download?: boolean } = {}
 ): string {
@@ -222,12 +222,46 @@ export function getArtifactContentUrl(
   if (options.download) {
     searchParams.set("download", "1");
   }
-  const apiKey = getStoredApiKey();
-  if (apiKey) {
-    searchParams.set("token", apiKey);
-  }
   const query = searchParams.toString();
   return `${API_BASE}/artifacts/${artifactId}/content${query ? `?${query}` : ""}`;
+}
+
+/**
+ * Fetch artifact content as a blob via apiFetch (sends Authorization header).
+ * Returns an object URL suitable for <img src>, <iframe src>, <a href>, etc.
+ * Callers must revoke the URL when done via URL.revokeObjectURL().
+ */
+export async function fetchArtifactBlobUrl(
+  artifactId: string | number,
+  options: { download?: boolean } = {}
+): Promise<string> {
+  const url = getArtifactContentUrl(artifactId, options);
+  const response = await apiFetch(url);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new ApiError(response.status, response.statusText, text);
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * Fetch artifact content as text via apiFetch (sends Authorization header).
+ */
+export async function fetchArtifactText(
+  artifactId: string | number,
+  options: { signal?: AbortSignal } = {}
+): Promise<{ text: string; contentLength: number | null }> {
+  const url = getArtifactContentUrl(artifactId);
+  const response = await apiFetch(url, { signal: options.signal });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new ApiError(response.status, response.statusText, text);
+  }
+  const contentLengthHeader = response.headers.get("content-length");
+  const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
+  const text = await response.text();
+  return { text, contentLength };
 }
 
 // =============================================================================
