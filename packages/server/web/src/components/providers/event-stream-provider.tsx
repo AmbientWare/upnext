@@ -11,6 +11,7 @@ import {
   type GetApiRequestEventsParams,
   type GetJobsParams,
 } from "@/lib/upnext-api";
+import { withAuthToken } from "@/lib/auth";
 import { env } from "@/lib/env";
 import {
   useEventSource,
@@ -822,7 +823,7 @@ export function EventStreamProvider({
     syncFallbackResync();
   }, [activeStreams, syncFallbackResync]);
 
-  useEventSource(EVENT_STREAM_URL, {
+  useEventSource(withAuthToken(EVENT_STREAM_URL), {
     enabled: activeStreams.jobs,
     pauseWhenHidden,
     idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
@@ -831,7 +832,7 @@ export function EventStreamProvider({
     onMessage: handleMessage,
     onReconnect: triggerReconnectResync,
   });
-  useEventSource(APIS_STREAM_URL, {
+  useEventSource(withAuthToken(APIS_STREAM_URL), {
     enabled: activeStreams.apis,
     pauseWhenHidden,
     idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
@@ -840,7 +841,7 @@ export function EventStreamProvider({
     onMessage: handleApiMessage,
     onReconnect: triggerReconnectResync,
   });
-  useEventSource(API_REQUEST_EVENTS_STREAM_URL, {
+  useEventSource(withAuthToken(API_REQUEST_EVENTS_STREAM_URL), {
     enabled: activeStreams.apiEvents,
     pauseWhenHidden,
     idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
@@ -849,7 +850,7 @@ export function EventStreamProvider({
     onMessage: handleApiMessage,
     onReconnect: triggerReconnectResync,
   });
-  useEventSource(WORKERS_STREAM_URL, {
+  useEventSource(withAuthToken(WORKERS_STREAM_URL), {
     enabled: activeStreams.workers,
     pauseWhenHidden,
     idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,

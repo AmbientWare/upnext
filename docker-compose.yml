@@ -64,6 +64,8 @@ services:
       UPNEXT_REDIS_URL: redis://redis:6379
       UPNEXT_ARTIFACT_STORAGE_BACKEND: local
       UPNEXT_ARTIFACT_STORAGE_LOCAL_ROOT: /var/lib/upnext/artifacts
+      UPNEXT_AUTH_ENABLED: "true"
+      UPNEXT_API_KEY: "changeme"
       HOST: 0.0.0.0
       PORT: "8080"
     volumes:
@@ -99,6 +101,7 @@ services:
       PYTHONUNBUFFERED: "1"
       UPNEXT_REDIS_URL: redis://redis:6379
       UPNEXT_URL: http://server:8080
+      UPNEXT_API_KEY: "changeme"
     volumes:
       - ./examples:/app/examples
       - ./packages/upnext/src:/app/packages/upnext/src

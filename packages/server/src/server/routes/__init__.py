@@ -1,7 +1,9 @@
 """API routes."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from server.auth import require_api_key
+from server.routes.auth import router as auth_router
 from server.routes.apis import router as apis_router
 from server.routes.artifacts import router as artifacts_router
 from server.routes.dashboard import router as dashboard_router
@@ -13,7 +15,12 @@ from server.routes.jobs import router as jobs_router
 from server.routes.metrics import router as metrics_router
 from server.routes.workers import router as workers_router
 
-v1_router = APIRouter(prefix="/api/v1")
+# Public routes (no auth required)
+v1_public_router = APIRouter(prefix="/api/v1")
+v1_public_router.include_router(auth_router)
+
+# Protected routes (auth required when enabled)
+v1_router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
 
 # Include routers
 v1_router.include_router(events_stream_router)
@@ -27,6 +34,7 @@ v1_router.include_router(metrics_router)
 v1_router.include_router(apis_router)
 
 __all__ = [
+    "v1_public_router",
     "v1_router",
     "health_router",
 ]

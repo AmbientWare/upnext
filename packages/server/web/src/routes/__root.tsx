@@ -1,55 +1,65 @@
 import { createRootRoute, Outlet, useRouterState } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   EventStreamProvider,
   type EventStreamSubscriptions,
 } from "@/components/providers/event-stream-provider";
+import { useAuth } from "@/components/providers/auth-provider";
+import { LoginPage } from "@/components/login-page";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/components/layout";
 import { ErrorBoundary } from "@/components/shared";
+import { CircleUserIcon, LogOutIcon } from "lucide-react";
 
 export const Route = createRootRoute({
   component: RootLayout,
 });
 
+/** Check whether the server has auth enabled (unauthenticated endpoint). */
+async function fetchAuthStatus(): Promise<{ auth_enabled: boolean }> {
+  const res = await fetch("/api/v1/auth/status");
+  if (!res.ok) {
+    // If endpoint doesn't exist yet or server is down, assume auth enabled
+    return { auth_enabled: true };
+  }
+  return res.json();
+}
+
 function RootLayout() {
   const router = useRouterState();
   const path = router.location.pathname;
+  const { isAuthenticated, logout } = useAuth();
 
-  const streamSubscriptions = useMemo<EventStreamSubscriptions>(() => {
-    if (path.startsWith("/dashboard")) {
-      // Dashboard no longer hosts full live activity tables.
-      // Keep only worker snapshots live for utilization cards.
-      return { jobs: false, apis: false, apiEvents: false, workers: true };
-    }
-    if (path.startsWith("/activity")) {
-      return { jobs: true, apis: false, apiEvents: true, workers: false };
-    }
-    if (path.startsWith("/workers")) {
-      return { jobs: false, apis: false, apiEvents: false, workers: true };
-    }
-    if (path.startsWith("/apis")) {
-      return { jobs: false, apis: true, apiEvents: true, workers: false };
-    }
-    if (path.startsWith("/functions")) {
-      return { jobs: true, apis: false, apiEvents: false, workers: false };
-    }
-    if (path.startsWith("/jobs")) {
-      return { jobs: true, apis: false, apiEvents: false, workers: false };
-    }
-    return { jobs: false, apis: false, apiEvents: false, workers: false };
-  }, [path]);
+  const { data: authStatus, isLoading: authLoading } = useQuery({
+    queryKey: ["auth", "status"],
+    queryFn: fetchAuthStatus,
+    staleTime: 60_000,
+    retry: 1,
+  });
 
-  // Get page title from current path
-  const getPageTitle = () => {
-    if (path.startsWith("/dashboard")) return "Dashboard";
-    if (path.startsWith("/activity")) return "Activity";
-    if (path.startsWith("/workers")) return "Workers";
-    if (path.startsWith("/apis")) return "APIs";
-    if (path.startsWith("/functions")) return "Functions";
-    if (path.startsWith("/jobs")) return "Jobs";
-    return "Dashboard";
-  };
+  const authEnabled = authStatus?.auth_enabled ?? true;
+
+  // Show login page if auth is enabled and user is not authenticated
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (authEnabled && !isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  const streamSubscriptions = getStreamSubscriptions(path);
 
   return (
     <TooltipProvider>
@@ -59,7 +69,22 @@ function RootLayout() {
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Top Header */}
           <header className="h-14 border-b border-border flex items-center px-6 shrink-0">
-            <h1 className="text-lg font-semibold text-foreground">{getPageTitle()}</h1>
+            <h1 className="text-lg font-semibold text-foreground">{getPageTitle(path)}</h1>
+            <div className="ml-auto">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="rounded-full">
+                    <CircleUserIcon className="h-5 w-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={logout}>
+                    <LogOutIcon className="mr-2 h-4 w-4" />
+                    Logout
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </header>
 
           {/* Main Content */}
@@ -76,4 +101,36 @@ function RootLayout() {
       </div>
     </TooltipProvider>
   );
+}
+
+function getStreamSubscriptions(path: string): EventStreamSubscriptions {
+  if (path.startsWith("/dashboard")) {
+    return { jobs: false, apis: false, apiEvents: false, workers: true };
+  }
+  if (path.startsWith("/activity")) {
+    return { jobs: true, apis: false, apiEvents: true, workers: false };
+  }
+  if (path.startsWith("/workers")) {
+    return { jobs: false, apis: false, apiEvents: false, workers: true };
+  }
+  if (path.startsWith("/apis")) {
+    return { jobs: false, apis: true, apiEvents: true, workers: false };
+  }
+  if (path.startsWith("/functions")) {
+    return { jobs: true, apis: false, apiEvents: false, workers: false };
+  }
+  if (path.startsWith("/jobs")) {
+    return { jobs: true, apis: false, apiEvents: false, workers: false };
+  }
+  return { jobs: false, apis: false, apiEvents: false, workers: false };
+}
+
+function getPageTitle(path: string): string {
+  if (path.startsWith("/dashboard")) return "Dashboard";
+  if (path.startsWith("/activity")) return "Activity";
+  if (path.startsWith("/workers")) return "Workers";
+  if (path.startsWith("/apis")) return "APIs";
+  if (path.startsWith("/functions")) return "Functions";
+  if (path.startsWith("/jobs")) return "Jobs";
+  return "Dashboard";
 }

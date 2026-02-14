@@ -20,6 +20,58 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Create all tables."""
+    # Auth tables
+    op.create_table(
+        "users",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column("username", sa.String(255), unique=True, nullable=False),
+        sa.Column("is_admin", sa.Boolean, nullable=False, server_default=sa.false()),
+    )
+
+    op.create_table(
+        "api_keys",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "user_id",
+            sa.String(36),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("key_hash", sa.String(64), unique=True, nullable=False),
+        sa.Column("key_prefix", sa.String(12), nullable=False),
+        sa.Column("name", sa.String(255), nullable=False, server_default="default"),
+        sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.true()),
+        sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
+        # Indexes
+        sa.Index("ix_api_keys_user_id", "user_id"),
+        sa.Index("ix_api_keys_key_hash", "key_hash"),
+    )
+
+    # Job tables
     op.create_table(
         "job_history",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -166,3 +218,5 @@ def downgrade() -> None:
     op.drop_table("pending_artifacts")
     op.drop_table("artifacts")
     op.drop_table("job_history")
+    op.drop_table("api_keys")
+    op.drop_table("users")

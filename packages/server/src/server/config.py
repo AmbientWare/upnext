@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = False
     readiness_require_redis: bool = False
 
+    # Authentication
+    auth_enabled: bool = False
+    api_key: str | None = None
+
     # Artifact storage
     artifact_max_upload_bytes: int = 256 * 1024 * 1024  # 256 MB
     artifact_storage_backend: Literal["local", "s3"] = "local"

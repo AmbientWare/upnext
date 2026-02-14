@@ -17,6 +17,7 @@ import type {
   JobTrendsResponse,
   WorkersListResponse,
 } from "./types";
+import { getStoredApiKey } from "./auth";
 import { env } from "./env";
 
 const API_BASE = env.VITE_API_BASE_URL;
@@ -54,8 +55,14 @@ async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
     controller.abort();
   }, API_REQUEST_TIMEOUT_MS);
 
+  const headers = new Headers(init?.headers);
+  const apiKey = getStoredApiKey();
+  if (apiKey) {
+    headers.set("Authorization", `Bearer ${apiKey}`);
+  }
+
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, { ...init, headers, signal: controller.signal });
   } catch (error) {
     if (isAbortError(error)) {
       throw new ApiError(
@@ -205,6 +212,10 @@ export function getArtifactContentUrl(
   const searchParams = new URLSearchParams();
   if (options.download) {
     searchParams.set("download", "1");
+  }
+  const apiKey = getStoredApiKey();
+  if (apiKey) {
+    searchParams.set("token", apiKey);
   }
   const query = searchParams.toString();
   return `${API_BASE}/artifacts/${artifactId}/content${query ? `?${query}` : ""}`;

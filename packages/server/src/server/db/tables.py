@@ -44,6 +44,52 @@ class Base(DeclarativeBase):
     )
 
 
+class User(Base):
+    """System users for authentication."""
+
+    __tablename__ = "users"
+
+    username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Relationships
+    api_keys: Mapped[list["ApiKey"]] = relationship(
+        "ApiKey", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<User(id={self.id!r}, username={self.username!r})>"
+
+
+class ApiKey(Base):
+    """API keys for authenticating requests."""
+
+    __tablename__ = "api_keys"
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(12), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="api_keys")
+
+    # Indexes
+    __table_args__ = (
+        Index("ix_api_keys_user_id", "user_id"),
+        Index("ix_api_keys_key_hash", "key_hash"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ApiKey(id={self.id!r}, prefix={self.key_prefix!r}, user_id={self.user_id!r})>"
+
+
 class JobHistory(Base):
     """
     Job history stored in database.

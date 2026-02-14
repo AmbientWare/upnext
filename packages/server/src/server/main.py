@@ -11,10 +11,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from server.config import get_settings
+from server.db.repositories import AuthRepository
 from server.db.session import get_database, init_database
 from server.logging import configure_logging
 from server.middleware import CorrelationIDMiddleware
-from server.routes import health_router, v1_router
+from server.routes import health_router, v1_public_router, v1_router
 from server.services.events import (
     StreamSubscriber,
     StreamSubscriberConfig,
@@ -63,7 +64,7 @@ async def lifespan(_app: FastAPI):
         await db.create_tables()
     else:
         logger.info("Database connected (PostgreSQL)")
-        required_tables = {"job_history", "artifacts", "pending_artifacts"}
+        required_tables = {"job_history", "artifacts", "pending_artifacts", "users", "api_keys"}
         missing_tables = await db.get_missing_tables(required_tables)
         if missing_tables:
             raise RuntimeError(
@@ -71,6 +72,20 @@ async def lifespan(_app: FastAPI):
                 + ", ".join(missing_tables)
                 + ". Run Alembic migrations (e.g. `alembic upgrade head`) before starting."
             )
+
+    # Seed admin user + API key when auth is enabled
+    if settings.auth_enabled:
+        logger.info("Authentication enabled")
+        if settings.api_key:
+            async with db.session() as session:
+                await AuthRepository(session).seed_admin_api_key(settings.api_key)
+        else:
+            logger.warning(
+                "UPNEXT_AUTH_ENABLED=true but no UPNEXT_API_KEY set. "
+                "No seed key created — all /api/v1 requests will require a valid key."
+            )
+    else:
+        logger.info("Authentication disabled (set UPNEXT_AUTH_ENABLED=true to enable)")
 
     # Connect to Redis and start stream subscribers
     subscriber = None
@@ -166,6 +181,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health_router)
+app.include_router(v1_public_router)
 app.include_router(v1_router)
 
 # Static files directory (built frontend)
