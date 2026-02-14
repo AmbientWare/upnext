@@ -33,6 +33,8 @@ class _SettingsStub:
     cleanup_pending_promote_max_loops: int = 20
     cleanup_startup_jitter_seconds: float = 30.0
     alert_poll_interval_seconds: float = 60.0
+    auth_enabled: bool = False
+    api_key: str | None = None
 
 
 class _FakeDatabase:
@@ -54,7 +56,7 @@ class _FakeDatabase:
 
     async def get_missing_tables(self, required_tables: set[str]) -> list[str]:
         self.checked_tables += 1
-        assert required_tables == {"job_history", "artifacts", "pending_artifacts"}
+        assert required_tables == {"job_history", "artifacts", "pending_artifacts", "users", "api_keys"}
         return list(self.missing_tables)
 
 

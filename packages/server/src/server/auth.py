@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, Request
 
 from server.config import get_settings
 from server.db.repositories import AuthRepository, hash_api_key
-from server.db.session import Database, get_database
+from server.db.session import get_database
 from server.db.tables import User
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 async def require_api_key(
     request: Request,
-    db: Database = Depends(lambda: get_database()),
 ) -> User | None:
     """FastAPI dependency that enforces API key auth when enabled.
 
@@ -23,23 +22,34 @@ async def require_api_key(
     returns None so routes work without authentication.
 
     When enabled, expects an ``Authorization: Bearer <key>`` header.
-    Returns the associated ``User`` on success, raises 401/403 otherwise.
+    Also accepts ``?token=<key>`` as a fallback for SSE EventSource and
+    browser-initiated requests (e.g. ``<img>`` tags) that cannot set
+    custom headers.
+
+    The database is only accessed when auth is enabled, avoiding crashes
+    in environments where the DB hasn't been initialised yet.
     """
     settings = get_settings()
     if not settings.auth_enabled:
         return None
 
-    # Accept key from Authorization header or ?token= query param (for SSE/EventSource)
+    # Extract key from Authorization header or ?token= query param
     raw_key: str | None = None
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         raw_key = auth_header.removeprefix("Bearer ").strip()
     if not raw_key:
         raw_key = request.query_params.get("token")
+
     if not raw_key:
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid Authorization header"
+        )
 
     key_hash = hash_api_key(raw_key)
+
+    # Lazy DB access
+    db = get_database()
 
     async with db.session() as session:
         repo = AuthRepository(session)
@@ -57,5 +67,26 @@ async def require_api_key(
         user = await repo.get_user_by_id(api_key.user_id)
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
+
+    return user
+
+
+async def require_admin(
+    user: User | None = Depends(require_api_key),
+) -> User | None:
+    """FastAPI dependency that enforces admin access.
+
+    Chains through ``require_api_key`` internally so routers only need
+    ``dependencies=[Depends(require_admin)]``.
+    """
+    settings = get_settings()
+    if not settings.auth_enabled:
+        return None
+
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     return user

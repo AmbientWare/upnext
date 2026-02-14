@@ -2,7 +2,8 @@
 
 from fastapi import APIRouter, Depends
 
-from server.auth import require_api_key
+from server.auth import require_admin, require_api_key
+from server.routes.admin import router as admin_router
 from server.routes.auth import router as auth_router
 from server.routes.apis import router as apis_router
 from server.routes.artifacts import router as artifacts_router
@@ -33,8 +34,13 @@ v1_router.include_router(dashboard_router)
 v1_router.include_router(metrics_router)
 v1_router.include_router(apis_router)
 
+# Admin routes (admin check chains through require_api_key internally)
+v1_admin_router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_admin)])
+v1_admin_router.include_router(admin_router)
+
 __all__ = [
     "v1_public_router",
     "v1_router",
+    "v1_admin_router",
     "health_router",
 ]

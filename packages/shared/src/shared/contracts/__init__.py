@@ -1,6 +1,18 @@
 """Typed transport contracts shared between runtime and API."""
 
 from shared.artifacts import ArtifactType
+from shared.contracts.admin import (
+    AdminApiKeyCreatedResponse,
+    AdminApiKeyResponse,
+    AdminApiKeysListResponse,
+    AdminUserCreatedResponse,
+    AdminUserResponse,
+    AdminUsersListResponse,
+    CreateApiKeyRequest,
+    CreateUserRequest,
+    ToggleApiKeyRequest,
+    UpdateUserRequest,
+)
 from shared.contracts.apis import (
     ApiDetailResponse,
     ApiEndpoint,
@@ -109,6 +121,16 @@ from shared.contracts.workers import (
 )
 
 __all__ = [
+    "AdminApiKeyCreatedResponse",
+    "AdminApiKeyResponse",
+    "AdminApiKeysListResponse",
+    "AdminUserCreatedResponse",
+    "AdminUserResponse",
+    "AdminUsersListResponse",
+    "CreateApiKeyRequest",
+    "CreateUserRequest",
+    "ToggleApiKeyRequest",
+    "UpdateUserRequest",
     "HttpMethod",
     "ApiInstance",
     "ApiEndpoint",

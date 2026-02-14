@@ -14,6 +14,7 @@ import { Route as WorkersIndexRouteImport } from "./routes/workers/index"
 import { Route as FunctionsIndexRouteImport } from "./routes/functions/index"
 import { Route as DashboardIndexRouteImport } from "./routes/dashboard/index"
 import { Route as ApisIndexRouteImport } from "./routes/apis/index"
+import { Route as AdminIndexRouteImport } from "./routes/admin/index"
 import { Route as ActivityIndexRouteImport } from "./routes/activity/index"
 import { Route as WorkersNameIndexRouteImport } from "./routes/workers/$name/index"
 import { Route as JobsJobIdIndexRouteImport } from "./routes/jobs/$jobId/index"
@@ -45,6 +46,11 @@ const ApisIndexRoute = ApisIndexRouteImport.update({
   path: "/apis/",
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: "/admin/",
+  path: "/admin/",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ActivityIndexRoute = ActivityIndexRouteImport.update({
   id: "/activity/",
   path: "/activity/",
@@ -74,6 +80,7 @@ const ApisNameIndexRoute = ApisNameIndexRouteImport.update({
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute
   "/activity/": typeof ActivityIndexRoute
+  "/admin/": typeof AdminIndexRoute
   "/apis/": typeof ApisIndexRoute
   "/dashboard/": typeof DashboardIndexRoute
   "/functions/": typeof FunctionsIndexRoute
@@ -86,6 +93,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   "/": typeof IndexRoute
   "/activity": typeof ActivityIndexRoute
+  "/admin": typeof AdminIndexRoute
   "/apis": typeof ApisIndexRoute
   "/dashboard": typeof DashboardIndexRoute
   "/functions": typeof FunctionsIndexRoute
@@ -99,6 +107,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   "/": typeof IndexRoute
   "/activity/": typeof ActivityIndexRoute
+  "/admin/": typeof AdminIndexRoute
   "/apis/": typeof ApisIndexRoute
   "/dashboard/": typeof DashboardIndexRoute
   "/functions/": typeof FunctionsIndexRoute
@@ -113,6 +122,7 @@ export interface FileRouteTypes {
   fullPaths:
     | "/"
     | "/activity/"
+    | "/admin/"
     | "/apis/"
     | "/dashboard/"
     | "/functions/"
@@ -125,6 +135,7 @@ export interface FileRouteTypes {
   to:
     | "/"
     | "/activity"
+    | "/admin"
     | "/apis"
     | "/dashboard"
     | "/functions"
@@ -137,6 +148,7 @@ export interface FileRouteTypes {
     | "__root__"
     | "/"
     | "/activity/"
+    | "/admin/"
     | "/apis/"
     | "/dashboard/"
     | "/functions/"
@@ -150,6 +162,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ActivityIndexRoute: typeof ActivityIndexRoute
+  AdminIndexRoute: typeof AdminIndexRoute
   ApisIndexRoute: typeof ApisIndexRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   FunctionsIndexRoute: typeof FunctionsIndexRoute
@@ -197,6 +210,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ApisIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/admin/": {
+      id: "/admin/"
+      path: "/admin"
+      fullPath: "/admin/"
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/activity/": {
       id: "/activity/"
       path: "/activity"
@@ -238,6 +258,7 @@ declare module "@tanstack/react-router" {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ActivityIndexRoute: ActivityIndexRoute,
+  AdminIndexRoute: AdminIndexRoute,
   ApisIndexRoute: ApisIndexRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   FunctionsIndexRoute: FunctionsIndexRoute,

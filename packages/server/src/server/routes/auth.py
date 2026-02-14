@@ -16,10 +16,19 @@ async def auth_status():
     return {"auth_enabled": settings.auth_enabled}
 
 
-@router.post("/verify", dependencies=[Depends(require_api_key)])
-async def auth_verify():
+@router.post("/verify")
+async def auth_verify(user: User | None = Depends(require_api_key)):
     """Verify that the provided API key is valid.
 
-    Returns 200 if valid, 401/403 if not (handled by the dependency).
+    Returns 200 with user info if valid, 401/403 if not (handled by the dependency).
     """
-    return {"ok": True}
+    return {
+        "ok": True,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "is_admin": user.is_admin,
+        }
+        if user
+        else None,
+    }

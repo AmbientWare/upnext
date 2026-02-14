@@ -4,11 +4,18 @@
  */
 
 import type {
+  AdminApiKey,
+  AdminApiKeyCreated,
+  AdminApiKeysListResponse,
+  AdminUser,
+  AdminUserCreated,
+  AdminUsersListResponse,
   ArtifactListResponse,
   ApisListResponse,
   ApiPageResponse,
   ApiRequestEventsResponse,
   ApiTrendsResponse,
+  AuthVerifyResponse,
   DashboardStats,
   FunctionDetailResponse,
   Job,
@@ -336,6 +343,126 @@ export async function getApiRequestEvents(
 }
 
 // =============================================================================
+// Auth
+// =============================================================================
+
+export async function verifyAuth(): Promise<AuthVerifyResponse> {
+  const response = await apiFetch(`${API_BASE}/auth/verify`, { method: "POST" });
+  return handleResponse<AuthVerifyResponse>(response);
+}
+
+// =============================================================================
+// Admin
+// =============================================================================
+
+export async function getAdminUsers(): Promise<AdminUsersListResponse> {
+  const response = await apiFetch(`${API_BASE}/admin/users`);
+  return handleResponse<AdminUsersListResponse>(response);
+}
+
+export async function createAdminUser(data: {
+  username: string;
+  is_admin: boolean;
+}): Promise<AdminUserCreated> {
+  const response = await apiFetch(`${API_BASE}/admin/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<AdminUserCreated>(response);
+}
+
+export async function deleteAdminUser(userId: string): Promise<void> {
+  const response = await apiFetch(
+    `${API_BASE}/admin/users/${encodeURIComponent(userId)}`,
+    { method: "DELETE" }
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new ApiError(response.status, response.statusText, text);
+  }
+}
+
+export async function updateAdminUser(
+  userId: string,
+  data: { is_admin?: boolean }
+): Promise<AdminUser> {
+  const response = await apiFetch(
+    `${API_BASE}/admin/users/${encodeURIComponent(userId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }
+  );
+  return handleResponse<AdminUser>(response);
+}
+
+export async function getAdminUserApiKeys(
+  userId: string
+): Promise<AdminApiKeysListResponse> {
+  const response = await apiFetch(
+    `${API_BASE}/admin/users/${encodeURIComponent(userId)}/api-keys`
+  );
+  return handleResponse<AdminApiKeysListResponse>(response);
+}
+
+export async function createAdminApiKey(
+  userId: string,
+  data: { name: string }
+): Promise<AdminApiKeyCreated> {
+  const response = await apiFetch(
+    `${API_BASE}/admin/users/${encodeURIComponent(userId)}/api-keys`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }
+  );
+  return handleResponse<AdminApiKeyCreated>(response);
+}
+
+export async function deleteAdminApiKey(
+  userId: string,
+  keyId: string
+): Promise<void> {
+  const response = await apiFetch(
+    `${API_BASE}/admin/users/${encodeURIComponent(userId)}/api-keys/${encodeURIComponent(keyId)}`,
+    { method: "DELETE" }
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new ApiError(response.status, response.statusText, text);
+  }
+}
+
+export async function rotateAdminApiKey(
+  userId: string
+): Promise<AdminApiKeyCreated> {
+  const response = await apiFetch(
+    `${API_BASE}/admin/users/${encodeURIComponent(userId)}/rotate-api-key`,
+    { method: "POST" }
+  );
+  return handleResponse<AdminApiKeyCreated>(response);
+}
+
+export async function toggleAdminApiKey(
+  userId: string,
+  keyId: string,
+  data: { is_active: boolean }
+): Promise<AdminApiKey> {
+  const response = await apiFetch(
+    `${API_BASE}/admin/users/${encodeURIComponent(userId)}/api-keys/${encodeURIComponent(keyId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }
+  );
+  return handleResponse<AdminApiKey>(response);
+}
+
+// =============================================================================
 // Query Keys (for TanStack Query)
 // =============================================================================
 
@@ -360,4 +487,8 @@ export const queryKeys = {
   apiRequestEvents: (params?: GetApiRequestEventsParams) => ["apis", "events", params] as const,
   api: (name: string) => ["apis", "api", name] as const,
   apiTrends: (params?: GetApiTrendsParams) => ["apis", "trends", params] as const,
+
+  adminUsers: ["admin", "users"] as const,
+  adminUserApiKeys: (userId: string) =>
+    ["admin", "users", userId, "api-keys"] as const,
 };

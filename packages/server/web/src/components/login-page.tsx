@@ -2,9 +2,10 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/components/providers/auth-provider";
+import { env } from "@/lib/env";
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, setIsAdmin } = useAuth();
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -19,7 +20,7 @@ export function LoginPage() {
 
     try {
       // Verify the key against the backend
-      const res = await fetch("/api/v1/auth/verify", {
+      const res = await fetch(`${env.VITE_API_BASE_URL}/auth/verify`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${trimmed}`,
@@ -28,7 +29,11 @@ export function LoginPage() {
       });
 
       if (res.ok) {
+        const data = await res.json();
         login(trimmed);
+        if (data.user?.is_admin) {
+          setIsAdmin(true);
+        }
       } else if (res.status === 401 || res.status === 403) {
         setError("Invalid API key");
       } else {

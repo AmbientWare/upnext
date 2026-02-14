@@ -17,16 +17,21 @@ interface AuthContextValue {
   apiKey: string | null;
   /** Whether the user is currently authenticated. */
   isAuthenticated: boolean;
+  /** Whether the current user is an admin. */
+  isAdmin: boolean;
   /** Store API key and mark as authenticated. */
   login: (key: string) => void;
   /** Clear stored API key and mark as unauthenticated. */
   logout: () => void;
+  /** Set admin status (called after verify). */
+  setIsAdmin: (value: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [apiKey, setApiKey] = useState<string | null>(getStoredApiKey);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const login = useCallback((key: string) => {
     setStoredApiKey(key);
@@ -36,16 +41,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     clearStoredApiKey();
     setApiKey(null);
+    setIsAdmin(false);
   }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       apiKey,
       isAuthenticated: apiKey !== null,
+      isAdmin,
       login,
       logout,
+      setIsAdmin,
     }),
-    [apiKey, login, logout]
+    [apiKey, isAdmin, login, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
