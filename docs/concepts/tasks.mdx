@@ -1,0 +1,90 @@
+---
+title: Tasks
+description: One-off background jobs with retries, timeouts, and result handling.
+icon: list-check
+---
+
+```python
+import upnext
+
+worker = upnext.Worker("my-worker")
+
+@worker.task(retries=3, timeout=30.0)
+async def process_order(order_id: str, items: list[str]) -> dict:
+    ctx = upnext.get_current_context()
+    ctx.set_progress(50, "Halfway done")
+    return {"order_id": order_id, "status": "completed"}
+```
+
+A **task** is any Python function — async or sync — decorated with `@worker.task`. Tasks are the most common job type. They run once when submitted and return a result.
+
+## Define a task
+
+Register a task with the `@worker.task` decorator:
+
+```python
+@worker.task
+async def simple_task(name: str) -> str:
+    return f"Hello, {name}!"
+```
+
+Tasks can be async or sync. Sync tasks run in a thread pool (or process pool) automatically.
+
+```python
+@worker.task
+def sync_task(data: list[str]) -> int:
+    # Runs in a thread pool — no need for async
+    return len(data)
+```
+
+## Task options
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `retries` | `int` | `0` | Number of retry attempts on failure |
+| `retry_delay` | `float` | `1.0` | Seconds to wait before first retry |
+| `retry_backoff` | `float` | `2.0` | Multiplier applied to delay after each retry |
+| `timeout` | `float` | `1800` | Maximum execution time in seconds (30 min default) |
+| `name` | `str` | `None` | Custom display name (defaults to function name) |
+| `rate_limit` | `str` | `None` | Rate limit string (e.g. `"10/minute"`) |
+| `max_concurrency` | `int` | `None` | Max concurrent executions of this specific task |
+| `cache_key` | `str` | `None` | Cache key template for result caching |
+| `cache_ttl` | `int` | `None` | Cache TTL in seconds |
+
+## Submit a task
+
+Once a task is registered, you can submit it for background execution:
+
+```python
+# Submit and get a Future (non-blocking)
+future = await process_order.submit(order_id="123", items=["A", "B"])
+print(future.job_id)  # Unique job ID
+
+# Submit and wait for the result (blocking)
+result = await process_order.wait(order_id="123", items=["A", "B"])
+print(result.value)   # {"order_id": "123", "status": "completed"}
+```
+
+<Tip>
+See the [Submit & Wait guide](/guides/submit-and-wait) for details on Futures, TaskResults, and sync/async patterns.
+</Tip>
+
+## Lifecycle hooks
+
+You can attach callbacks to task lifecycle events:
+
+```python
+@worker.task(
+    on_start=lambda: print("Starting"),
+    on_success=lambda: print("Done!"),
+    on_failure=lambda: print("Failed"),
+    on_retry=lambda: print("Retrying..."),
+    on_complete=lambda: print("Complete (success or failure)"),
+)
+async def my_task():
+    ...
+```
+
+<Card title="Next: Workflows" icon="arrow-right" href="/concepts/workflows">
+  Compose tasks into multi-step pipelines with automatic lineage tracking.
+</Card>

@@ -1,0 +1,77 @@
+---
+title: Welcome to UpNext
+description: Background jobs and APIs for Python. Self-hostable, Redis-backed, with a built-in dashboard.
+icon: rocket
+---
+
+UpNext is a framework for running background workers, APIs, cron jobs, and event-driven tasks with a shared Redis-backed runtime. Define your work with simple decorators, monitor everything from a real-time dashboard.
+
+## Two ways to run
+
+UpNext works in two modes. Start with **SDK + Redis** to get the core runtime, then add the **server** when you want monitoring, persistent history, and management tools.
+
+<Tabs>
+  <Tab title="SDK + Redis">
+    Everything you need to run workers and APIs. Just install the package and point at Redis.
+
+    | Feature | |
+    | --- | --- |
+    | Background tasks | Retries, timeouts, progress tracking |
+    | Workflows | Nested tasks with parent-child lineage and failure propagation |
+    | Cron jobs | Recurring schedules with standard cron syntax |
+    | Events | Pub/sub handlers with typed payloads |
+    | HTTP APIs | Endpoints powered by FastAPI |
+    | Parallel execution | `gather`, `map_tasks`, `first_completed` |
+    | Error handling | Automatic retries, backoff, dead-letter queue |
+
+    ```bash
+    pip install upnext
+    UPNEXT_REDIS_URL=redis://localhost:6379 upnext run service.py
+    ```
+  </Tab>
+  <Tab title="SDK + Redis + Server">
+    Everything above, plus a dashboard and management layer. The server adds features that require persistent storage.
+
+    | Feature | |
+    | --- | --- |
+    | Dashboard | Real-time web UI for jobs, workers, APIs, and metrics |
+    | Job history | Persistent, queryable history of all executions |
+    | Artifacts | Attach outputs (JSON, images, PDFs) to jobs and browse them |
+    | Secrets | Encrypted key-value store injected as environment variables |
+    | Authentication | API key auth with user and key management |
+    | Admin tools | Create users, rotate keys, manage access |
+
+    ```bash
+    pip install upnext
+    upnext server start --port 8080     # Start the server
+    UPNEXT_REDIS_URL=redis://localhost:6379 \
+    UPNEXT_URL=http://localhost:8080 \   # Connect to the server
+    upnext run service.py
+    ```
+  </Tab>
+</Tabs>
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/get-started/installation">
+    Install UpNext and its prerequisites.
+  </Card>
+  <Card title="Quickstart" icon="bolt" href="/get-started/quickstart">
+    Build and run your first worker + API in 5 minutes.
+  </Card>
+</CardGroup>
+
+## Learn more
+
+<CardGroup cols={3}>
+  <Card title="Concepts" icon="book" href="/concepts">
+    Understand how workers, tasks, events, and APIs work.
+  </Card>
+  <Card title="Guides" icon="map" href="/guides">
+    Practical how-to guides for common workflows.
+  </Card>
+  <Card title="Dashboard" icon="chart-line" href="/dashboard">
+    Set up and use the real-time monitoring dashboard.
+  </Card>
+</CardGroup>

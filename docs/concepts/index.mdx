@@ -1,0 +1,49 @@
+---
+title: Concepts
+description: Understand the core building blocks of UpNext.
+icon: book
+---
+
+UpNext has two main service types: **Workers** and **APIs**. Workers process jobs from a Redis-backed queue. APIs serve HTTP endpoints powered by FastAPI. You can run them independently or together.
+
+Workers execute three kinds of jobs:
+
+- **Tasks** — one-off background jobs, submitted programmatically or via the CLI
+- **Events** — pub/sub handlers that trigger when an event is published
+- **Crons** — recurring jobs on a schedule
+
+**Core** features work with just the SDK and Redis. **Server** features require the UpNext server — see [Two ways to run](/get-started#two-ways-to-run).
+
+## Core
+
+<CardGroup cols={2}>
+  <Card title="Workers" icon="gears" href="/concepts/workers">
+    The core service that processes jobs from a Redis queue.
+  </Card>
+  <Card title="Tasks" icon="list-check" href="/concepts/tasks">
+    One-off background jobs with retries, timeouts, and result handling.
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/concepts/workflows">
+    Compose tasks into multi-step pipelines with automatic lineage tracking.
+  </Card>
+  <Card title="Events" icon="bell" href="/concepts/events">
+    Pub/sub handlers that trigger when an event is published.
+  </Card>
+  <Card title="Cron Jobs" icon="clock" href="/concepts/cron-jobs">
+    Recurring jobs on a schedule with standard cron syntax.
+  </Card>
+  <Card title="APIs" icon="globe" href="/concepts/apis">
+    HTTP endpoints powered by FastAPI.
+  </Card>
+  <Card title="Context" icon="circle-info" href="/concepts/context">
+    Progress updates, checkpoints, and structured logs.
+  </Card>
+</CardGroup>
+
+## Server
+
+<CardGroup cols={2}>
+  <Card title="Artifacts" icon="box-archive" href="/concepts/artifacts">
+    Attach outputs like JSON, images, and files to jobs.
+  </Card>
+</CardGroup>

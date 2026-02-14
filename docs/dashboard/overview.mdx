@@ -1,0 +1,79 @@
+---
+title: Dashboard Overview
+description: Tour of the dashboard pages and what they show.
+icon: eye
+sidebarTitle: Overview
+---
+
+The UpNext dashboard provides real-time visibility into your entire runtime. Here's what each page shows.
+
+## Dashboard (Home)
+
+The main overview page displays:
+
+- **Trend charts** — job throughput, success/failure rates over time
+- **Queue stats** — current queue depth, processing rate
+- **Top failing functions** — functions with the highest failure rates
+- **Recent activity** — latest job completions and failures
+
+## Jobs
+
+The **Jobs** page shows a timeline view of all job executions:
+
+- **Timeline visualization** — horizontal bars showing job duration and overlap
+- **Nested task trees** — parent-child relationships displayed as expandable hierarchies
+- **Job details** — click any job to see status, progress, attempts, errors, artifacts, and logs
+- **Filters** — filter by status (running, complete, failed), function name, and time range
+
+## Functions
+
+Browse all registered task, cron, and event handler definitions:
+
+- **Function list** — name, type (task/cron/event), configuration
+- **Execution stats** — success rate, average duration, total runs
+- **Configuration details** — retries, timeout, schedule (for crons)
+
+## Workers
+
+Live view of all connected worker instances:
+
+- **Active workers** — name, status, concurrency settings
+- **Task counts** — jobs in progress, completed, failed
+- **Health status** — connectivity and heartbeat information
+
+## APIs
+
+Monitor your HTTP API instances:
+
+- **Active APIs** — name, host, port, registered routes
+- **Request metrics** — throughput, latency, error rates
+- **Request tracking** — recent HTTP requests with status codes and durations
+
+## Artifacts
+
+Browse artifacts created by jobs:
+
+- **Artifact list** — name, type, associated job, creation time
+- **Inline previews** — JSON data rendered in a viewer, images displayed inline
+- **Download** — retrieve artifact files directly
+
+## Activity
+
+A live event feed showing everything happening in your runtime:
+
+- **Real-time updates** — job starts, completions, failures, and retries as they happen
+- **Event stream** — powered by server-sent events for instant updates
+
+## Secrets
+
+Manage encrypted secrets:
+
+- **Secret list** — names and last-updated timestamps (values are hidden)
+- **Create/update/delete** — manage secrets directly from the UI
+
+## Admin
+
+Available when authentication is enabled:
+
+- **Users** — manage user accounts
+- **API keys** — create and revoke API keys for service authentication

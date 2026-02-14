@@ -1,0 +1,143 @@
+---
+title: CLI Reference
+description: Command reference for the upnext CLI.
+icon: terminal
+---
+
+The `upnext` CLI is installed with the `upnext` package. It provides commands for running services, interacting with tasks, and managing the server.
+
+## `upnext run`
+
+Start workers and APIs defined in Python files.
+
+```bash
+upnext run <files...> [--only NAME] [--redis-url URL] [--verbose]
+```
+
+Discovers all `upnext.Worker` and `upnext.Api` instances in the given files and starts them together.
+
+**Options:**
+
+| Option | Short | Description |
+| --- | --- | --- |
+| `--only` | `-o` | Only run specific components by name (repeatable) |
+| `--redis-url` | | Redis URL (overrides `UPNEXT_REDIS_URL` and constructor config) |
+| `--verbose` | `-v` | Enable verbose logging |
+
+**Examples:**
+
+```bash
+# Run a single service file
+upnext run service.py
+
+# Run multiple files
+upnext run worker.py api.py
+
+# Run only a specific component by name
+upnext run service.py --only my-api
+
+# Run multiple specific components
+upnext run service.py -o my-api -o my-worker
+
+# Override Redis URL
+upnext run service.py --redis-url redis://localhost:6379
+
+# With environment variables
+UPNEXT_REDIS_URL=redis://localhost:6379 upnext run service.py
+```
+
+## `upnext call`
+
+Execute a registered task function directly from the command line.
+
+```bash
+upnext call <function-name> [--kwargs JSON]
+```
+
+**Examples:**
+
+```bash
+# Call a task with keyword arguments
+upnext call process_order --kwargs '{"order_id": "123", "items": ["A", "B"]}'
+```
+
+<Note>
+The worker must have been initialized (via `upnext run` or `worker.initialize()`) at least once so the function is registered in Redis.
+</Note>
+
+## `upnext list`
+
+List all registered functions (tasks, cron jobs, event handlers).
+
+```bash
+upnext list
+```
+
+Displays a table showing function names, types, and configuration.
+
+## `upnext server start`
+
+Start the UpNext API server and web dashboard.
+
+```bash
+upnext server start [--host HOST] [--port PORT]
+```
+
+**Options:**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--host` | `0.0.0.0` | Host to bind to |
+| `--port` | `8080` | Port to listen on |
+
+**Examples:**
+
+```bash
+# Start with PostgreSQL
+UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext server start --port 8080
+
+# Start with SQLite
+UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext server start
+```
+
+## `upnext server db`
+
+Database migration commands powered by Alembic.
+
+### `upnext server db upgrade`
+
+Run database migrations to the specified revision.
+
+```bash
+upnext server db upgrade <revision>
+```
+
+**Examples:**
+
+```bash
+# Upgrade to latest
+upnext server db upgrade head
+
+# Upgrade to specific revision
+upnext server db upgrade abc123
+```
+
+### `upnext server db current`
+
+Show the current migration revision.
+
+```bash
+upnext server db current
+```
+
+### `upnext server db history`
+
+Show migration history.
+
+```bash
+upnext server db history
+```

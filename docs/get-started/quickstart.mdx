@@ -1,0 +1,102 @@
+---
+title: Quickstart
+description: Build and run your first UpNext worker and API in 5 minutes.
+icon: bolt
+---
+
+This guide walks you through creating a background task, exposing it via an API endpoint, and running everything together.
+
+## Build your first service
+
+<Steps>
+  <Step title="Create your service file">
+    Create a file called `service.py`:
+
+    ```python service.py
+    import upnext
+
+    worker = upnext.Worker("my-worker")
+    api = upnext.Api("my-api", port=8001)
+
+
+    @worker.task(retries=3, timeout=30.0)
+    async def process_order(order_id: str, items: list[str]) -> dict:
+        ctx = upnext.get_current_context()
+
+        for i, item in enumerate(items):
+            ctx.set_progress((i + 1) / len(items) * 100, f"Processing {item}")
+
+        return {"order_id": order_id, "status": "completed", "items": len(items)}
+
+
+    @api.post("/orders")
+    async def create_order(order: dict):
+        job = await process_order.submit(
+            order_id="order-123",
+            items=order.get("items", ["Widget A", "Widget B"]),
+        )
+        return {"job_id": job.job_id, "status": "submitted"}
+
+
+    @api.get("/health")
+    async def health():
+        return {"status": "ok"}
+    ```
+  </Step>
+
+  <Step title="Run your service">
+    Start your worker and API together with a single command. Make sure Redis is running first.
+
+    ```bash
+    UPNEXT_REDIS_URL=redis://localhost:6379 upnext run service.py
+    ```
+
+    You'll see output showing both the worker and API starting up. The API serves on `http://localhost:8001`.
+  </Step>
+
+  <Step title="Submit a job">
+    In another terminal, submit an order via the API:
+
+    ```bash
+    curl -X POST http://localhost:8001/orders \
+      -H "Content-Type: application/json" \
+      -d '{"items": ["Widget A", "Widget B", "Widget C"]}'
+    ```
+
+    You'll get back a response with the job ID:
+
+    ```json
+    {
+      "job_id": "abc123",
+      "status": "submitted"
+    }
+    ```
+
+    The worker picks up the job, processes each item with progress updates, and completes it in the background.
+  </Step>
+</Steps>
+
+## What just happened?
+
+1. **`upnext.Worker`** created a worker that listens for tasks on a Redis queue
+2. **`@worker.task`** registered `process_order` as a background task with 3 retries and a 30-second timeout
+3. **`upnext.Api`** created a FastAPI-powered HTTP server
+4. **`@api.post`** defined an endpoint that submits work to the worker via `.submit()`
+5. **`upnext.run`** (called by `upnext run`) started both the worker and API in a single process
+
+## What's next?
+
+<CardGroup cols={2}>
+  <Card title="Workers" icon="gears" href="/concepts/workers">
+    Learn about workers, tasks, events, and cron jobs.
+  </Card>
+  <Card title="Cron Jobs" icon="clock" href="/concepts/cron-jobs">
+    Schedule recurring work with cron expressions.
+  </Card>
+  <Card title="Events" icon="bell" href="/concepts/events">
+    Build event-driven workflows with pub/sub.
+  </Card>
+  <Card title="Dashboard" icon="chart-line" href="/dashboard/setup">
+    Set up the real-time monitoring dashboard.
+  </Card>
+</CardGroup>

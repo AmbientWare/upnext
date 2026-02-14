@@ -19,12 +19,7 @@ export function Sidebar() {
     <aside className="w-48 bg-background border-r border-border flex flex-col">
       {/* Logo */}
       <div className="h-14 flex items-center px-4 border-b border-border">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded bg-emerald-500/20 flex items-center justify-center">
-            <span className="text-emerald-400 font-bold text-sm">C</span>
-          </div>
-          <span className="font-semibold text-foreground tracking-tight">UpNext</span>
-        </div>
+        <span className="text-base font-bold"><span className="text-emerald-400">Up</span><span className="text-foreground">Next</span></span>
       </div>
 
       {/* Navigation */}

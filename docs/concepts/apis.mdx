@@ -1,0 +1,150 @@
+---
+title: APIs
+description: Build HTTP endpoints powered by FastAPI.
+icon: globe
+---
+
+```python
+import upnext
+
+api = upnext.Api("my-api", port=8001)
+
+@api.post("/orders")
+async def create_order(order: dict):
+    job = await process_order.submit(order_id="123", items=order["items"])
+    return {"job_id": job.job_id}
+
+@api.get("/health")
+async def health():
+    return {"status": "ok"}
+```
+
+**`upnext.Api`** wraps FastAPI to give you HTTP endpoints that integrate seamlessly with workers. Define routes with familiar decorators, submit work to background tasks, and get automatic request tracking in the dashboard.
+
+## Create an API
+
+```python
+api = upnext.Api(
+    "my-api",       # Name (shown in dashboard)
+    port=8001,      # Port to listen on (default: 8000)
+)
+```
+
+### API options
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `str` | required | API name for dashboard identification |
+| `host` | `str` | `"0.0.0.0"` | Host to bind to |
+| `port` | `int` | `8000` | Port to listen on |
+| `docs_url` | `str` | `"/docs"` | Swagger UI path |
+| `openapi_url` | `str` | `"/openapi.json"` | OpenAPI schema path |
+| `debug` | `bool` | `False` | Enable debug mode |
+| `redis_url` | `str` | `None` | Redis URL (falls back to `UPNEXT_REDIS_URL` env var) |
+| `secrets` | `list[str]` | `[]` | Secret names to fetch on startup |
+
+## Define routes
+
+Use decorator methods that mirror FastAPI:
+
+```python
+@api.get("/items")
+async def list_items():
+    return [{"id": 1, "name": "Widget"}]
+
+@api.post("/items")
+async def create_item(item: dict):
+    return {"id": 2, **item}
+
+@api.put("/items/{item_id}")
+async def update_item(item_id: int, item: dict):
+    return {"id": item_id, **item}
+
+@api.patch("/items/{item_id}")
+async def patch_item(item_id: int, updates: dict):
+    return {"id": item_id, **updates}
+
+@api.delete("/items/{item_id}")
+async def delete_item(item_id: int):
+    return {"deleted": True}
+```
+
+All standard FastAPI features work — path parameters, query parameters, request bodies, response models, and dependency injection.
+
+## Route groups
+
+Organize related routes under a common prefix:
+
+```python
+v1 = api.group("/api/v1", tags=["v1"])
+
+@v1.get("/users")
+async def list_users():
+    ...
+
+@v1.post("/users")
+async def create_user(user: dict):
+    ...
+```
+
+## Adopt an existing FastAPI app
+
+If you already have a FastAPI app, wrap it with `Api.from_fastapi()` to get UpNext's request tracking and dashboard integration:
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
+# Adopt the existing app
+api = upnext.Api.from_fastapi(app, name="my-api", port=8001)
+```
+
+## Submit work from endpoints
+
+The most common pattern is an API endpoint that submits work to a background worker:
+
+```python
+@api.post("/reports")
+async def generate_report(request: dict):
+    job = await generate_report_task.submit(
+        report_type=request.get("type", "daily"),
+    )
+    return {"job_id": job.job_id, "status": "submitted"}
+```
+
+The endpoint returns immediately with a job ID. The worker processes the task in the background.
+
+## Access the FastAPI app
+
+You can access the underlying FastAPI app for advanced configuration:
+
+```python
+# Add middleware
+from fastapi.middleware.cors import CORSMiddleware
+
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include existing routers
+api.include_router(some_router, prefix="/api")
+
+# Access the app directly
+fastapi_app = api.app
+```
+
+## Scaling
+
+`upnext.Api` is a standard ASGI application powered by FastAPI. Scale it the same way you'd scale any FastAPI app — multiple processes, containers behind a load balancer, or platform-managed replicas. Each instance connects to the same Redis, so task submissions land in the shared queue regardless of which API instance handles the request.
+
+<Card title="Next: Context" icon="arrow-right" href="/concepts/context">
+  Track progress, save checkpoints, and send structured logs.
+</Card>

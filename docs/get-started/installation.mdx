@@ -1,0 +1,52 @@
+---
+title: Installation
+description: Install UpNext and get your environment ready.
+icon: download
+---
+
+## Prerequisites
+
+- **Python 3.12+**
+- **Redis 7+** — used as the queue backend
+- **pip** or [**uv**](https://docs.astral.sh/uv/) — for package management
+
+## Install UpNext
+
+The `upnext` package includes the SDK, runtime engine, CLI, and the dashboard server.
+
+<Tabs>
+  <Tab title="pip">
+    ```bash
+    pip install upnext
+    ```
+  </Tab>
+  <Tab title="uv">
+    ```bash
+    uv add upnext
+    ```
+  </Tab>
+</Tabs>
+
+## Start Redis
+
+UpNext requires a running Redis instance. The easiest way to get one locally is with Docker:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+```
+
+<Tip>
+If you already have Redis running, just make sure it's version 7 or higher and accessible at `redis://localhost:6379`.
+</Tip>
+
+## Verify your installation
+
+```bash
+upnext --version
+```
+
+You should see the installed version printed. You're ready to build your first service.
+
+<Card title="Next: Quickstart" icon="arrow-right" href="/get-started/quickstart">
+  Build and run a worker + API in 5 minutes.
+</Card>

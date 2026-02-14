@@ -1,0 +1,135 @@
+---
+title: Run Services
+description: Start workers, APIs, or both together.
+icon: play
+---
+
+UpNext services are started with the `upnext run` CLI command or programmatically with `upnext.run()`. You can run a worker, an API, or both in the same process.
+
+## Using the CLI
+
+The `upnext run` command discovers all `Worker` and `Api` instances defined in your Python files and starts them:
+
+```bash
+upnext run service.py
+```
+
+You can pass multiple files:
+
+```bash
+upnext run worker.py api.py
+```
+
+<Tip>
+Set `UPNEXT_REDIS_URL` before running, or pass `redis_url` to your Worker/Api constructors.
+</Tip>
+
+## Using `upnext.run()` in code
+
+Add `upnext.run()` at the bottom of your service file:
+
+```python
+import upnext
+
+worker = upnext.Worker("my-worker")
+api = upnext.Api("my-api", port=8001)
+
+@worker.task
+async def my_task(name: str):
+    return f"Hello, {name}!"
+
+@api.get("/health")
+async def health():
+    return {"status": "ok"}
+
+# Start both
+upnext.run(api, worker)
+```
+
+Then run it directly:
+
+```bash
+python service.py
+```
+
+### Shutdown timeouts
+
+You can customize how long `upnext.run()` waits for graceful shutdown:
+
+```python
+upnext.run(
+    api, worker,
+    worker_timeout=30.0,  # Wait 30s for workers to finish active jobs
+    api_timeout=5.0,      # Wait 5s for API requests to complete
+)
+```
+
+## Run specific components with `--only`
+
+If a file defines multiple workers and APIs, use `--only` / `-o` to run a subset by name:
+
+```python service.py
+worker = upnext.Worker("my-worker")
+api = upnext.Api("my-api", port=8001)
+```
+
+```bash
+# Run only the API
+upnext run service.py --only my-api
+
+# Run only the worker
+upnext run service.py --only my-worker
+
+# Run specific components (repeatable)
+upnext run service.py -o my-api -o my-worker
+```
+
+## Worker only
+
+If you don't need an API, just pass a worker:
+
+```python
+upnext.run(worker)
+```
+
+```bash
+# Or via CLI — a file that only defines a Worker
+upnext run worker.py
+```
+
+## API only
+
+If you just need HTTP endpoints without a background worker:
+
+```python
+upnext.run(api)
+```
+
+## Multiple workers
+
+You can run multiple workers with different configurations:
+
+```python
+fast_worker = upnext.Worker("fast", concurrency=50)
+slow_worker = upnext.Worker("slow", concurrency=2)
+
+upnext.run(api, fast_worker, slow_worker)
+```
+
+Filter to just one of them from the CLI:
+
+```bash
+upnext run service.py --only fast
+```
+
+## Connecting to the dashboard
+
+When the UpNext server is running, set `UPNEXT_URL` so workers and APIs report their status to the dashboard:
+
+```bash
+UPNEXT_URL=http://localhost:8080 \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext run service.py
+```
+
+If authentication is enabled, also set `UPNEXT_API_KEY`. See the [Authentication guide](/guides/authentication) for details.

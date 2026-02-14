@@ -1,0 +1,99 @@
+---
+title: Cron Jobs
+description: Schedule recurring tasks with standard cron syntax.
+icon: clock
+---
+
+```python
+import upnext
+
+worker = upnext.Worker("my-worker")
+
+@worker.cron("*/5 * * * *")  # Every 5 minutes
+async def health_check():
+    return {"status": "healthy"}
+```
+
+A **cron job** is a task that runs on a recurring schedule. UpNext uses standard cron syntax with an optional sixth field for seconds.
+
+## Define a cron job
+
+Use the `@worker.cron` decorator with a cron expression:
+
+```python
+@worker.cron("0 9 * * *")  # Every day at 9 AM
+async def daily_report():
+    return {"generated": True}
+
+@worker.cron("*/30 * * * * *")  # Every 30 seconds (6-field syntax)
+async def frequent_check():
+    return {"checked": True}
+```
+
+### Cron expression format
+
+UpNext supports both 5-field and 6-field cron expressions:
+
+| Field | 5-field | 6-field | Values |
+| --- | --- | --- | --- |
+| Seconds | - | 1st | 0-59 |
+| Minutes | 1st | 2nd | 0-59 |
+| Hours | 2nd | 3rd | 0-23 |
+| Day of month | 3rd | 4th | 1-31 |
+| Month | 4th | 5th | 1-12 |
+| Day of week | 5th | 6th | 0-6 (Sun-Sat) |
+
+Common patterns:
+
+```
+*/5 * * * *        Every 5 minutes
+0 */2 * * *        Every 2 hours
+0 9 * * 1-5        Weekdays at 9 AM
+*/10 * * * * *     Every 10 seconds (6-field)
+```
+
+## Cron options
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `schedule` | `str` | required | Cron expression |
+| `name` | `str` | `None` | Custom display name |
+| `timeout` | `float` | `1800` | Maximum execution time in seconds |
+| `missed_run_policy` | `MissedRunPolicy` | `LATEST_ONLY` | How to handle missed runs |
+| `max_catch_up_seconds` | `float` | `None` | Max time window for catching up missed runs |
+
+## Missed run policies
+
+If a worker was down and missed scheduled runs, the `missed_run_policy` controls what happens when it comes back:
+
+- **`LATEST_ONLY`** (default) — Run only the most recent missed execution, skip the rest.
+- **`RUN_ALL`** — Run every missed execution in order, bounded by `max_catch_up_seconds`.
+
+```python
+from shared.contracts.common import MissedRunPolicy
+
+@worker.cron(
+    "0 * * * *",
+    missed_run_policy=MissedRunPolicy.RUN_ALL,
+    max_catch_up_seconds=3600,  # Catch up at most 1 hour
+)
+async def hourly_sync():
+    ...
+```
+
+## Using context in cron jobs
+
+Cron jobs have full access to the execution context, just like tasks:
+
+```python
+@worker.cron("*/5 * * * *")
+async def monitored_check():
+    ctx = upnext.get_current_context()
+    ctx.set_progress(50, "Running checks")
+    ctx.send_log("info", "Health check running")
+    return {"status": "ok"}
+```
+
+<Card title="Next: Events" icon="arrow-right" href="/concepts/events">
+  Pub/sub handlers that trigger when an event is published.
+</Card>

@@ -1,0 +1,154 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "UpNext",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#00875A",
+    "light": "#34D399",
+    "dark": "#006644"
+  },
+  "appearance": {
+    "default": "dark",
+    "strict": false
+  },
+  "font": {
+    "body": "IBM Plex Sans",
+    "code": "IBM Plex Mono"
+  },
+  "rounded": "default",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Get Started",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "get-started/index",
+              "get-started/installation",
+              "get-started/quickstart"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Concepts",
+        "groups": [
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/index"
+            ]
+          },
+          {
+            "group": "Core",
+            "pages": [
+              {
+                "group": "Workers",
+                "icon": "gears",
+                "pages": [
+                  "concepts/workers",
+                  "concepts/tasks",
+                  "concepts/workflows",
+                  "concepts/events",
+                  "concepts/cron-jobs"
+                ]
+              },
+              "concepts/apis",
+              "concepts/context"
+            ]
+          },
+          {
+            "group": "Server",
+            "pages": [
+              "concepts/artifacts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/index"
+            ]
+          },
+          {
+            "group": "Core",
+            "pages": [
+              "guides/run-services",
+              "guides/submit-and-wait",
+              "guides/parallel-execution",
+              "guides/error-handling"
+            ]
+          },
+          {
+            "group": "Server",
+            "pages": [
+              "guides/authentication",
+              "guides/secrets"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Dashboard",
+        "groups": [
+          {
+            "group": "Dashboard",
+            "pages": [
+              "dashboard/index",
+              "dashboard/setup",
+              "dashboard/overview"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deploy",
+        "groups": [
+          {
+            "group": "Deploy",
+            "pages": [
+              "deploy/index",
+              "deploy/docker-compose",
+              "deploy/configuration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI",
+        "groups": [
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/index"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "topbarLinks": [
+    {
+      "label": "GitHub",
+      "url": "https://github.com/lazycloud-app/upnext"
+    }
+  ],
+  "footer": {
+    "socials": {
+      "github": "https://github.com/lazycloud-app/upnext"
+    }
+  },
+  "feedback": {
+    "thumbsRating": true
+  }
+}

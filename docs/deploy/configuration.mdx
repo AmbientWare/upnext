@@ -1,0 +1,98 @@
+---
+title: Configuration
+description: All environment variables and configuration options for UpNext.
+icon: sliders
+---
+
+UpNext is configured via environment variables with the `UPNEXT_` prefix. All settings can also be passed directly to `Worker` and `Api` constructors where applicable.
+
+## Core settings
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_REDIS_URL` | — | Redis connection URL (required for workers) |
+| `UPNEXT_URL` | `http://localhost:8000` | UpNext server URL (for dashboard reporting) |
+| `UPNEXT_API_KEY` | — | API key for server authentication |
+| `UPNEXT_DEBUG` | `false` | Enable debug mode |
+| `UPNEXT_ENV` | `development` | Environment name (`development` or `production`) |
+
+## Server settings
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_DATABASE_URL` | — | Database connection string (PostgreSQL or SQLite) |
+| `UPNEXT_AUTH_ENABLED` | `false` | Enable API key authentication |
+
+## Queue settings
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_QUEUE_RUNTIME_PROFILE` | `safe` | Runtime profile: `safe` or `throughput` |
+| `UPNEXT_QUEUE_JOB_TTL_SECONDS` | `86400` | Job data TTL (24 hours) |
+| `UPNEXT_QUEUE_RESULT_TTL_SECONDS` | `3600` | Result data TTL (1 hour) |
+| `UPNEXT_QUEUE_CLAIM_TIMEOUT_MS` | `30000` | Job claim timeout (30 seconds) |
+| `UPNEXT_QUEUE_STREAM_MAXLEN` | `0` | Queue stream retention cap (0 = profile default) |
+| `UPNEXT_QUEUE_DLQ_STREAM_MAXLEN` | `10000` | Dead-letter queue stream max length |
+| `UPNEXT_QUEUE_BATCH_SIZE` | `0` | Queue fetch/flush batch size (0 = profile default) |
+| `UPNEXT_QUEUE_INBOX_SIZE` | `0` | Queue inbox capacity (0 = profile default) |
+| `UPNEXT_QUEUE_OUTBOX_SIZE` | `0` | Queue outbox capacity (0 = profile default) |
+| `UPNEXT_QUEUE_FLUSH_INTERVAL_MS` | `0` | Completion flush interval (0 = profile default) |
+| `UPNEXT_WORKER_PREFETCH_DEFAULT` | `0` | Worker prefetch count (0 = profile default) |
+
+## Runtime profiles
+
+The `UPNEXT_QUEUE_RUNTIME_PROFILE` setting controls defaults for several queue parameters:
+
+### `safe` (default)
+
+Conservative settings optimized for reliability:
+- Worker prefetch: `1`
+- Bounded stream sizes
+- Lower queue buffering
+
+### `throughput`
+
+Aggressive settings optimized for maximum throughput:
+- Higher prefetch and batch sizes
+- Larger stream buffers
+- Best for high-volume workloads where you can tolerate occasional reprocessing
+
+## Status stream settings
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_STATUS_STREAM_MAX_LEN` | `50000` | Status event stream max length |
+| `UPNEXT_STATUS_PUBLISH_RETRY_ATTEMPTS` | `3` | Retries for publishing status events |
+| `UPNEXT_STATUS_PUBLISH_RETRY_BASE_MS` | `25.0` | Base retry delay (ms) |
+| `UPNEXT_STATUS_PUBLISH_RETRY_MAX_MS` | `500.0` | Max retry delay (ms) |
+| `UPNEXT_STATUS_PENDING_BUFFER_SIZE` | `10000` | In-memory pending buffer capacity |
+| `UPNEXT_STATUS_PENDING_FLUSH_BATCH_SIZE` | `128` | Pending buffer flush batch size |
+| `UPNEXT_STATUS_DURABLE_BUFFER_ENABLED` | `true` | Enable Redis-backed durable buffer |
+| `UPNEXT_STATUS_DURABLE_BUFFER_MAXLEN` | `10000` | Durable buffer max entries |
+| `UPNEXT_STATUS_SHUTDOWN_FLUSH_TIMEOUT_SECONDS` | `2.0` | Timeout for flushing on shutdown |
+| `UPNEXT_STATUS_PUBLISH_STRICT` | `false` | Fail-closed on publish errors |
+
+## Progress settings
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_PROGRESS_MIN_DELTA` | `0.01` | Minimum progress change to publish (1%) |
+| `UPNEXT_PROGRESS_MIN_INTERVAL_SECONDS` | `0.2` | Minimum time between progress updates |
+
+## API tracking settings
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_API_TRACKING_NORMALIZE_PATHS` | `true` | Normalize path parameters in tracking |
+| `UPNEXT_API_TRACKING_REGISTRY_REFRESH_SECONDS` | `60` | Route registry refresh interval |
+| `UPNEXT_API_REQUEST_EVENTS_ENABLED` | `true` | Enable request event tracking |
+| `UPNEXT_API_REQUEST_EVENTS_SAMPLE_RATE` | `1.0` | Sampling rate for request events (0.0-1.0) |
+| `UPNEXT_API_REQUEST_EVENTS_SLOW_MS` | `500.0` | Threshold for slow request logging (ms) |
+| `UPNEXT_API_REQUEST_EVENTS_STREAM_MAX_LEN` | `50000` | Request event stream max length |
+
+## Artifact storage
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_ARTIFACT_STORAGE_BACKEND` | `local` | Storage backend: `local` or `s3` |
+| `UPNEXT_ARTIFACT_STORAGE_LOCAL_ROOT` | `~/.upnext/artifacts` | Local storage directory |

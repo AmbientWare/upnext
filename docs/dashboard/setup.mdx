@@ -1,0 +1,80 @@
+---
+title: Dashboard Setup
+description: Start the UpNext server and access the web dashboard.
+icon: wrench
+sidebarTitle: Setup
+---
+
+The dashboard is served by the UpNext server included with the `upnext` package. Start it with the CLI and open it in your browser.
+
+## Prerequisites
+
+- **Redis 7+** — shared queue backend (same instance your workers use)
+- **PostgreSQL** or **SQLite** — for job history and metadata
+
+## Start the server
+
+<Tabs>
+  <Tab title="SQLite (quickest)">
+    SQLite requires no additional setup — just start the server:
+
+    ```bash
+    UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+    UPNEXT_REDIS_URL=redis://localhost:6379 \
+    upnext server start --port 8080
+    ```
+  </Tab>
+  <Tab title="PostgreSQL">
+    If you're using PostgreSQL, run database migrations first, then start the server:
+
+    ```bash
+    # Run migrations
+    UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
+    upnext server db upgrade head
+
+    # Start the server
+    UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
+    UPNEXT_REDIS_URL=redis://localhost:6379 \
+    upnext server start --port 8080
+    ```
+
+    <Tip>
+    Need a local PostgreSQL instance? You can start one quickly with Docker:
+
+    ```bash
+    docker run --rm -p 5432:5432 \
+      -e POSTGRES_DB=upnext \
+      -e POSTGRES_USER=upnext \
+      -e POSTGRES_PASSWORD=upnext \
+      postgres:17-alpine
+    ```
+    </Tip>
+  </Tab>
+</Tabs>
+
+The dashboard is available at **http://localhost:8080**.
+
+## Authentication
+
+By default, authentication is disabled. To secure the dashboard and API, add `UPNEXT_AUTH_ENABLED=true` and `UPNEXT_API_KEY` when starting the server. See the [Authentication guide](/guides/authentication) for full details on enabling auth, managing users, and rotating keys.
+
+## Connect your services
+
+Point your workers and APIs at the server so they report to the dashboard:
+
+```bash
+UPNEXT_URL=http://localhost:8080 \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext run service.py
+```
+
+If authentication is enabled, include `UPNEXT_API_KEY`:
+
+```bash
+UPNEXT_URL=http://localhost:8080 \
+UPNEXT_API_KEY=your-secret-key \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext run service.py
+```
+
+Once connected, your workers, APIs, jobs, and metrics appear in the dashboard in real-time.

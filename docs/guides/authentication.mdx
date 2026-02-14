@@ -1,0 +1,140 @@
+---
+title: Authentication
+description: Secure your UpNext server and connect authenticated services.
+icon: lock
+---
+
+UpNext uses API key authentication to secure the dashboard, REST API, and service-to-server communication. Authentication is opt-in — disabled by default for local development.
+
+## Enable authentication
+
+Set two environment variables when starting the server:
+
+```bash
+UPNEXT_AUTH_ENABLED=true \
+UPNEXT_API_KEY=your-secret-key \
+UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext server start --port 8080
+```
+
+On first startup, this creates a seed **admin** user with an API key matching the value of `UPNEXT_API_KEY`. All subsequent requests to the server require a valid key.
+
+## How it works
+
+When authentication is enabled:
+
+1. Every request to `/api/v1/*` must include an `Authorization: Bearer <key>` header
+2. The server hashes the key and looks it up in the database
+3. If the key is valid and active, the request proceeds
+4. If the key is missing, invalid, or disabled, the server returns `401` or `403`
+
+When authentication is disabled, all endpoints are open and no headers are required.
+
+## Connect workers and APIs
+
+Workers and APIs need the API key to report to the dashboard. Set `UPNEXT_API_KEY` alongside `UPNEXT_URL`:
+
+```bash
+UPNEXT_URL=http://localhost:8080 \
+UPNEXT_API_KEY=your-secret-key \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext run service.py
+```
+
+## Manage users and keys
+
+Once authentication is enabled, you can manage users and API keys from the **Admin** page in the dashboard, or via the REST API.
+
+### Dashboard
+
+The Admin page lets you:
+
+- Create and delete users
+- Toggle admin privileges
+- Create, revoke, and rotate API keys per user
+- See key prefixes and last-used timestamps
+
+### REST API
+
+All admin endpoints require an admin-level API key.
+
+**Users:**
+
+```bash
+# List users
+curl http://localhost:8080/api/v1/admin/users \
+  -H "Authorization: Bearer your-admin-key"
+
+# Create a user (returns the new user + their initial API key)
+curl -X POST http://localhost:8080/api/v1/admin/users \
+  -H "Authorization: Bearer your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "deploy-bot", "is_admin": false}'
+
+# Delete a user and all their keys
+curl -X DELETE http://localhost:8080/api/v1/admin/users/{user_id} \
+  -H "Authorization: Bearer your-admin-key"
+```
+
+**API keys:**
+
+```bash
+# List keys for a user
+curl http://localhost:8080/api/v1/admin/users/{user_id}/api-keys \
+  -H "Authorization: Bearer your-admin-key"
+
+# Create a new key for a user
+curl -X POST http://localhost:8080/api/v1/admin/users/{user_id}/api-keys \
+  -H "Authorization: Bearer your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "ci-pipeline"}'
+
+# Rotate a user's key (deletes all existing keys, creates a new one)
+curl -X POST http://localhost:8080/api/v1/admin/users/{user_id}/rotate-api-key \
+  -H "Authorization: Bearer your-admin-key"
+
+# Disable a key without deleting it
+curl -X PATCH http://localhost:8080/api/v1/admin/users/{user_id}/api-keys/{key_id} \
+  -H "Authorization: Bearer your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"is_active": false}'
+
+# Delete a key
+curl -X DELETE http://localhost:8080/api/v1/admin/users/{user_id}/api-keys/{key_id} \
+  -H "Authorization: Bearer your-admin-key"
+```
+
+<Note>
+The raw API key is only returned once — when the key is created or rotated. Store it securely. The server only stores a hash.
+</Note>
+
+## Verify a key
+
+Check if a key is valid without performing any action:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/verify \
+  -H "Authorization: Bearer your-key"
+```
+
+Returns `200` with user info if valid, `401` if invalid.
+
+## Check auth status
+
+Check whether the server has authentication enabled (no key required):
+
+```bash
+curl http://localhost:8080/api/v1/auth/status
+```
+
+```json
+{"auth_enabled": true}
+```
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_AUTH_ENABLED` | `false` | Enable API key authentication |
+| `UPNEXT_API_KEY` | — | Seed API key for the initial admin user |

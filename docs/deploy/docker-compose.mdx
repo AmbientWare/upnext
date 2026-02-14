@@ -1,0 +1,143 @@
+---
+title: Docker Compose
+description: Run UpNext's infrastructure dependencies with Docker Compose.
+icon: docker
+---
+
+UpNext needs Redis and optionally PostgreSQL. Docker Compose is the easiest way to manage these services alongside the UpNext server.
+
+## Infrastructure services
+
+Create a `docker-compose.yml` for your infrastructure:
+
+```yaml docker-compose.yml
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: upnext
+      POSTGRES_USER: upnext
+      POSTGRES_PASSWORD: upnext
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U upnext -d upnext"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  redis_data:
+  postgres_data:
+```
+
+Start the infrastructure:
+
+```bash
+docker compose up -d
+```
+
+<Tip>
+If you only need Redis (using SQLite for the dashboard database), you can skip the `postgres` service entirely and just run Redis.
+</Tip>
+
+## Start UpNext
+
+With infrastructure running, start the server and your services using the CLI:
+
+<Steps>
+  <Step title="Run database migrations (PostgreSQL only)">
+    ```bash
+    UPNEXT_DATABASE_URL=postgresql+asyncpg://upnext:upnext@localhost:5432/upnext \
+    upnext server db upgrade head
+    ```
+  </Step>
+  <Step title="Start the dashboard server">
+    <Tabs>
+      <Tab title="PostgreSQL">
+        ```bash
+        UPNEXT_DATABASE_URL=postgresql+asyncpg://upnext:upnext@localhost:5432/upnext \
+        UPNEXT_REDIS_URL=redis://localhost:6379 \
+        UPNEXT_AUTH_ENABLED=true \
+        UPNEXT_API_KEY=changeme \
+        upnext server start --port 8080
+        ```
+      </Tab>
+      <Tab title="SQLite">
+        ```bash
+        UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+        UPNEXT_REDIS_URL=redis://localhost:6379 \
+        UPNEXT_AUTH_ENABLED=true \
+        UPNEXT_API_KEY=changeme \
+        upnext server start --port 8080
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Start your worker and API">
+    ```bash
+    UPNEXT_REDIS_URL=redis://localhost:6379 \
+    UPNEXT_URL=http://localhost:8080 \
+    UPNEXT_API_KEY=changeme \
+    upnext run service.py
+    ```
+  </Step>
+</Steps>
+
+The dashboard is available at **http://localhost:8080** and your service connects to it automatically.
+
+## Environment variables
+
+| Variable | Description |
+| --- | --- |
+| `UPNEXT_DATABASE_URL` | PostgreSQL or SQLite connection string |
+| `UPNEXT_REDIS_URL` | Redis connection URL |
+| `UPNEXT_AUTH_ENABLED` | Enable API key authentication (`"true"` / `"false"`) |
+| `UPNEXT_API_KEY` | API key for authentication |
+| `UPNEXT_ARTIFACT_STORAGE_BACKEND` | `local` or `s3` |
+
+See the full [Configuration reference](/deploy/configuration) for all options.
+
+## Scale workers
+
+To run multiple worker instances, use the `replicas` option in your Compose file or the `--scale` flag:
+
+```yaml docker-compose.yml
+services:
+  worker:
+    build: .
+    command: upnext run service.py
+    environment:
+      UPNEXT_REDIS_URL: redis://redis:6379
+    deploy:
+      replicas: 3
+```
+
+```bash
+# Or scale on the fly
+docker compose up -d --scale worker=3
+```
+
+Each replica joins the same Redis Streams consumer group. Jobs are distributed automatically across all instances — no additional configuration required.
+
+## Volumes
+
+| Volume | Purpose |
+| --- | --- |
+| `redis_data` | Redis AOF persistence |
+| `postgres_data` | PostgreSQL data files |

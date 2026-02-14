@@ -1,0 +1,129 @@
+---
+title: Artifacts
+description: Attach outputs like JSON, images, and files to jobs.
+icon: box-archive
+---
+
+```python
+import upnext
+
+@worker.task
+async def generate_report(report_type: str) -> dict:
+    data = {"type": report_type, "rows": 42}
+
+    await upnext.create_artifact(
+        name="report.json",
+        data=data,
+        artifact_type=upnext.ArtifactType.JSON,
+    )
+
+    return data
+```
+
+**Artifacts** are named outputs attached to a job. Use them to store results, reports, images, or any file that you want to retrieve later from the API or dashboard.
+
+## Create an artifact
+
+Call `upnext.create_artifact()` from inside a task:
+
+```python
+await upnext.create_artifact(
+    name="output.json",
+    data={"key": "value"},
+)
+```
+
+For sync tasks, use the sync variant:
+
+```python
+upnext.create_artifact_sync(
+    name="output.json",
+    data={"key": "value"},
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `str` | required | Artifact filename (e.g. `"report.json"`) |
+| `data` | `str \| dict \| list` | required | Artifact content (see types below) |
+| `artifact_type` | `ArtifactType` | `JSON` | Type of artifact |
+
+## Artifact types
+
+| Type | Data format | Use case |
+| --- | --- | --- |
+| `ArtifactType.JSON` | `dict` or `list` | Structured data, API responses |
+| `ArtifactType.TEXT` | `str` | Plain text, logs |
+| `ArtifactType.PNG` | `str` (base64) | PNG images |
+| `ArtifactType.JPEG` | `str` (base64) | JPEG images |
+| `ArtifactType.WEBP` | `str` (base64) | WebP images |
+| `ArtifactType.GIF` | `str` (base64) | GIF images |
+| `ArtifactType.SVG` | `str` (base64) | SVG images |
+| `ArtifactType.PDF` | `str` (base64) | PDF documents |
+| `ArtifactType.CSV` | `str` (base64) | CSV files |
+| `ArtifactType.XML` | `str` (base64) | XML documents |
+| `ArtifactType.HTML` | `str` (base64) | HTML documents |
+| `ArtifactType.BINARY` | `str` (base64) | Any binary file |
+
+## Examples
+
+### JSON artifact
+
+```python
+await upnext.create_artifact(
+    name="results.json",
+    data={"users": 150, "errors": 3},
+)
+```
+
+### Text artifact
+
+```python
+await upnext.create_artifact(
+    name="log.txt",
+    data="Processing completed successfully.\n3 warnings.",
+    artifact_type=upnext.ArtifactType.TEXT,
+)
+```
+
+### Image artifact
+
+Binary artifacts (images, PDFs, etc.) must be base64-encoded:
+
+```python
+import base64
+
+with open("chart.png", "rb") as f:
+    encoded = base64.b64encode(f.read()).decode("ascii")
+
+await upnext.create_artifact(
+    name="chart.png",
+    data=encoded,
+    artifact_type=upnext.ArtifactType.PNG,
+)
+```
+
+## Viewing artifacts
+
+Artifacts are visible in the dashboard's **Artifacts** page and on individual job detail views. You can also retrieve them via the server's REST API.
+
+## Storage backends
+
+By default, artifacts are stored on the local filesystem. For production, you can configure S3 storage:
+
+```bash
+UPNEXT_ARTIFACT_STORAGE_BACKEND=s3
+```
+
+See the [Configuration reference](/deploy/configuration) for all storage-related environment variables.
+
+<CardGroup cols={2}>
+  <Card title="Guides" icon="map" href="/guides">
+    Practical how-to guides for common workflows.
+  </Card>
+  <Card title="Dashboard" icon="chart-line" href="/dashboard">
+    View and browse artifacts in the web UI.
+  </Card>
+</CardGroup>
