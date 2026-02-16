@@ -862,3 +862,135 @@ async def test_cron_startup_reconciliation_catch_up_window_respects_max_seconds(
     )
     assert reconciled_job.startup_policy == "catch_up"
     assert float(reconciled_job.cron_window_at or 0.0) >= now - 90
+
+
+# ---------------------------------------------------------------------------
+# reschedule_cron: policy-aware skip-ahead for past-due windows
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reschedule_cron_latest_only_skips_past_due(queue: RedisQueue) -> None:
+    """LATEST_ONLY should advance past-due next_run_at to a future window."""
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:cron.lo",
+        FunctionConfig(
+            key="cron.lo",
+            name="cron_lo",
+            type=FunctionType.CRON,
+            missed_run_policy=MissedRunPolicy.LATEST_ONLY,
+        ).model_dump_json(),
+    )
+
+    cron_job = Job(
+        function="cron.lo",
+        function_name="cron_lo",
+        key="cron:cron.lo",
+        source=CronSource(schedule="* * * * *"),
+    )
+    cron_job.completed_at = datetime.now(UTC)
+
+    past_due = now - 300  # 5 minutes ago
+    job_id = await queue.reschedule_cron(cron_job, next_run_at=past_due)
+
+    score = await client.zscore(queue._scheduled_key("cron.lo"), job_id)  # noqa: SLF001
+    assert score is not None
+    assert score > now, "LATEST_ONLY should schedule in the future, not past-due"
+
+
+@pytest.mark.asyncio
+async def test_reschedule_cron_skip_policy_skips_past_due(queue: RedisQueue) -> None:
+    """SKIP should advance past-due next_run_at to a future window."""
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:cron.sk",
+        FunctionConfig(
+            key="cron.sk",
+            name="cron_sk",
+            type=FunctionType.CRON,
+            missed_run_policy=MissedRunPolicy.SKIP,
+        ).model_dump_json(),
+    )
+
+    cron_job = Job(
+        function="cron.sk",
+        function_name="cron_sk",
+        key="cron:cron.sk",
+        source=CronSource(schedule="* * * * *"),
+    )
+    cron_job.completed_at = datetime.now(UTC)
+
+    past_due = now - 300
+    job_id = await queue.reschedule_cron(cron_job, next_run_at=past_due)
+
+    score = await client.zscore(queue._scheduled_key("cron.sk"), job_id)  # noqa: SLF001
+    assert score is not None
+    assert score > now, "SKIP should schedule in the future, not past-due"
+
+
+@pytest.mark.asyncio
+async def test_reschedule_cron_catch_up_keeps_past_due(queue: RedisQueue) -> None:
+    """CATCH_UP (no max) should preserve past-due next_run_at for sequential catch-up."""
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:cron.cu",
+        FunctionConfig(
+            key="cron.cu",
+            name="cron_cu",
+            type=FunctionType.CRON,
+            missed_run_policy=MissedRunPolicy.CATCH_UP,
+        ).model_dump_json(),
+    )
+
+    cron_job = Job(
+        function="cron.cu",
+        function_name="cron_cu",
+        key="cron:cron.cu",
+        source=CronSource(schedule="* * * * *"),
+    )
+    cron_job.completed_at = datetime.now(UTC)
+
+    past_due = now - 300
+    job_id = await queue.reschedule_cron(cron_job, next_run_at=past_due)
+
+    score = await client.zscore(queue._scheduled_key("cron.cu"), job_id)  # noqa: SLF001
+    assert score is not None
+    assert score < now, "CATCH_UP should preserve the past-due window"
+
+
+@pytest.mark.asyncio
+async def test_reschedule_cron_catch_up_respects_max_seconds(
+    queue: RedisQueue,
+) -> None:
+    """CATCH_UP with max_catch_up_seconds should skip windows older than the horizon."""
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+    await client.set(
+        f"{FUNCTION_KEY_PREFIX}:cron.cuw",
+        FunctionConfig(
+            key="cron.cuw",
+            name="cron_cuw",
+            type=FunctionType.CRON,
+            missed_run_policy=MissedRunPolicy.CATCH_UP,
+            max_catch_up_seconds=90,
+        ).model_dump_json(),
+    )
+
+    cron_job = Job(
+        function="cron.cuw",
+        function_name="cron_cuw",
+        key="cron:cron.cuw",
+        source=CronSource(schedule="* * * * *"),
+    )
+    cron_job.completed_at = datetime.now(UTC)
+
+    past_due = now - 600  # 10 minutes ago, beyond 90s horizon
+    job_id = await queue.reschedule_cron(cron_job, next_run_at=past_due)
+
+    score = await client.zscore(queue._scheduled_key("cron.cuw"), job_id)  # noqa: SLF001
+    assert score is not None
+    assert score >= now - 90, "CATCH_UP should skip windows older than max_catch_up_seconds"

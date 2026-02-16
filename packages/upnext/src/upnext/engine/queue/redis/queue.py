@@ -2459,6 +2459,58 @@ class RedisQueue(BaseQueue):
 
     async def reschedule_cron(self, job: Job, next_run_at: float) -> str:
         client = await self._ensure_connected()
+
+        # ---- Policy-aware skip-ahead for past-due reschedules ----
+        now_ts = time.time()
+        if next_run_at < now_ts:
+            schedule = job.schedule
+            if schedule:
+                policy, max_window = await self._cron_reconcile_policy(
+                    job.function
+                )
+
+                if policy in (
+                    MissedRunPolicy.LATEST_ONLY,
+                    MissedRunPolicy.SKIP,
+                ):
+                    # The just-completed job already covers the current period.
+                    # Skip all past-due windows and schedule the next future one.
+                    next_run_at = calculate_next_cron_run(
+                        schedule,
+                        datetime.fromtimestamp(now_ts, UTC),
+                    ).timestamp()
+                    logger.debug(
+                        "%s skip-ahead for %s: advanced to %s",
+                        policy.value,
+                        job.function,
+                        datetime.fromtimestamp(next_run_at, UTC),
+                    )
+
+                elif policy == MissedRunPolicy.CATCH_UP and max_window is not None:
+                    cutoff = now_ts - max_window
+                    if next_run_at < cutoff:
+                        # Window is older than the catch-up horizon — find the
+                        # first window within the allowed range, or skip ahead.
+                        missed = self._cron_missed_windows(
+                            schedule=schedule,
+                            next_run_at=next_run_at,
+                            now_ts=now_ts,
+                            max_catch_up_seconds=max_window,
+                        )
+                        if missed:
+                            next_run_at = missed[0]
+                        else:
+                            next_run_at = calculate_next_cron_run(
+                                schedule,
+                                datetime.fromtimestamp(now_ts, UTC),
+                            ).timestamp()
+                        logger.debug(
+                            "CATCH_UP (bounded) for %s: adjusted to %s",
+                            job.function,
+                            datetime.fromtimestamp(next_run_at, UTC),
+                        )
+        # ---- End policy-aware skip-ahead ----
+
         cron_registry = self._cron_registry_key()
         cron_key = f"cron:{job.function}"
         schedule = job.schedule
