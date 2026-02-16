@@ -3,6 +3,7 @@
 from shared.domain.jobs import (
     CronSource,
     EventSource,
+    FailureReason,
     Job,
     JobSource,
     JobStatus,
@@ -14,6 +15,7 @@ from shared.domain.jobs import (
 
 __all__ = [
     "StateTransition",
+    "FailureReason",
     "JobStatus",
     "JobType",
     "TaskSource",

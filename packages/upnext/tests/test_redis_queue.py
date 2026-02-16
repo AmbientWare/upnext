@@ -287,7 +287,7 @@ async def test_dequeue_skips_paused_function_until_resumed(queue: RedisQueue) ->
         f"{FUNCTION_KEY_PREFIX}:task_fn",
         b'{"key":"task_fn","name":"task_fn","paused":false}',
     )
-    queue._function_pause_cache.clear()  # noqa: SLF001
+    queue._fn_state.clear()  # noqa: SLF001
 
     resumed_pick = await queue.dequeue(["task_fn"], timeout=0.2)
     assert resumed_pick is not None

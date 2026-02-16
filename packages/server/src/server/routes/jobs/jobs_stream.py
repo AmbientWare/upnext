@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from shared.contracts import FunctionType, JobTrendsSnapshotEvent
 from shared.keys import EVENTS_STREAM
 
+from server.db import get_database
 from server.routes.jobs.jobs_root import get_job_trends
 from server.routes.jobs.jobs_utils import (
     STREAMABLE_EVENTS,
@@ -79,10 +80,12 @@ async def _get_cached_job_trends_snapshot(
             if event_token is None or cached[1] == event_token:
                 return cached[2]
 
+        db = get_database()
         snapshot = await get_job_trends(
             hours=hours,
             function=function,
             type=func_type_filter,
+            db=db,
         )
         _trends_snapshot_cache[key] = (
             now + SSE_CACHE_TTL_SECONDS,
@@ -173,7 +176,7 @@ async def stream_job_trends(
             return
         except Exception as exc:
             logger.warning("Job trends stream error: %s", exc)
-            yield "event: error\ndata: {\"error\": \"stream disconnected\"}\n\n"
+            yield 'event: error\ndata: {"error": "stream disconnected"}\n\n'
 
     return StreamingResponse(
         event_stream(),

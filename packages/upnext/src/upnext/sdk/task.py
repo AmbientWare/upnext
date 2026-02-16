@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from shared.domain import FailureReason, JobStatus
+
 from upnext.engine.queue.base import BaseQueue
 
 
@@ -29,11 +31,14 @@ class TaskResult[T]:
     function_name: str
     """Human-readable function name."""
 
-    status: str = "complete"
-    """Final status: 'complete', 'failed', or 'cancelled'."""
+    status: JobStatus = JobStatus.COMPLETE
+    """Final status of the job."""
 
     error: str | None = None
     """Error message if the task failed."""
+
+    failure_reason: FailureReason | None = None
+    """Structured failure reason (timeout, exception, cancelled, unknown)."""
 
     started_at: datetime | None = None
     """When the job started executing."""
@@ -53,7 +58,7 @@ class TaskResult[T]:
     @property
     def ok(self) -> bool:
         """Whether the task completed successfully."""
-        return self.status == "complete"
+        return self.status == JobStatus.COMPLETE
 
 
 class Future[T]:
@@ -97,8 +102,9 @@ class Future[T]:
             job_id=job.id,
             function=job.function,
             function_name=job.function_name,
-            status=status,
+            status=JobStatus(status),
             error=job.error,
+            failure_reason=job.failure_reason,
             started_at=job.started_at,
             completed_at=job.completed_at,
             attempts=job.attempts,
@@ -106,8 +112,7 @@ class Future[T]:
             root_id=job.root_id,
         )
         if not task_result.ok:
-            error_msg = task_result.error or ""
-            if "timed out" in error_msg or "TimeoutError" in error_msg:
+            if task_result.failure_reason == FailureReason.TIMEOUT:
                 raise TaskTimeoutError(task_result)
             raise TaskExecutionError(task_result)
         return task_result
@@ -138,4 +143,5 @@ class TaskExecutionError(RuntimeError):
 
 class TaskTimeoutError(TaskExecutionError):
     """Raised when a task exceeds its configured timeout."""
+
     pass

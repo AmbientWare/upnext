@@ -2,6 +2,8 @@
 Worker class with decorator-based registration.
 
 This is the user-facing Worker that supports @worker.task(), @worker.cron(), etc.
+Registration logic lives in _worker_registration.py.
+Connection/lifecycle helpers live in _worker_connection.py.
 """
 
 import asyncio
@@ -17,32 +19,27 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, overload
 
-from shared.contracts import FunctionConfig, FunctionType, MissedRunPolicy
-from shared.domain import CronSource, Job
-from shared.keys import (
-    FUNCTION_DEF_TTL,
-    WORKER_DEF_TTL,
-    WORKER_EVENTS_STREAM,
-    WORKER_HEARTBEAT_INTERVAL,
-    WORKER_TTL,
-    function_definition_key,
-    worker_definition_key,
-    worker_instance_key,
-)
+from shared.contracts import FunctionConfig, MissedRunPolicy
+from shared.domain import Job
+from shared.keys import worker_instance_key
 
 from upnext.config import get_settings
 from upnext.engine.backend_api import BackendAPI
-from upnext.engine.cron import calculate_next_cron_run
-from upnext.engine.function_identity import build_function_key
 from upnext.engine.handlers import EventHandle, TaskHandle
 from upnext.engine.job_processor import JobProcessor
 from upnext.engine.queue import RedisQueue
 from upnext.engine.redis import create_redis_client
-from upnext.engine.registry import (
-    CronDefinition,
-    Registry,
-)
+from upnext.engine.registry import CronDefinition, Registry
 from upnext.engine.status import StatusPublisher, StatusPublisherConfig
+from upnext.sdk._worker_connection import (
+    heartbeat_loop,
+    publish_worker_signal,
+    seed_crons,
+    write_function_definitions,
+    write_worker_definition,
+    write_worker_heartbeat,
+)
+from upnext.sdk._worker_registration import WorkerRegistration
 from upnext.sdk.context import Context, set_current_context
 from upnext.sdk.secrets import fetch_and_inject_secrets
 from upnext.types import SyncExecutor
@@ -53,13 +50,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 P = ParamSpec("P")
 
 DEFAULT_CONCURRENCY = 2
-
-
-@dataclass(frozen=True)
-class _FunctionCatalog:
-    function_keys: list[str]
-    function_name_map: dict[str, str]
-    function_definitions: list[FunctionConfig]
 
 
 @dataclass
@@ -85,9 +75,7 @@ class Worker:
 
     name: str = field(default_factory=lambda: f"worker-{uuid.uuid4().hex[:8]}")
     concurrency: int = DEFAULT_CONCURRENCY
-    prefetch: int | None = (
-        None  # None = profile default; else extra buffered reservations.
-    )
+    prefetch: int | None = None
     queue_batch_size: int | None = None
     queue_inbox_size: int | None = None
     queue_outbox_size: int | None = None
@@ -97,29 +85,16 @@ class Worker:
     queue_result_ttl_seconds: int | None = None
     queue_stream_maxlen: int | None = None
     queue_dlq_stream_maxlen: int | None = None
-    sync_executor: SyncExecutor = SyncExecutor.THREAD  # THREAD or PROCESS
-    sync_pool_size: int | None = (
-        None  # Executor pool size. Default: min(32, concurrency) for thread, cpu_count for process.
-    )
-    redis_url: str | None = None  # Uses config.settings.redis_url if not specified
+    sync_executor: SyncExecutor = SyncExecutor.THREAD
+    sync_pool_size: int | None = None
+    redis_url: str | None = None
     secrets: list[str] = field(default_factory=list)
-
-    # Signal handling (set to False when signals are handled at a higher level)
     handle_signals: bool = True
+    autodiscover_packages: list[str] = field(default_factory=list)
 
-    # Internal registry
+    # Internal state
     _registry: Registry = field(default_factory=Registry, init=False)
-
-    # Task handles for .submit()/.wait() access
-    _task_handles: dict[str, TaskHandle] = field(default_factory=dict, init=False)
-
-    # Cron definitions
-    _crons: list[CronDefinition] = field(default_factory=list, init=False)
-
-    # Event handles
-    _event_handles: dict[str, EventHandle] = field(default_factory=dict, init=False)
-
-    # Runtime state
+    _reg: WorkerRegistration = field(default=None, init=False)  # type: ignore[assignment]
     _redis_client: Any = field(default=None, init=False)
     _queue_backend: RedisQueue = field(default=None, init=False)  # type: ignore[assignment]
     _job_processor: JobProcessor | None = field(default=None, init=False)
@@ -134,6 +109,131 @@ class Worker:
     _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
     _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
     _status_flush_timeout_seconds: float = field(default=2.0, init=False)
+
+    def __post_init__(self) -> None:
+        self._reg = WorkerRegistration(self.name, self._registry)
+        if self.autodiscover_packages:
+            self.autodiscover(*self.autodiscover_packages)
+
+    # =========================================================================
+    # REGISTRATION (delegated to WorkerRegistration)
+    # =========================================================================
+
+    @overload
+    def task(self, __func: Callable[P, Any]) -> TaskHandle[P]: ...
+
+    @overload
+    def task(
+        self,
+        __func: None = None,
+        *,
+        name: str | None = None,
+        retries: int = 0,
+        retry_delay: float = 1.0,
+        retry_backoff: float = 2.0,
+        timeout: float = 30 * 60,
+        cache_key: str | None = None,
+        cache_ttl: int | None = None,
+        rate_limit: str | None = None,
+        max_concurrency: int | None = None,
+        routing_group: str | None = None,
+        group_max_concurrency: int | None = None,
+        on_start: Callable[..., Any] | None = None,
+        on_success: Callable[..., Any] | None = None,
+        on_failure: Callable[..., Any] | None = None,
+        on_retry: Callable[..., Any] | None = None,
+        on_complete: Callable[..., Any] | None = None,
+    ) -> Callable[[Callable[P, Any]], TaskHandle[P]]: ...
+
+    def task(
+        self,
+        __func: Callable[..., Any] | None = None,
+        *,
+        name: str | None = None,
+        retries: int = 0,
+        retry_delay: float = 1.0,
+        retry_backoff: float = 2.0,
+        timeout: float = 30 * 60,
+        cache_key: str | None = None,
+        cache_ttl: int | None = None,
+        rate_limit: str | None = None,
+        max_concurrency: int | None = None,
+        routing_group: str | None = None,
+        group_max_concurrency: int | None = None,
+        on_start: Callable[..., Any] | None = None,
+        on_success: Callable[..., Any] | None = None,
+        on_failure: Callable[..., Any] | None = None,
+        on_retry: Callable[..., Any] | None = None,
+        on_complete: Callable[..., Any] | None = None,
+    ) -> Any:
+        """Decorator to register a task with this worker.
+
+        Returns a TaskHandle with typed .submit() and .wait() methods.
+        """
+        return self._reg.task(
+            __func,
+            name=name,
+            retries=retries,
+            retry_delay=retry_delay,
+            retry_backoff=retry_backoff,
+            timeout=timeout,
+            cache_key=cache_key,
+            cache_ttl=cache_ttl,
+            rate_limit=rate_limit,
+            max_concurrency=max_concurrency,
+            routing_group=routing_group,
+            group_max_concurrency=group_max_concurrency,
+            on_start=on_start,
+            on_success=on_success,
+            on_failure=on_failure,
+            on_retry=on_retry,
+            on_complete=on_complete,
+            _worker=self,
+        )
+
+    def cron(
+        self,
+        schedule: str,
+        *,
+        name: str | None = None,
+        timeout: float = 30 * 60,
+        missed_run_policy: MissedRunPolicy = MissedRunPolicy.LATEST_ONLY,
+        max_catch_up_seconds: float | None = None,
+    ) -> Callable[[F], F]:
+        """Decorator to register a cron job with this worker."""
+        return self._reg.cron(
+            schedule,
+            name=name,
+            timeout=timeout,
+            missed_run_policy=missed_run_policy,
+            max_catch_up_seconds=max_catch_up_seconds,
+        )
+
+    def event(self, pattern: str) -> EventHandle:
+        """Create an event that handlers can subscribe to."""
+        return self._reg.event(pattern, _worker=self, _queue=self._queue_backend)
+
+    def autodiscover(self, *packages: str) -> None:
+        """Import all modules in the given packages to trigger task registration.
+
+        Example:
+            worker = Worker("my-app")
+            worker.autodiscover("myapp.tasks", "myapp.workflows")
+        """
+        import importlib
+        import pkgutil
+
+        for package_name in packages:
+            package = importlib.import_module(package_name)
+            for _, module_name, _ in pkgutil.walk_packages(
+                package.__path__,
+                prefix=f"{package_name}.",
+            ):
+                importlib.import_module(module_name)
+
+    # =========================================================================
+    # INITIALIZATION
+    # =========================================================================
 
     @staticmethod
     def _resolve_int_option(
@@ -155,13 +255,7 @@ class Worker:
     ) -> str:
         """Set up Redis connection, queue backend, and wire handles.
 
-        Called automatically by start()/execute() if not called explicitly.
-        Can be called manually to pass a specific redis_url.
-
-        Safe to call multiple times — only runs setup once.
-
-        Returns:
-            The generated worker ID.
+        Safe to call multiple times -- only runs setup once.
         """
         if self._worker_id:
             return self._worker_id
@@ -199,8 +293,6 @@ class Worker:
         if self.queue_inbox_size is not None:
             queue_inbox_default = default_inbox_size
         elif prefetch_explicit:
-            # Keep enough reserved work to saturate worker concurrency while honoring
-            # an explicit prefetch budget for additional buffered jobs.
             queue_inbox_default = self.concurrency + prefetch
         else:
             queue_inbox_default = default_inbox_size
@@ -266,11 +358,11 @@ class Worker:
         )
 
         # Connect task handles to queue
-        for handle in self._task_handles.values():
+        for handle in self._reg.task_handles.values():
             handle._queue = self._queue_backend
 
         # Connect event handles to queue
-        for handle in self._event_handles.values():
+        for handle in self._reg.event_handles.values():
             handle._queue = self._queue_backend
 
         # Generate worker ID for tracking
@@ -286,7 +378,6 @@ class Worker:
             if durable_candidate:
                 durable_buffer_key = durable_candidate
 
-        # Create status publisher for writing events to Redis stream
         self._status_buffer = StatusPublisher(
             self._redis_client,
             worker_id,
@@ -308,6 +399,10 @@ class Worker:
         )
 
         return worker_id
+
+    # =========================================================================
+    # LIFECYCLE (delegated to _worker_connection helpers)
+    # =========================================================================
 
     async def _emit_status_event(
         self,
@@ -333,380 +428,7 @@ class Worker:
 
     @property
     def resolved_redis_url(self) -> str | None:
-        """Resolved Redis URL."""
         return self.redis_url
-
-    # Overload for bare decorator: @worker.task
-    @overload
-    def task(self, __func: Callable[P, Any]) -> TaskHandle[P]: ...
-
-    # Overload for decorator factory: @worker.task() or @worker.task(retries=3)
-    @overload
-    def task(
-        self,
-        __func: None = None,
-        *,
-        name: str | None = None,
-        retries: int = 0,
-        retry_delay: float = 1.0,
-        retry_backoff: float = 2.0,
-        timeout: float = 30 * 60,  # 30 minutes
-        cache_key: str | None = None,
-        cache_ttl: int | None = None,
-        rate_limit: str | None = None,
-        max_concurrency: int | None = None,
-        routing_group: str | None = None,
-        group_max_concurrency: int | None = None,
-        on_start: Callable[..., Any] | None = None,
-        on_success: Callable[..., Any] | None = None,
-        on_failure: Callable[..., Any] | None = None,
-        on_retry: Callable[..., Any] | None = None,
-        on_complete: Callable[..., Any] | None = None,
-    ) -> Callable[[Callable[P, Any]], TaskHandle[P]]: ...
-
-    def task(
-        self,
-        __func: Callable[..., Any] | None = None,
-        *,
-        name: str | None = None,
-        retries: int = 0,
-        retry_delay: float = 1.0,
-        retry_backoff: float = 2.0,
-        timeout: float = 30 * 60,  # 30 minutes
-        cache_key: str | None = None,
-        cache_ttl: int | None = None,
-        rate_limit: str | None = None,
-        max_concurrency: int | None = None,
-        routing_group: str | None = None,
-        group_max_concurrency: int | None = None,
-        on_start: Callable[..., Any] | None = None,
-        on_success: Callable[..., Any] | None = None,
-        on_failure: Callable[..., Any] | None = None,
-        on_retry: Callable[..., Any] | None = None,
-        on_complete: Callable[..., Any] | None = None,
-    ) -> Any:
-        """
-        Decorator to register a task with this worker.
-
-        Returns a TaskHandle with typed .submit() and .wait() methods.
-        Use get_current_context() inside the task to access the runtime context.
-
-        Example:
-            from upnext import get_current_context
-
-            @worker.task
-            async def simple_task(order_id: str):
-                ctx = get_current_context()
-                ctx.set_progress(50, "Processing...")
-                return {"order_id": order_id}
-
-            @worker.task(retries=3, timeout=30.0)
-            async def process_order(order_id: str):
-                ...
-
-            # .submit() knows it needs order_id: str
-            await process_order.submit(order_id="123")
-        """
-
-        def decorator(fn: Callable[..., Any]) -> TaskHandle[Any]:
-            task_name = name or fn.__name__
-            function_key = build_function_key(
-                "task",
-                module=fn.__module__,
-                qualname=fn.__qualname__,
-                name=task_name,
-            )
-            if task_name in self._task_handles:
-                raise ValueError(
-                    f"Task name '{task_name}' is already registered on worker '{self.name}'"
-                )
-
-            definition = self._registry.register_task(
-                name=function_key,
-                display_name=task_name,
-                func=fn,
-                retries=retries,
-                retry_delay=retry_delay,
-                retry_backoff=retry_backoff,
-                timeout=timeout,
-                cache_key=cache_key,
-                cache_ttl=cache_ttl,
-                rate_limit=rate_limit,
-                max_concurrency=max_concurrency,
-                routing_group=routing_group,
-                group_max_concurrency=group_max_concurrency,
-                on_start=on_start,
-                on_success=on_success,
-                on_failure=on_failure,
-                on_retry=on_retry,
-                on_complete=on_complete,
-            )
-
-            handle = TaskHandle(
-                name=task_name,
-                function_key=function_key,
-                func=fn,
-                definition=definition,
-                _worker=self,
-            )
-
-            self._task_handles[task_name] = handle
-            return handle
-
-        # If __func is provided, we're being used as a bare decorator: @worker.task
-        if __func is not None:
-            return decorator(__func)
-        # Otherwise, we're being used as a decorator factory: @worker.task(retries=3)
-        return decorator
-
-    def cron(
-        self,
-        schedule: str,
-        *,
-        name: str | None = None,
-        timeout: float = 30 * 60,  # 30 minutes
-        missed_run_policy: MissedRunPolicy = MissedRunPolicy.LATEST_ONLY,
-        max_catch_up_seconds: float | None = None,
-    ) -> Callable[[F], F]:
-        """
-        Decorator to register a cron job with this worker.
-
-        Example:
-            @worker.cron("0 9 * * *")  # Every day at 9 AM
-            async def daily_report():
-                ...
-
-            @worker.cron("*/5 * * * *")
-            def health_check():
-                ...
-        """
-
-        def decorator(func: F) -> F:
-            cron_name = name or func.__name__
-            function_key = build_function_key(
-                "cron",
-                module=func.__module__,
-                qualname=func.__qualname__,
-                name=cron_name,
-                schedule=schedule,
-            )
-
-            definition = self._registry.register_cron(
-                key=function_key,
-                display_name=cron_name,
-                schedule=schedule,
-                func=func,
-                timeout=timeout,
-                missed_run_policy=missed_run_policy,
-                max_catch_up_seconds=max_catch_up_seconds,
-            )
-
-            # Also register as a task so worker can execute it
-            self._registry.register_task(
-                name=function_key,
-                display_name=cron_name,
-                func=func,
-                timeout=timeout,
-            )
-
-            self._crons.append(definition)
-            return func
-
-        return decorator
-
-    def event(self, pattern: str) -> EventHandle:
-        """
-        Create an event that handlers can subscribe to.
-
-        Example:
-            order_placed = worker.event("order.placed")
-
-            @order_placed.on
-            async def send_confirmation(event):
-                ...
-
-            @order_placed.on(retries=3)
-            async def update_inventory(event):
-                ...
-
-            # Send - all handlers fire
-            order_placed.send(order_id="123")
-        """
-        if not pattern.strip():
-            raise ValueError("Event pattern must be a non-empty string")
-
-        existing = self._event_handles.get(pattern)
-        if existing is not None:
-            return existing
-
-        handle = EventHandle(pattern=pattern, _worker=self)
-        if self._queue_backend is not None:
-            handle._queue = self._queue_backend
-        self._event_handles[pattern] = handle
-        return handle
-
-    def _build_function_catalog(self) -> _FunctionCatalog:
-        """Build immutable snapshots for worker registration and processor startup."""
-        function_keys: list[str] = []
-        function_name_map: dict[str, str] = {}
-        function_definitions: list[FunctionConfig] = []
-
-        for display_name, handle in self._task_handles.items():
-            function_key = handle.function_key
-            function_keys.append(function_key)
-            function_name_map[function_key] = display_name
-            function_definitions.append(
-                FunctionConfig(
-                    key=function_key,
-                    name=display_name,
-                    type=FunctionType.TASK,
-                    timeout=handle.definition.timeout,
-                    max_retries=handle.definition.retries,
-                    retry_delay=handle.definition.retry_delay,
-                    rate_limit=handle.definition.rate_limit,
-                    max_concurrency=handle.definition.max_concurrency,
-                    routing_group=handle.definition.routing_group,
-                    group_max_concurrency=handle.definition.group_max_concurrency,
-                )
-            )
-
-        for cron_def in self._crons:
-            if cron_def.key not in function_keys:
-                function_keys.append(cron_def.key)
-            function_name_map[cron_def.key] = cron_def.display_name
-            function_definitions.append(
-                FunctionConfig(
-                    key=cron_def.key,
-                    name=cron_def.display_name,
-                    type=FunctionType.CRON,
-                    schedule=cron_def.schedule,
-                    timeout=cron_def.timeout,
-                    missed_run_policy=cron_def.missed_run_policy,
-                    max_catch_up_seconds=cron_def.max_catch_up_seconds,
-                )
-            )
-
-        for handle in self._event_handles.values():
-            for handler in handle.handler_configs():
-                handler_key = handler["key"]
-                if handler_key not in function_keys:
-                    function_keys.append(handler_key)
-                function_name_map[handler_key] = handler["name"]
-                function_definitions.append(
-                    FunctionConfig(
-                        key=handler_key,
-                        name=handler["name"],
-                        type=FunctionType.EVENT,
-                        pattern=handle.pattern,
-                        timeout=handler["timeout"],
-                        max_retries=handler["max_retries"],
-                        retry_delay=handler["retry_delay"],
-                        rate_limit=handler["rate_limit"],
-                        max_concurrency=handler["max_concurrency"],
-                        routing_group=handler["routing_group"],
-                        group_max_concurrency=handler["group_max_concurrency"],
-                    )
-                )
-
-        return _FunctionCatalog(
-            function_keys=function_keys,
-            function_name_map=function_name_map,
-            function_definitions=function_definitions,
-        )
-
-    async def start(self) -> None:
-        """
-        Start the worker.
-
-        This connects to Redis, optionally connects to the UpNext API
-        for tracking, schedules cron jobs, and starts processing tasks.
-        """
-
-        worker_id = self.initialize(worker_id_prefix="worker")
-
-        # Fetch and inject secrets before building the function catalog
-        if self.secrets:
-            backend = BackendAPI()
-            try:
-                await fetch_and_inject_secrets(self.secrets, backend)
-            finally:
-                await backend.close()
-
-        catalog = self._build_function_catalog()
-
-        # Register worker instance and definitions in Redis
-        self._started_at = datetime.now(UTC)
-        self._registered_functions = catalog.function_keys
-        self._function_name_map = catalog.function_name_map
-        self._function_definitions = catalog.function_definitions
-        await self._write_worker_heartbeat()
-        await self._write_worker_definition()
-        await self._write_function_definitions()
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        logger.debug(f"Worker instance registered: {worker_id}")
-
-        # Create job processor (internal execution engine)
-        self._job_processor = JobProcessor(
-            queue=self._queue_backend,
-            registry=self._registry,
-            concurrency=self.concurrency,
-            functions=catalog.function_keys,
-            sync_executor=self.sync_executor,
-            sync_pool_size=self.sync_pool_size,
-            status_buffer=self._status_buffer,
-            handle_signals=self.handle_signals,
-        )
-
-        # Seed cron jobs
-        if self._crons:
-            await self._seed_crons()
-            logger.debug(f"Seeded {len(self._crons)} cron jobs")
-
-        # Start processing
-        await self._job_processor.start()
-
-    async def _seed_crons(self) -> None:
-        """Seed cron jobs using Redis-based scheduling."""
-        for cron_def in self._crons:
-            next_run = calculate_next_cron_run(cron_def.schedule)
-
-            job = Job(
-                function=cron_def.key,
-                function_name=cron_def.display_name,
-                kwargs={},
-                key=f"cron:{cron_def.key}",
-                timeout=cron_def.timeout,
-                source=CronSource(schedule=cron_def.schedule),
-            )
-
-            try:
-                if self._queue_backend:
-                    was_seeded = await self._queue_backend.seed_cron(
-                        job, next_run.timestamp()
-                    )
-                    if was_seeded:
-                        logger.debug(
-                            f"Seeded cron '{cron_def.display_name}' ({cron_def.key}) → {next_run}"
-                        )
-                    else:
-                        reconciled = await self._queue_backend.reconcile_cron_startup(
-                            job,
-                            now_ts=time_module.time(),
-                        )
-                        if reconciled:
-                            logger.debug(
-                                "Cron '%s' (%s) startup reconciliation enqueued catch-up run",
-                                cron_def.display_name,
-                                cron_def.key,
-                            )
-                        else:
-                            logger.debug(
-                                f"Cron '{cron_def.display_name}' ({cron_def.key}) already registered"
-                            )
-            except Exception as e:
-                logger.error(
-                    f"Failed to seed cron job '{cron_def.display_name}' ({cron_def.key}): {e}"
-                )
 
     def _worker_data(self) -> str:
         """Build JSON worker data for Redis."""
@@ -735,166 +457,80 @@ class Worker:
             }
         )
 
-    async def _write_worker_heartbeat(self) -> None:
-        """Write worker data to Redis with TTL."""
-        if not self._redis_client or not self._worker_id:
-            return
-        key = worker_instance_key(self._worker_id)
-        await self._redis_client.setex(key, WORKER_TTL, self._worker_data())
-        await self._publish_worker_signal("worker.heartbeat")
+    async def start(self) -> None:
+        """Start the worker: connect to Redis, seed crons, start processing."""
+        worker_id = self.initialize(worker_id_prefix="worker")
 
-    async def _write_worker_definition(self) -> None:
-        """Write persistent worker definition to Redis with 30-day TTL.
-
-        Key is `upnext:worker_defs:{worker_name}` — a config registry
-        refreshed each time a worker starts.  Active/inactive is derived
-        from live instance heartbeats, not key existence.
-        """
-        if not self._redis_client:
-            return
-        key = worker_definition_key(self.name)
-        data = json.dumps(
-            {
-                "name": self.name,
-                "functions": self._registered_functions,
-                "function_names": self._function_name_map,
-                "concurrency": self.concurrency,
-            }
-        )
-        await self._redis_client.setex(key, WORKER_DEF_TTL, data)
-        await self._publish_worker_signal("worker.definition.updated")
-
-    async def _write_function_definitions(self) -> None:
-        """Write function definitions to Redis with a 30-day TTL.
-
-        Keys are `upnext:functions:{key}` — a config registry refreshed
-        each time a worker starts.  Active/inactive is determined by live
-        worker heartbeats, not by key existence.  The 30-day TTL ensures
-        stale definitions self-clean (matches API registry TTL).
-        """
-        if not self._redis_client:
-            return
-        keys = [
-            function_definition_key(func_def.key)
-            for func_def in self._function_definitions
-        ]
-        existing_rows = await self._redis_client.mget(keys) if keys else []
-
-        async with self._redis_client.pipeline(transaction=False) as pipe:
-            for func_def, key, existing in zip(
-                self._function_definitions,
-                keys,
-                existing_rows,
-                strict=False,
-            ):
-                updated_def = func_def
-                if existing:
-                    payload = (
-                        existing.decode()
-                        if isinstance(existing, bytes)
-                        else str(existing)
-                    )
-                    try:
-                        existing_def = FunctionConfig.model_validate_json(payload)
-                        updated_def = func_def.model_copy(
-                            update={"paused": existing_def.paused}
-                        )
-                    except Exception:
-                        pass
-                pipe.setex(
-                    key,
-                    FUNCTION_DEF_TTL,
-                    updated_def.model_dump_json(),
-                )
-            await pipe.execute()
-
-    async def _publish_worker_signal(self, signal_type: str) -> None:
-        """Publish worker heartbeat/lifecycle signal for realtime dashboards."""
-        if not self._redis_client or not self._worker_id:
-            return
-
-        payload = json.dumps(
-            {
-                "type": signal_type,
-                "at": datetime.now(UTC).isoformat(),
-                "worker_id": self._worker_id,
-                "worker_name": self.name,
-            }
-        )
-        try:
+        if self.secrets:
+            backend = BackendAPI()
             try:
-                await self._redis_client.xadd(
-                    WORKER_EVENTS_STREAM,
-                    {"data": payload},
-                    maxlen=10_000,
-                    approximate=True,
-                )
-            except TypeError:
-                # Compatibility fallback for Redis clients lacking approximate trim.
-                await self._redis_client.xadd(
-                    WORKER_EVENTS_STREAM,
-                    {"data": payload},
-                    maxlen=10_000,
-                )
-        except Exception as e:
-            logger.debug(f"Failed to publish worker signal '{signal_type}': {e}")
+                await fetch_and_inject_secrets(self.secrets, backend)
+            finally:
+                await backend.close()
 
-    async def _heartbeat_loop(self) -> None:
-        """Refresh worker heartbeat TTL in Redis periodically."""
-        while True:
-            try:
-                await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL)
-                await self._write_worker_heartbeat()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.debug(f"Worker heartbeat error: {e}")
-                await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL)
+        catalog = self._reg.build_catalog()
+
+        self._started_at = datetime.now(UTC)
+        self._registered_functions = catalog.function_keys
+        self._function_name_map = catalog.function_name_map
+        self._function_definitions = catalog.function_definitions
+
+        await write_worker_heartbeat(self._redis_client, worker_id, self._worker_data())
+        await write_worker_definition(
+            self._redis_client,
+            self.name,
+            self._registered_functions,
+            self._function_name_map,
+            self.concurrency,
+        )
+        await write_function_definitions(self._redis_client, self._function_definitions)
+        self._heartbeat_task = asyncio.create_task(
+            heartbeat_loop(self._redis_client, worker_id, self._worker_data)
+        )
+        logger.debug(f"Worker instance registered: {worker_id}")
+
+        self._job_processor = JobProcessor(
+            queue=self._queue_backend,
+            registry=self._registry,
+            concurrency=self.concurrency,
+            functions=catalog.function_keys,
+            sync_executor=self.sync_executor,
+            sync_pool_size=self.sync_pool_size,
+            status_buffer=self._status_buffer,
+            handle_signals=self.handle_signals,
+        )
+
+        if self._reg.cron_definitions:
+            await seed_crons(self._reg.cron_definitions, self._queue_backend)
+            logger.debug(f"Seeded {len(self._reg.cron_definitions)} cron jobs")
+
+        await self._job_processor.start()
 
     async def execute(
         self,
         function_name: str,
         kwargs: dict[str, Any] | None = None,
     ) -> Any:
-        """
-        Execute a single function directly (for CLI testing/debugging).
-
-        This initializes the worker (connects to Redis, etc.),
-        runs the specified function once, and then shuts down cleanly.
-
-        Args:
-            function_name: Task display name or stable function key
-            kwargs: Arguments to pass to the function
-
-        Returns:
-            The function's return value
-
-        Raises:
-            ValueError: If the function is not found
-            Exception: Any exception raised by the function
-        """
-
+        """Execute a single function directly (for CLI testing/debugging)."""
         kwargs = kwargs or {}
 
-        # Find the function
-        task_handle = self._task_handles.get(function_name)
+        task_handle = self._reg.task_handles.get(function_name)
         if not task_handle:
             task_handle = next(
                 (
                     h
-                    for h in self._task_handles.values()
+                    for h in self._reg.task_handles.values()
                     if h.function_key == function_name
                 ),
                 None,
             )
         if not task_handle:
-            available = list(self._task_handles.keys())
+            available = list(self._reg.task_handles.keys())
             raise ValueError(
                 f"Function '{function_name}' not found. "
                 f"Available: {', '.join(available) if available else 'none'}"
             )
 
-        # Shared initialization (queue, emit, task handles, worker ID, status buffer)
         self.initialize(worker_id_prefix="call")
 
         job = Job(
@@ -904,13 +540,11 @@ class Worker:
         )
 
         try:
-            # Initialize job and execution context
             job.root_id = job.id
             job.mark_started(self._worker_id or "call")
             ctx = Context.from_job(job)
             set_current_context(ctx)
 
-            # Report job started
             await self._emit_status_event(
                 "record_job_started",
                 job.id,
@@ -935,7 +569,6 @@ class Worker:
                 ),
             )
 
-            # Execute the function
             start = time_module.time()
             func = task_handle.func
             if task_handle.definition.is_async:
@@ -945,7 +578,6 @@ class Worker:
 
             duration_ms = (time_module.time() - start) * 1000
 
-            # Report job completed
             await self._emit_status_event(
                 "record_job_completed",
                 job.id,
@@ -961,7 +593,6 @@ class Worker:
             return result
 
         except Exception as e:
-            # Report job failed
             await self._emit_status_event(
                 "record_job_failed",
                 job.id,
@@ -988,18 +619,12 @@ class Worker:
                 await self._queue_backend.close()
 
     async def stop(self, timeout: float = 30.0) -> None:
-        """Stop the worker gracefully.
-
-        The timeout applies to the job processor (finishing active jobs).
-        Other cleanup uses small fixed timeouts (~1s total overhead).
-        """
-        # Stop heartbeat loop
+        """Stop the worker gracefully."""
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._heartbeat_task
 
-        # Stop job processor - this is where the timeout matters
         if self._job_processor:
             await self._job_processor.stop(timeout)
         elif self._status_buffer:
@@ -1008,7 +633,6 @@ class Worker:
                     timeout_seconds=self._status_flush_timeout_seconds
                 )
 
-        # Cancel remaining background tasks (0.5s max)
         if self._background_tasks:
             _, pending = await asyncio.wait(self._background_tasks, timeout=0.5)
             for task in pending:
@@ -1018,11 +642,12 @@ class Worker:
                     await asyncio.gather(*pending, return_exceptions=True)
             self._background_tasks.clear()
 
-        # Remove worker from Redis and close connections
         if self._redis_client and self._worker_id:
             try:
                 await self._redis_client.delete(worker_instance_key(self._worker_id))
-                await self._publish_worker_signal("worker.stopped")
+                await publish_worker_signal(
+                    self._redis_client, self._worker_id, self.name, "worker.stopped"
+                )
             except Exception:
                 pass
         if self._queue_backend:
@@ -1030,24 +655,25 @@ class Worker:
 
         logger.debug(f"Worker '{self.name}' stopped")
 
+    # =========================================================================
+    # ACCESSORS
+    # =========================================================================
+
     @property
     def tasks(self) -> dict[str, TaskHandle]:
-        """Get all registered task handles."""
-        return dict(self._task_handles)
+        return dict(self._reg.task_handles)
 
     @property
     def crons(self) -> list[CronDefinition]:
-        """Get all registered cron definitions."""
-        return list(self._crons)
+        return list(self._reg.cron_definitions)
 
     @property
     def events(self) -> dict[str, EventHandle]:
-        """Get all registered event handles."""
-        return dict(self._event_handles)
+        return dict(self._reg.event_handles)
 
     def __repr__(self) -> str:
         return (
             f"Worker(name={self.name!r}, concurrency={self.concurrency}, "
-            f"tasks={len(self._task_handles)}, crons={len(self._crons)}, "
-            f"events={len(self._event_handles)})"
+            f"tasks={len(self._reg.task_handles)}, crons={len(self._reg.cron_definitions)}, "
+            f"events={len(self._reg.event_handles)})"
         )

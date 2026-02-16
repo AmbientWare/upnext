@@ -258,3 +258,60 @@ def test_worker_queue_kwargs_validate_ranges(fake_redis, monkeypatch) -> None:
             redis_url="redis://ignored",
             queue_flush_interval_ms=0,
         ).initialize(redis_url="redis://ignored")
+
+
+def test_worker_autodiscover(tmp_path) -> None:
+    """autodiscover() imports all modules in a package to trigger registration."""
+    import sys
+
+    # Create a temp package with submodules
+    pkg_dir = tmp_path / "discoverpkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "orders.py").write_text("LOADED = True\n")
+    (pkg_dir / "notifications.py").write_text("LOADED = True\n")
+
+    # Nested subpackage
+    sub_dir = pkg_dir / "sub"
+    sub_dir.mkdir()
+    (sub_dir / "__init__.py").write_text("")
+    (sub_dir / "deep.py").write_text("LOADED = True\n")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        worker = Worker(name="discover-worker")
+        assert "discoverpkg.orders" not in sys.modules
+        assert "discoverpkg.notifications" not in sys.modules
+        assert "discoverpkg.sub.deep" not in sys.modules
+
+        worker.autodiscover("discoverpkg")
+
+        assert "discoverpkg.orders" in sys.modules
+        assert "discoverpkg.notifications" in sys.modules
+        assert "discoverpkg.sub.deep" in sys.modules
+    finally:
+        sys.path.remove(str(tmp_path))
+        for key in list(sys.modules):
+            if key.startswith("discoverpkg"):
+                del sys.modules[key]
+
+
+def test_worker_autodiscover_packages_init_param(tmp_path) -> None:
+    """autodiscover_packages in __init__ triggers discovery at construction."""
+    import sys
+
+    pkg_dir = tmp_path / "initpkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "tasks.py").write_text("LOADED = True\n")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        assert "initpkg.tasks" not in sys.modules
+        Worker(name="init-discover", autodiscover_packages=["initpkg"])
+        assert "initpkg.tasks" in sys.modules
+    finally:
+        sys.path.remove(str(tmp_path))
+        for key in list(sys.modules):
+            if key.startswith("initpkg"):
+                del sys.modules[key]

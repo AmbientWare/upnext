@@ -4,6 +4,7 @@ import asyncio
 
 from shared._version import __version__
 from shared.artifacts import ArtifactType
+from shared.domain import FailureReason, JobStatus
 
 from upnext.engine import run_services
 from upnext.sdk import (
@@ -21,6 +22,8 @@ __all__ = [
     "Api",
     "ArtifactType",
     "Context",
+    "FailureReason",
+    "JobStatus",
     "TaskTimeoutError",
     "Worker",
     "SyncExecutor",

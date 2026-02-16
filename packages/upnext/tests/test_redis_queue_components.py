@@ -182,6 +182,7 @@ async def test_sweeper_fallback_moves_due_job_to_stream(fake_redis) -> None:
     queue._scripts_loaded = True  # noqa: SLF001
     queue._enqueue_sha = None  # noqa: SLF001
     queue._sweep_sha = None  # noqa: SLF001
+    queue._registered_functions = ["task_fn"]  # noqa: SLF001
 
     job = Job(function="task_fn", function_name="task", key="sweep-key")
     await queue.enqueue(job, delay=1.0)
@@ -211,7 +212,9 @@ async def test_sweeper_sleep_uses_max_when_no_jobs(fake_redis, monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_sweeper_sleep_clamps_to_min_for_due_jobs(fake_redis, monkeypatch) -> None:
+async def test_sweeper_sleep_clamps_to_min_for_due_jobs(
+    fake_redis, monkeypatch
+) -> None:
     queue = RedisQueue(client=fake_redis, key_prefix="upnext-sweeper-sleep-min")
     sweeper = Sweeper(queue=queue, sweep_interval=1.0)
     monkeypatch.setattr("upnext.engine.queue.redis.sweeper.time.time", lambda: 100.0)

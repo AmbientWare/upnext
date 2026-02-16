@@ -43,6 +43,15 @@ class StateTransition:
         )
 
 
+class FailureReason(StrEnum):
+    """Structured reason for job failure."""
+
+    TIMEOUT = "timeout"
+    EXCEPTION = "exception"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
+
+
 class JobStatus(StrEnum):
     """Job execution status."""
 
@@ -283,6 +292,7 @@ class Job:
     result: Any = None
     error: str | None = None
     error_traceback: str | None = None
+    failure_reason: FailureReason | None = None
 
     # State history
     state_history: list[StateTransition] = field(default_factory=list)
@@ -403,6 +413,7 @@ class Job:
             "result": self.result,
             "error": self.error,
             "error_traceback": self.error_traceback,
+            "failure_reason": self.failure_reason.value if self.failure_reason else None,
             "state_history": [t.to_dict() for t in self.state_history],
         }
 
@@ -445,6 +456,7 @@ class Job:
             result=data.get("result"),
             error=data.get("error"),
             error_traceback=data.get("error_traceback"),
+            failure_reason=FailureReason(data["failure_reason"]) if data.get("failure_reason") else None,
             state_history=[
                 StateTransition.from_dict(t) for t in data.get("state_history", [])
             ],

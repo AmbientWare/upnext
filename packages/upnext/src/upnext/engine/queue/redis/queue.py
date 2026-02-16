@@ -43,9 +43,7 @@ from shared.keys import (
     function_dlq_stream_key as shared_function_dlq_stream_key,
     function_rate_limit_key as shared_function_rate_limit_key,
     function_scheduled_key as shared_function_scheduled_key,
-    function_scheduled_pattern,
     function_stream_key as shared_function_stream_key,
-    function_stream_pattern,
     job_cancelled_key as shared_job_cancelled_key,
     job_index_key as shared_job_index_key,
     job_key as shared_job_key,
@@ -83,6 +81,24 @@ from upnext.engine.queue.redis.sweeper import Sweeper
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _FunctionState:
+    """Unified per-function cache entry."""
+
+    config: FunctionConfig | None = None
+    config_at: float = 0.0
+    paused: bool = False
+    paused_at: float = 0.0
+    rate_limit: RateLimit | None = None
+    rate_limit_at: float = 0.0
+    max_concurrency: int | None = None
+    max_concurrency_at: float = 0.0
+    active_count: int = 0
+    active_count_at: float = 0.0
+    group_quota: tuple[str | None, int | None] = (None, None)
+    group_quota_at: float = 0.0
 
 
 class _CronCursorRecord(BaseModel):
@@ -197,15 +213,9 @@ class RedisQueue(BaseQueue):
         self._cancel_sha: str | None = None
         self._rate_limit_sha: str | None = None
 
-        # Function pause state cache (short-lived to avoid frequent Redis GETs).
-        self._function_config_cache: dict[str, tuple[FunctionConfig | None, float]] = {}
-        self._function_pause_cache: dict[str, tuple[bool, float]] = {}
-        self._function_rate_limit_cache: dict[str, tuple[RateLimit | None, float]] = {}
-        self._function_max_concurrency_cache: dict[str, tuple[int | None, float]] = {}
-        self._function_active_count_cache: dict[str, tuple[int, float]] = {}
-        self._function_group_quota_cache: dict[
-            str, tuple[tuple[str | None, int | None], float]
-        ] = {}
+        # Unified per-function state cache (short-lived to avoid frequent Redis GETs).
+        self._fn_state: dict[str, _FunctionState] = {}
+        # Non-per-function caches (keyed differently).
         self._group_active_count_cache: dict[str, tuple[int, float]] = {}
         self._routing_group_members_cache: tuple[dict[str, list[str]], float] | None = (
             None
@@ -215,6 +225,9 @@ class RedisQueue(BaseQueue):
         self._fair_dequeue_cursor = 0
         self._stream_claims: dict[str, _StreamClaim] = {}
         self._stream_claims_total: int = 0
+
+        # Registered function names (set on start)
+        self._registered_functions: list[str] = []
 
         # Components (created on start)
         self._fetcher = None
@@ -233,6 +246,7 @@ class RedisQueue(BaseQueue):
         if self._fetcher is not None:
             return  # Already started
 
+        self._registered_functions = list(functions) if functions else []
         await self._ensure_connected()
 
         # Create and start components
@@ -484,17 +498,26 @@ class RedisQueue(BaseQueue):
             return None
         return config
 
+    def _get_fn_state(self, function: str) -> _FunctionState:
+        """Return or create the per-function cache entry."""
+        state = self._fn_state.get(function)
+        if state is None:
+            state = _FunctionState()
+            self._fn_state[function] = state
+        return state
+
     async def _read_function_config(self, function: str) -> FunctionConfig | None:
         now = time.time()
-        cached = self._function_config_cache.get(function)
-        if cached and cached[1] > now:
-            return cached[0]
+        state = self._get_fn_state(function)
+        if state.config_at > now:
+            return state.config
 
         client = await self._ensure_connected()
         key = self._function_def_key(function)
         raw = await client.get(key)
         config = self._parse_function_config(raw, key_hint=key)
-        self._function_config_cache[function] = (config, now + 1.0)
+        state.config = config
+        state.config_at = now + 1.0
         return config
 
     async def record_dispatch_reason(
@@ -571,9 +594,9 @@ class RedisQueue(BaseQueue):
         states: dict[str, bool] = {}
         stale: list[str] = []
         for fn in functions:
-            cached = self._function_pause_cache.get(fn)
-            if cached and cached[1] > now:
-                states[fn] = cached[0]
+            fn_state = self._get_fn_state(fn)
+            if fn_state.paused_at > now:
+                states[fn] = fn_state.paused
             else:
                 stale.append(fn)
 
@@ -586,17 +609,20 @@ class RedisQueue(BaseQueue):
                 config = self._parse_function_config(raw, key_hint=key)
                 if config is not None:
                     paused = config.paused
-                self._function_config_cache[fn] = (config, now + 1.0)
+                fn_state = self._get_fn_state(fn)
+                fn_state.config = config
+                fn_state.config_at = now + 1.0
+                fn_state.paused = paused
+                fn_state.paused_at = now + 1.0
                 states[fn] = paused
-                self._function_pause_cache[fn] = (paused, now + 1.0)
 
         return states
 
     async def _function_rate_limit(self, function: str) -> RateLimit | None:
         now = time.time()
-        cached = self._function_rate_limit_cache.get(function)
-        if cached and cached[1] > now:
-            return cached[0]
+        state = self._get_fn_state(function)
+        if state.rate_limit_at > now:
+            return state.rate_limit
 
         parsed: RateLimit | None = None
         config = await self._read_function_config(function)
@@ -609,14 +635,15 @@ class RedisQueue(BaseQueue):
                 )
                 parsed = None
 
-        self._function_rate_limit_cache[function] = (parsed, now + 1.0)
+        state.rate_limit = parsed
+        state.rate_limit_at = now + 1.0
         return parsed
 
     async def _function_max_concurrency(self, function: str) -> int | None:
         now = time.time()
-        cached = self._function_max_concurrency_cache.get(function)
-        if cached and cached[1] > now:
-            return cached[0]
+        state = self._get_fn_state(function)
+        if state.max_concurrency_at > now:
+            return state.max_concurrency
 
         parsed: int | None = None
         config = await self._read_function_config(function)
@@ -630,14 +657,15 @@ class RedisQueue(BaseQueue):
                 )
                 parsed = None
 
-        self._function_max_concurrency_cache[function] = (parsed, now + 1.0)
+        state.max_concurrency = parsed
+        state.max_concurrency_at = now + 1.0
         return parsed
 
     async def _function_active_count(self, function: str) -> int:
         now = time.time()
-        cached = self._function_active_count_cache.get(function)
-        if cached and cached[1] > now:
-            return cached[0]
+        state = self._get_fn_state(function)
+        if state.active_count_at > now:
+            return state.active_count
 
         client = await self._ensure_connected()
         stream_key = self._stream_key(function)
@@ -659,7 +687,8 @@ class RedisQueue(BaseQueue):
         except redis.ResponseError:
             active = 0
 
-        self._function_active_count_cache[function] = (active, now + 0.25)
+        state.active_count = active
+        state.active_count_at = now + 0.25
         return active
 
     async def _function_group_quota(
@@ -667,9 +696,9 @@ class RedisQueue(BaseQueue):
         function: str,
     ) -> tuple[str | None, int | None]:
         now = time.time()
-        cached = self._function_group_quota_cache.get(function)
-        if cached and cached[1] > now:
-            return cached[0]
+        state = self._get_fn_state(function)
+        if state.group_quota_at > now:
+            return state.group_quota
 
         group: str | None = None
         limit: int | None = None
@@ -690,7 +719,8 @@ class RedisQueue(BaseQueue):
                 limit = None
 
         result = (group, limit)
-        self._function_group_quota_cache[function] = (result, now + 1.0)
+        state.group_quota = result
+        state.group_quota_at = now + 1.0
         return result
 
     async def _group_active_count(self, group: str) -> int:
@@ -739,7 +769,9 @@ class RedisQueue(BaseQueue):
         return members
 
     def _invalidate_function_active_count(self, function: str) -> None:
-        self._function_active_count_cache.pop(function, None)
+        state = self._fn_state.get(function)
+        if state is not None:
+            state.active_count_at = 0.0
         self._group_active_count_cache.clear()
 
     def _set_stream_claim(self, job_id: str, *, stream_key: str, msg_id: str) -> None:
@@ -1856,8 +1888,8 @@ class RedisQueue(BaseQueue):
     async def cleanup_stale_consumer_groups(self) -> int:
         """Remove consumer groups with no pending messages and no active consumers.
 
-        Scans all function streams and destroys groups that have been idle for
-        more than 1 hour. Skips the primary consumer group used by this queue.
+        Checks all registered function streams and destroys groups that have been
+        idle for more than 1 hour. Skips the primary consumer group used by this queue.
 
         Returns:
             Number of consumer groups destroyed.
@@ -1866,67 +1898,52 @@ class RedisQueue(BaseQueue):
         destroyed = 0
         idle_threshold_ms = 3_600_000  # 1 hour
 
-        cursor = 0
-        while True:
-            cursor, keys = await client.scan(
-                cursor=cursor,
-                match=function_stream_pattern(key_prefix=self._key_prefix),
-                count=100,
-            )
+        for function in self._registered_functions:
+            stream_key = self._stream_key(function)
+            try:
+                groups = await client.xinfo_groups(stream_key)
+            except redis.ResponseError:
+                continue
 
-            for stream_key in keys:
-                key_str = (
-                    stream_key.decode()
-                    if isinstance(stream_key, bytes)
-                    else stream_key
-                )
-                try:
-                    groups = await client.xinfo_groups(key_str)
-                except redis.ResponseError:
+            for group in groups:
+                if not isinstance(group, dict):
                     continue
-
-                for group in groups:
-                    if not isinstance(group, dict):
-                        continue
-                    name = group.get("name", group.get(b"name", b""))
-                    if isinstance(name, bytes):
-                        name = name.decode()
-                    # Never destroy the active consumer group
-                    if name == self._consumer_group:
-                        continue
-                    pending = group.get("pending", group.get(b"pending", 0))
-                    if isinstance(pending, bytes):
-                        pending = int(pending)
-                    if pending > 0:
-                        continue
-                    consumers = group.get("consumers", group.get(b"consumers", 0))
-                    if isinstance(consumers, bytes):
-                        consumers = int(consumers)
-                    last_delivered = group.get(
-                        "last-delivered-id", group.get(b"last-delivered-id", b"0-0")
-                    )
-                    if isinstance(last_delivered, bytes):
-                        last_delivered = last_delivered.decode()
-                    # Extract timestamp from stream ID (ms since epoch)
+                name = group.get("name", group.get(b"name", b""))
+                if isinstance(name, bytes):
+                    name = name.decode()
+                # Never destroy the active consumer group
+                if name == self._consumer_group:
+                    continue
+                pending = group.get("pending", group.get(b"pending", 0))
+                if isinstance(pending, bytes):
+                    pending = int(pending)
+                if pending > 0:
+                    continue
+                consumers = group.get("consumers", group.get(b"consumers", 0))
+                if isinstance(consumers, bytes):
+                    consumers = int(consumers)
+                last_delivered = group.get(
+                    "last-delivered-id", group.get(b"last-delivered-id", b"0-0")
+                )
+                if isinstance(last_delivered, bytes):
+                    last_delivered = last_delivered.decode()
+                # Extract timestamp from stream ID (ms since epoch)
+                try:
+                    ts_ms = int(last_delivered.split("-")[0])
+                except (ValueError, IndexError):
+                    ts_ms = 0
+                idle_ms = int(time.time() * 1000) - ts_ms if ts_ms > 0 else idle_threshold_ms + 1
+                if consumers == 0 and idle_ms > idle_threshold_ms:
                     try:
-                        ts_ms = int(last_delivered.split("-")[0])
-                    except (ValueError, IndexError):
-                        ts_ms = 0
-                    idle_ms = int(time.time() * 1000) - ts_ms if ts_ms > 0 else idle_threshold_ms + 1
-                    if consumers == 0 and idle_ms > idle_threshold_ms:
-                        try:
-                            await client.xgroup_destroy(key_str, name)
-                            destroyed += 1
-                            logger.debug(
-                                "Destroyed stale consumer group %s on %s",
-                                name,
-                                key_str,
-                            )
-                        except redis.ResponseError:
-                            pass
-
-            if cursor == 0:
-                break
+                        await client.xgroup_destroy(stream_key, name)
+                        destroyed += 1
+                        logger.debug(
+                            "Destroyed stale consumer group %s on %s",
+                            name,
+                            stream_key,
+                        )
+                    except redis.ResponseError:
+                        pass
 
         if destroyed:
             logger.info(
@@ -2043,55 +2060,31 @@ class RedisQueue(BaseQueue):
         total_active = 0
         total_scheduled = 0
 
-        cursor = 0
-        while True:
-            cursor, keys = await client.scan(
-                cursor=cursor,
-                match=function_stream_pattern(key_prefix=self._key_prefix),
-                count=100,
-            )
+        for function in self._registered_functions:
+            stream_key = self._stream_key(function)
+            try:
+                groups = await client.xinfo_groups(stream_key)
+                for group in groups:
+                    if isinstance(group, dict):
+                        name = group.get("name", group.get(b"name", b""))
+                        if isinstance(name, bytes):
+                            name = name.decode()
+                        if name == self._consumer_group:
+                            lag = group.get("lag", group.get(b"lag", 0))
+                            pending = group.get("pending", group.get(b"pending", 0))
+                            if isinstance(lag, bytes):
+                                lag = int(lag)
+                            if isinstance(pending, bytes):
+                                pending = int(pending)
+                            total_queued += lag
+                            total_active += pending
+                            break
+            except redis.ResponseError:
+                pass
 
-            for stream_key in keys:
-                key_str = (
-                    stream_key.decode() if isinstance(stream_key, bytes) else stream_key
-                )
-                try:
-                    groups = await client.xinfo_groups(key_str)
-                    for group in groups:
-                        if isinstance(group, dict):
-                            name = group.get("name", group.get(b"name", b""))
-                            if isinstance(name, bytes):
-                                name = name.decode()
-                            if name == self._consumer_group:
-                                lag = group.get("lag", group.get(b"lag", 0))
-                                pending = group.get("pending", group.get(b"pending", 0))
-                                if isinstance(lag, bytes):
-                                    lag = int(lag)
-                                if isinstance(pending, bytes):
-                                    pending = int(pending)
-                                total_queued += lag
-                                total_active += pending
-                                break
-                except redis.ResponseError:
-                    pass
-
-            if cursor == 0:
-                break
-
-        cursor = 0
-        while True:
-            cursor, keys = await client.scan(
-                cursor=cursor,
-                match=function_scheduled_pattern(key_prefix=self._key_prefix),
-                count=100,
-            )
-
-            for key in keys:
-                count = await client.zcard(key)
-                total_scheduled += count
-
-            if cursor == 0:
-                break
+            scheduled_key = self._scheduled_key(function)
+            count = await client.zcard(scheduled_key)
+            total_scheduled += count
 
         return {
             "queued": max(0, total_queued),
@@ -2714,7 +2707,9 @@ class RedisQueue(BaseQueue):
             update={"next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat()}
         )
         serialized = updated.model_dump_json()
-        self._function_config_cache[function_name] = (updated, time.time() + 1.0)
+        fn_state = self._get_fn_state(function_name)
+        fn_state.config = updated
+        fn_state.config_at = time.time() + 1.0
         ttl = await client.ttl(func_key)
         if ttl > 0:
             await client.setex(func_key, ttl, serialized)

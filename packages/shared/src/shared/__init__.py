@@ -81,6 +81,7 @@ from shared.contracts.workers import (
 from shared.domain import (
     CronSource,
     EventSource,
+    FailureReason,
     Job,
     JobStatus,
     JobType,
@@ -104,6 +105,7 @@ __all__ = [
     "MINUTE_BUCKET_TTL",
     "HOURLY_BUCKET_TTL",
     "REGISTRY_TTL",
+    "FailureReason",
     "Job",
     "JobStatus",
     "JobType",

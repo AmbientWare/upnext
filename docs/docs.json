@@ -84,6 +84,7 @@
             "group": "Core",
             "pages": [
               "guides/run-services",
+              "guides/dedicated-workers",
               "guides/submit-and-wait",
               "guides/parallel-execution",
               "guides/error-handling"

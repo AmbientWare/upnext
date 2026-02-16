@@ -9,7 +9,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from shared.keys import function_scheduled_pattern, job_key
+from shared.keys import function_scheduled_key, job_key
 
 if TYPE_CHECKING:
     from upnext.engine.queue.redis.queue import RedisQueue
@@ -39,8 +39,6 @@ class Sweeper:
         sweep_interval: float,
     ) -> None:
         self._queue = queue
-        # Constructor keeps sweep_interval for compatibility with existing callers,
-        # but adaptive bounds are fixed constants for predictable cadence.
         _ = sweep_interval
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -124,34 +122,27 @@ class Sweeper:
     async def _get_next_due_timestamp(self, client) -> float | None:
         """Return earliest scheduled score across all functions, if any."""
         earliest: float | None = None
-        cursor = 0
         now = time.time()
 
-        while True:
-            cursor, keys = await client.scan(
-                cursor=cursor,
-                match=function_scheduled_pattern(key_prefix=self._queue._key_prefix),
-                count=100,
-            )
+        scheduled_keys = [
+            function_scheduled_key(fn, key_prefix=self._queue._key_prefix)
+            for fn in self._queue._registered_functions
+        ]
 
-            for scheduled_key in keys:
-                try:
-                    entries = await client.zrange(scheduled_key, 0, 0, withscores=True)
-                except Exception:
-                    continue
-                if not entries:
-                    continue
+        for scheduled_key in scheduled_keys:
+            try:
+                entries = await client.zrange(scheduled_key, 0, 0, withscores=True)
+            except Exception:
+                continue
+            if not entries:
+                continue
 
-                _, raw_score = entries[0]
-                score = float(raw_score)
-                if earliest is None or score < earliest:
-                    earliest = score
-                    # Due now (or overdue) should wake quickly.
-                    if earliest <= now:
-                        return earliest
-
-            if cursor == 0:
-                break
+            _, raw_score = entries[0]
+            score = float(raw_score)
+            if earliest is None or score < earliest:
+                earliest = score
+                if earliest <= now:
+                    return earliest
 
         return earliest
 
@@ -167,52 +158,29 @@ class Sweeper:
         client = await self._queue._ensure_connected()
         now = time.time()
 
-        # Scan all scheduled ZSETs
-        cursor = 0
-        while True:
-            cursor, keys = await client.scan(
-                cursor=cursor,
-                match=function_scheduled_pattern(key_prefix=self._queue._key_prefix),
-                count=100,
+        for function in self._queue._registered_functions:
+            scheduled = function_scheduled_key(
+                function, key_prefix=self._queue._key_prefix
             )
+            stream_key = self._queue._stream_key(function)
+            await self._queue._ensure_consumer_group(stream_key)
 
-            for scheduled_key in keys:
-                key_str = (
-                    scheduled_key.decode()
-                    if isinstance(scheduled_key, bytes)
-                    else scheduled_key
+            if self._queue._sweep_sha:
+                moved = await client.evalsha(
+                    self._queue._sweep_sha,
+                    2,
+                    scheduled,
+                    stream_key,
+                    str(now),
+                    function,
+                    "100",
+                    str(self._queue._stream_maxlen),
+                    self._queue._key_prefix,
                 )
-
-                # Extract function name from key
-                parts = key_str.split(":")
-                fn_idx = parts.index("fn") + 1
-                function = parts[fn_idx]
-
-                stream_key = self._queue._stream_key(function)
-                await self._queue._ensure_consumer_group(stream_key)
-
-                # Use Lua script for atomic sweep if available
-                if self._queue._sweep_sha:
-                    moved = await client.evalsha(
-                        self._queue._sweep_sha,
-                        2,
-                        key_str,
-                        stream_key,
-                        str(now),
-                        function,
-                        "100",
-                        str(self._queue._stream_maxlen),
-                        self._queue._key_prefix,
-                    )
-                    if moved and moved > 0:
-                        logger.debug(f"Swept {moved} scheduled jobs for {function}")
-                else:
-                    await self._sweep_fallback(
-                        client, key_str, stream_key, function, now
-                    )
-
-            if cursor == 0:
-                break
+                if moved and moved > 0:
+                    logger.debug(f"Swept {moved} scheduled jobs for {function}")
+            else:
+                await self._sweep_fallback(client, scheduled, stream_key, function, now)
 
     async def _sweep_fallback(
         self,

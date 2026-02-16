@@ -28,7 +28,7 @@ from functools import partial
 from typing import Any, cast
 
 from shared.contracts import DispatchReason
-from shared.domain import Job, JobStatus
+from shared.domain import FailureReason, Job, JobStatus
 
 from upnext.engine.cron import calculate_next_cron_timestamp
 from upnext.engine.queue.base import BaseQueue
@@ -488,6 +488,7 @@ class JobProcessor:
             else:
                 return await self._call_function(task_def, ctx, job)
         except TimeoutError as e:
+            job.failure_reason = FailureReason.TIMEOUT
             raise TimeoutError(f"Job {job.id} timed out after {timeout}s") from e
 
     async def _call_function(
@@ -684,6 +685,13 @@ class JobProcessor:
 
         error_msg = str(error)
         error_traceback = tb.format_exc()
+
+        if not job.failure_reason:
+            job.failure_reason = (
+                FailureReason.TIMEOUT
+                if isinstance(error, TimeoutError)
+                else FailureReason.EXCEPTION
+            )
 
         logger.warning(f"Job {job.id} failed (attempt {job.attempts}): {error_msg}")
 
