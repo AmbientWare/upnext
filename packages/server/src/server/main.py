@@ -53,7 +53,6 @@ async def lifespan(_app: FastAPI):
     logger.info("Starting UpNext API server...")
 
     settings = get_settings()
-
     # Initialize database (defaults to SQLite if not configured)
     db = init_database(settings.effective_database_url)
     await db.connect()

@@ -160,7 +160,7 @@ function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
         completed_at: null,
         duration_ms: null,
       };
-    case "job.completed":
+    case "job.completed": {
       const startedAt = deriveStartedAt(event.completed_at, event.duration_ms);
       return {
         id: job_id,
@@ -177,6 +177,7 @@ function jobPatchFromEvent(event: JobEvent): Partial<Job> | null {
         completed_at: event.completed_at ?? null,
         progress: 1,
       };
+    }
     case "job.failed":
       return {
         id: job_id,

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from cryptography.fernet import Fernet
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared._version import __version__
 
@@ -12,16 +13,25 @@ logger = logging.getLogger(__name__)
 
 _UPNEXT_HOME = Path.home() / ".upnext"
 _SECRET_KEY_FILE = _UPNEXT_HOME / "secret_key"
+_SECRET_KEY_FILE_MODE = 0o600
 
 
 def _get_or_create_secret_key() -> str:
     """Read a persisted Fernet key from disk, or generate and save one."""
     if _SECRET_KEY_FILE.exists():
+        try:
+            _SECRET_KEY_FILE.chmod(_SECRET_KEY_FILE_MODE)
+        except OSError:
+            logger.debug("Could not tighten secret key file permissions")
         return _SECRET_KEY_FILE.read_text().strip()
 
     _SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
     key = Fernet.generate_key().decode()
     _SECRET_KEY_FILE.write_text(key)
+    try:
+        _SECRET_KEY_FILE.chmod(_SECRET_KEY_FILE_MODE)
+    except OSError:
+        logger.debug("Could not set secret key file permissions")
     logger.info("Generated new secret key at %s", _SECRET_KEY_FILE)
     logger.warning(
         "For production, set UPNEXT_SECRET_KEY to a secure random string. Fernet compatible."
@@ -67,6 +77,7 @@ class Settings(BaseSettings):
     # Authentication
     auth_enabled: bool = False
     api_key: str | None = None
+    secrets_require_admin_reads: bool = False
 
     # Encryption key for secrets storage.
     # Auto-generated and persisted to ~/.upnext/secret_key if not set via env.
@@ -129,6 +140,19 @@ class Settings(BaseSettings):
 
     version: str = __version__
 
+    @field_validator("env", mode="before")
+    @classmethod
+    def _normalize_env_aliases(cls, value: object) -> object:
+        """Allow long-form env aliases for compatibility with docs/SDK defaults."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            aliases = {
+                "development": Environments.DEV.value,
+                "production": Environments.PROD.value,
+            }
+            return aliases.get(normalized, normalized)
+        return value
+
     @property
     def is_production(self) -> bool:
         return self.env.is_production()
@@ -155,6 +179,11 @@ class Settings(BaseSettings):
         origins = [origin.strip() for origin in self.cors_allow_origins.split(",")]
         cleaned = [origin for origin in origins if origin]
         return cleaned or ["*"]
+
+    @property
+    def effective_secrets_require_admin_reads(self) -> bool:
+        """Resolve secret read policy from explicit configuration."""
+        return self.secrets_require_admin_reads
 
     def model_post_init(self, __context: object) -> None:
         if not self.secret_key:

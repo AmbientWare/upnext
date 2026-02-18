@@ -42,7 +42,7 @@ async def list_function_dead_letters(
         raise HTTPException(status_code=503, detail=str(e)) from e
 
     return DeadLetterListResponse(
-        entries=[DeadLetterEntryResponse(**e) for e in entries],
+        entries=[DeadLetterEntryResponse.model_validate(e) for e in entries],
         total=total,
         function=function,
     )
@@ -74,7 +74,7 @@ async def delete_function_dead_letter(
     if not deleted:
         raise HTTPException(status_code=404, detail="Dead-letter entry not found")
 
-    return DeadLetterEntryResponse(**entry)
+    return DeadLetterEntryResponse.model_validate(entry)
 
 
 @router.delete(

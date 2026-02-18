@@ -10,7 +10,6 @@ import server.routes.apis.apis_root as apis_root_route
 import server.routes.apis.apis_stream as apis_stream_route
 import server.routes.apis.apis_utils as apis_utils_route
 import server.routes.artifacts.artifacts_root as artifacts_root_route
-import server.routes.artifacts.artifacts_stream as artifacts_stream_route
 import server.routes.artifacts.artifacts_utils as artifacts_utils_route
 import server.routes.events_stream as events_stream_route
 import server.routes.functions as functions_route

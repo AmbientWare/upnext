@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -19,6 +19,27 @@ import {
 } from "@/components/ui/dialog";
 import { Eye, EyeOff, Plus, X } from "lucide-react";
 
+type SecretPair = { key: string; value: string };
+
+function defaultPairs(): SecretPair[] {
+  return [{ key: "", value: "" }];
+}
+
+function pairsFromSecretData(secretData: { data: Record<string, string> } | undefined): SecretPair[] {
+  if (!secretData) {
+    return defaultPairs();
+  }
+  const entries = Object.entries(secretData.data);
+  if (entries.length === 0) {
+    return defaultPairs();
+  }
+  return entries.map(([key, value]) => ({ key, value }));
+}
+
+function clonePairs(pairs: SecretPair[]): SecretPair[] {
+  return pairs.map((pair) => ({ ...pair }));
+}
+
 export function SecretFormDialog({
   open,
   onOpenChange,
@@ -31,11 +52,8 @@ export function SecretFormDialog({
   const queryClient = useQueryClient();
   const isEdit = !!secretId;
 
-  const [name, setName] = useState("");
-  const [pairs, setPairs] = useState<{ key: string; value: string }[]>([
-    { key: "", value: "" },
-  ]);
-  const [loaded, setLoaded] = useState(false);
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [pairsDraft, setPairsDraft] = useState<SecretPair[] | null>(null);
   const [visibleValues, setVisibleValues] = useState<Set<number>>(new Set());
 
   // Load existing secret data for edit mode
@@ -45,15 +63,8 @@ export function SecretFormDialog({
     enabled: isEdit && open,
   });
 
-  // Populate form when secret data loads
-  useEffect(() => {
-    if (isEdit && secretData && !loaded) {
-      setName(secretData.name);
-      const entries = Object.entries(secretData.data);
-      setPairs(entries.length > 0 ? entries.map(([k, v]) => ({ key: k, value: v })) : [{ key: "", value: "" }]);
-      setLoaded(true);
-    }
-  }, [isEdit, secretData, loaded]);
+  const pairs = pairsDraft ?? pairsFromSecretData(secretData);
+  const name = nameDraft ?? (isEdit ? secretData?.name ?? "" : "");
 
   const invalidateSecrets = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.secrets });
@@ -99,18 +110,17 @@ export function SecretFormDialog({
   });
 
   const handleClose = () => {
-    setName("");
-    setPairs([{ key: "", value: "" }]);
-    setLoaded(false);
+    setNameDraft(null);
+    setPairsDraft(null);
     setVisibleValues(new Set());
     onOpenChange(false);
   };
 
-  const addPair = () => setPairs([...pairs, { key: "", value: "" }]);
+  const addPair = () => setPairsDraft([...clonePairs(pairs), { key: "", value: "" }]);
 
   const removePair = (index: number) => {
     const next = pairs.filter((_, i) => i !== index);
-    setPairs(next.length === 0 ? [{ key: "", value: "" }] : next);
+    setPairsDraft(next.length === 0 ? defaultPairs() : clonePairs(next));
     setVisibleValues((prev) => {
       const next = new Set(prev);
       next.delete(index);
@@ -119,9 +129,9 @@ export function SecretFormDialog({
   };
 
   const updatePair = (index: number, field: "key" | "value", val: string) => {
-    const next = [...pairs];
+    const next = clonePairs(pairs);
     next[index] = { ...next[index], [field]: val };
-    setPairs(next);
+    setPairsDraft(next);
   };
 
   const toggleValueVisibility = (index: number) => {
@@ -160,7 +170,7 @@ export function SecretFormDialog({
             <label className="text-sm font-medium">Name</label>
             <Input
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => setNameDraft(e.target.value)}
               placeholder="db-credentials"
               autoFocus={!isEdit}
             />

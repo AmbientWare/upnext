@@ -60,6 +60,7 @@ from shared.contracts.dashboard import (
 )
 from shared.contracts.events import (
     EventType,
+    JobCancelledEvent,
     JobCheckpointEvent,
     JobCompletedEvent,
     JobFailedEvent,
@@ -183,6 +184,7 @@ __all__ = [
     "JobStartedEvent",
     "JobCompletedEvent",
     "JobFailedEvent",
+    "JobCancelledEvent",
     "JobRetryingEvent",
     "JobProgressEvent",
     "JobCheckpointEvent",

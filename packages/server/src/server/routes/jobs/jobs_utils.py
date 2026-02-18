@@ -10,6 +10,7 @@ STREAMABLE_EVENTS = frozenset(
         "job.started",
         "job.completed",
         "job.failed",
+        "job.cancelled",
         "job.retrying",
     }
 )

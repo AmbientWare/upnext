@@ -25,6 +25,7 @@ from redis.typing import EncodableT, FieldT
 from shared.contracts import (
     EventProcessingStats,
     EventType,
+    JobCancelledEvent,
     JobCheckpointEvent,
     JobCompletedEvent,
     JobFailedEvent,
@@ -46,6 +47,7 @@ JobLifecycleEvent: TypeAlias = (
     JobStartedEvent
     | JobCompletedEvent
     | JobFailedEvent
+    | JobCancelledEvent
     | JobRetryingEvent
     | JobProgressEvent
     | JobCheckpointEvent
@@ -582,6 +584,8 @@ class StreamSubscriber:
             return JobCompletedEvent.model_validate(payload_data)
         if event_type == EventType.JOB_FAILED:
             return JobFailedEvent.model_validate(payload_data)
+        if event_type == EventType.JOB_CANCELLED:
+            return JobCancelledEvent.model_validate(payload_data)
         if event_type == EventType.JOB_RETRYING:
             return JobRetryingEvent.model_validate(payload_data)
         if event_type == EventType.JOB_PROGRESS:

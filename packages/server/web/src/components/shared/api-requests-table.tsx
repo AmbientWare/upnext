@@ -1,5 +1,5 @@
 import { Inbox } from "lucide-react";
-import { useEffect, useRef, type UIEvent } from "react";
+import { useCallback, useEffect, useRef, type UIEvent } from "react";
 
 import type { ApiRequestEvent } from "@/lib/types";
 import { cn, formatDateTime, formatTimeAgo } from "@/lib/utils";
@@ -107,10 +107,10 @@ export function ApiRequestsTable({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRowRef = useRef<HTMLTableRowElement | null>(null);
 
-  const maybeLoadMore = () => {
+  const maybeLoadMore = useCallback(() => {
     if (!onLoadMore || !hasMore || isFetchingMore) return;
     onLoadMore();
-  };
+  }, [hasMore, isFetchingMore, onLoadMore]);
 
   const handleScroll = (event: UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
@@ -139,7 +139,7 @@ export function ApiRequestsTable({
 
     observer.observe(loadMoreRowRef.current);
     return () => observer.disconnect();
-  }, [hasMore, isFetchingMore, onLoadMore]);
+  }, [hasMore, onLoadMore, maybeLoadMore]);
 
   return (
     <div className={cn("flex flex-col h-full overflow-hidden", className)}>

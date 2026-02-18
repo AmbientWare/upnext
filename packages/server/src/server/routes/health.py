@@ -1,11 +1,14 @@
 """Health check routes."""
 
+import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, Response, status
 from shared.contracts import (
     DependencyHealth,
     DlqHealthSummary,
+    EventProcessingStats,
     HealthMetrics,
     HealthResponse,
     QueueHealthSummary,
@@ -24,6 +27,17 @@ from server.services.redis import get_redis
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["health"])
+_HEALTH_METRICS_CACHE_TTL_SECONDS = 5.0
+_health_metrics_cache: (
+    tuple[float, QueueHealthSummary, DlqHealthSummary, EventProcessingStats] | None
+) = None
+_health_metrics_lock = asyncio.Lock()
+
+
+def clear_health_metrics_cache() -> None:
+    """Clear cached operational health metrics (useful for tests)."""
+    global _health_metrics_cache
+    _health_metrics_cache = None
 
 
 async def _check_database_readiness() -> DependencyHealth:
@@ -103,6 +117,34 @@ async def _get_dlq_health() -> DlqHealthSummary:
         return DlqHealthSummary()
 
 
+async def _get_cached_operational_metrics() -> tuple[
+    QueueHealthSummary,
+    DlqHealthSummary,
+    EventProcessingStats,
+]:
+    global _health_metrics_cache
+    now = time.monotonic()
+    cached = _health_metrics_cache
+    if cached and cached[0] > now:
+        return cached[1], cached[2], cached[3]
+
+    async with _health_metrics_lock:
+        cached = _health_metrics_cache
+        if cached and cached[0] > now:
+            return cached[1], cached[2], cached[3]
+
+        queue_health = await _get_queue_health()
+        dlq_health = await _get_dlq_health()
+        event_stats = get_event_processing_stats()
+        _health_metrics_cache = (
+            now + _HEALTH_METRICS_CACHE_TTL_SECONDS,
+            queue_health,
+            dlq_health,
+            event_stats,
+        )
+        return queue_health, dlq_health, event_stats
+
+
 async def _build_health_response() -> tuple[HealthResponse, bool]:
     settings = get_settings()
     redis_required = bool(
@@ -125,9 +167,7 @@ async def _build_health_response() -> tuple[HealthResponse, bool]:
     ready = db_readiness.status == "ok" and redis_ready
 
     # Fetch operational metrics (best-effort, failures don't affect readiness).
-    queue_health = await _get_queue_health()
-    dlq_health = await _get_dlq_health()
-    event_stats = get_event_processing_stats()
+    queue_health, dlq_health, event_stats = await _get_cached_operational_metrics()
 
     payload = HealthResponse(
         status="ok" if ready else "degraded",

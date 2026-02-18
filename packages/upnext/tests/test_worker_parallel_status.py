@@ -186,9 +186,18 @@ async def test_status_publisher_writes_lineage_for_all_lifecycle_events(
         max_retries=2,
         will_retry=False,
     )
+    await publisher.record_job_cancelled(
+        job_id="job-2",
+        function="task_key",
+        function_name="task_name",
+        root_id="job-root",
+        parent_id="job-parent",
+        attempt=2,
+        reason="cancelled",
+    )
 
     rows = await fake_redis.xrange("upnext:status:events", count=20)
-    assert len(rows) == 5
+    assert len(rows) == 6
 
     payloads = [row[1] for row in rows]
     for payload in payloads:
@@ -200,7 +209,7 @@ async def test_status_publisher_writes_lineage_for_all_lifecycle_events(
         event_type = payload[b"type"].decode()
         decoded_by_type[event_type] = payload
 
-    for event_type in ["job.started", "job.retrying", "job.failed"]:
+    for event_type in ["job.started", "job.retrying", "job.failed", "job.cancelled"]:
         data = decoded_by_type[event_type][b"data"].decode()
         assert '"function": "task_key"' in data
         assert '"function_name": "task_name"' in data

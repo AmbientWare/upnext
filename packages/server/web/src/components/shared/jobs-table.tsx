@@ -1,4 +1,10 @@
-import { useEffect, useRef, type ReactNode, type UIEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type ReactNode,
+  type UIEvent,
+} from "react";
 import { Inbox } from "lucide-react";
 import { cn, formatDateTime, formatDuration, formatTimeAgo } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
@@ -119,10 +125,10 @@ export function JobsTable({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRowRef = useRef<HTMLTableRowElement | null>(null);
 
-  const maybeLoadMore = () => {
+  const maybeLoadMore = useCallback(() => {
     if (!onLoadMore || !hasMore || isFetchingMore) return;
     onLoadMore();
-  };
+  }, [hasMore, isFetchingMore, onLoadMore]);
 
   const handleScroll = (event: UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
@@ -151,7 +157,7 @@ export function JobsTable({
 
     observer.observe(loadMoreRowRef.current);
     return () => observer.disconnect();
-  }, [hasMore, isFetchingMore, onLoadMore]);
+  }, [hasMore, onLoadMore, maybeLoadMore]);
 
   return (
     <div className={cn("flex flex-col h-full overflow-hidden", className)}>

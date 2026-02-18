@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from redis import Redis
 
@@ -49,7 +49,8 @@ def wait_for_counter_sync(
 ) -> None:
     deadline = now() + timeout_seconds
     while now() < deadline:
-        done = int(client.get(key) or 0)
+        raw_done = cast(Any, client.get(key))
+        done = int(raw_done or 0)
         if done >= target:
             return
         time.sleep(0.01)
@@ -79,13 +80,13 @@ async def async_produce_jobs(
     submit_one: Callable[[], Any],
 ) -> tuple[float, list[float]]:
     if producer_concurrency <= 1:
-        latencies: list[float] = []
+        serial_latencies: list[float] = []
         enqueue_start = now()
         for _ in range(total_jobs):
             t0 = now()
             await submit_one()
-            latencies.append(now() - t0)
-        return now() - enqueue_start, latencies
+            serial_latencies.append(now() - t0)
+        return now() - enqueue_start, serial_latencies
 
     queue: asyncio.Queue[int | None] = asyncio.Queue()
     for idx in range(total_jobs):
@@ -125,13 +126,13 @@ def threaded_produce_jobs(
     submit_one: Callable[[], None],
 ) -> tuple[float, list[float]]:
     if producer_concurrency <= 1:
-        latencies: list[float] = []
+        serial_latencies: list[float] = []
         enqueue_start = now()
         for _ in range(total_jobs):
             t0 = now()
             submit_one()
-            latencies.append(now() - t0)
-        return now() - enqueue_start, latencies
+            serial_latencies.append(now() - t0)
+        return now() - enqueue_start, serial_latencies
 
     def timed_submit() -> float:
         t0 = now()

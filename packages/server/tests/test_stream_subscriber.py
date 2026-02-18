@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 import pytest
 import server.services.events.subscriber as stream_subscriber_module
 from server.services.events import StreamSubscriber, StreamSubscriberConfig
-from shared.contracts import JobFailedEvent, JobProgressEvent, JobStartedEvent
+from shared.contracts import (
+    JobCancelledEvent,
+    JobFailedEvent,
+    JobProgressEvent,
+    JobStartedEvent,
+)
 from shared.keys import EVENTS_PUBSUB_CHANNEL, EVENTS_STREAM
 
 
@@ -237,6 +242,42 @@ def test_parse_events_propagates_worker_id_for_started_events(fake_redis) -> Non
     assert len(parsed) == 1
     assert isinstance(parsed[0].event, JobStartedEvent)
     assert parsed[0].event.worker_id == "worker-123"
+
+
+def test_parse_events_supports_job_cancelled(fake_redis) -> None:
+    config = StreamSubscriberConfig(
+        stream=EVENTS_STREAM,
+        group="test-cancelled-event",
+        consumer_id="consumer-cancelled",
+    )
+    subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
+
+    ts = datetime.now(UTC).isoformat()
+    events = [
+        (
+            "1-0",
+            {
+                "type": "job.cancelled",
+                "job_id": "job-cancelled-1",
+                "worker_id": "worker-123",
+                "data": json.dumps(
+                    {
+                        "function": "task_key",
+                        "function_name": "task_name",
+                        "root_id": "job-cancelled-1",
+                        "attempt": 1,
+                        "reason": "cancelled",
+                        "cancelled_at": ts,
+                    }
+                ),
+            },
+        )
+    ]
+
+    parsed, summary = subscriber._parse_events(events)  # noqa: SLF001
+    assert summary.total == 0
+    assert len(parsed) == 1
+    assert isinstance(parsed[0].event, JobCancelledEvent)
 
 
 @pytest.mark.asyncio

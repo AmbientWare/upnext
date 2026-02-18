@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useMemo,
   useState,
   type ReactNode,
@@ -11,23 +9,7 @@ import {
   setStoredApiKey,
   clearStoredApiKey,
 } from "@/lib/auth";
-
-interface AuthContextValue {
-  /** The current API key, or null when not authenticated. */
-  apiKey: string | null;
-  /** Whether the user is currently authenticated. */
-  isAuthenticated: boolean;
-  /** Whether the current user is an admin. */
-  isAdmin: boolean;
-  /** Store API key and mark as authenticated. */
-  login: (key: string) => void;
-  /** Clear stored API key and mark as unauthenticated. */
-  logout: () => void;
-  /** Set admin status (called after verify). */
-  setIsAdmin: (value: boolean) => void;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
+import { AuthContext, type AuthContextValue } from "./auth-context";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [apiKey, setApiKey] = useState<string | null>(getStoredApiKey);
@@ -57,12 +39,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return ctx;
 }

@@ -192,3 +192,34 @@ async def test_hourly_trends_zero_fill_consumer_behavior(sqlite_db) -> None:
     assert hours == sorted(hours)
     statuses = {r.status for r in rows}
     assert statuses == {"complete", "failed"}
+
+
+@pytest.mark.asyncio
+async def test_get_stats_counts_cancelled_explicitly(sqlite_db) -> None:
+    base = datetime(2026, 2, 8, 13, 0, tzinfo=UTC)
+    statuses = ["complete", "failed", "cancelled", "active", "retrying"]
+
+    async with sqlite_db.session() as session:
+        repo = JobRepository(session)
+        for idx, status in enumerate(statuses):
+            payload: dict[str, object] = {
+                "job_id": f"stats-{idx}",
+                "function": "fn.stats",
+                "function_name": "stats",
+                "status": status,
+                "root_id": f"stats-{idx}",
+                "created_at": base + timedelta(seconds=idx),
+            }
+            if status in {"complete", "failed"}:
+                payload["started_at"] = base + timedelta(seconds=idx)
+                payload["completed_at"] = base + timedelta(seconds=idx + 1)
+            await repo.record_job(payload)
+
+    async with sqlite_db.session() as session:
+        repo = JobRepository(session)
+        stats = await repo.get_stats(function="fn.stats")
+
+    assert stats.total == 5
+    assert stats.success_count == 1
+    assert stats.failure_count == 1
+    assert stats.cancelled_count == 1

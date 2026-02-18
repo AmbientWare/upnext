@@ -1,7 +1,8 @@
 """Secrets routes.
 
 - List (names/keys only): any authenticated user
-- Get by name (SDK fetch, returns values): any authenticated user
+- Get by name (SDK fetch, returns values): any authenticated user by default,
+  optionally admin-only via UPNEXT_SECRETS_REQUIRE_ADMIN_READS=true
 - Get by ID (returns values, dashboard use): admin only
 - Create / Update / Delete: admin only
 """
@@ -10,9 +11,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from server.auth import require_admin
+from server.auth import require_admin, require_api_key
+from server.config import get_settings
 from server.db.repositories import SecretsRepository
 from server.db.session import Database
+from server.db.tables import User
 from server.routes.depends import require_database
 from shared.contracts.secrets import (
     CreateSecretRequest,
@@ -49,8 +52,17 @@ async def list_secrets(db: Database = Depends(require_database)):
 
 
 @router.get("/by-name/{name}", response_model=SecretValuesResponse)
-async def get_secret_by_name(name: str, db: Database = Depends(require_database)):
+async def get_secret_by_name(
+    name: str,
+    user: User | None = Depends(require_api_key),
+    db: Database = Depends(require_database),
+):
     """Fetch a secret's decrypted values by name (for SDK usage)."""
+    settings = get_settings()
+    if settings.effective_secrets_require_admin_reads:
+        if user is None or not user.is_admin:
+            raise HTTPException(status_code=403, detail="Admin access required")
+
     async with db.session() as session:
         repo = SecretsRepository(session)
         secret = await repo.get_secret_by_name(name)

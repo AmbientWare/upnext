@@ -1,6 +1,9 @@
 """Job history routes."""
 
+import json
+import time
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from shared.contracts import (
@@ -14,6 +17,7 @@ from shared.contracts import (
     JobTrendsResponse,
 )
 from shared.domain import JobStatus
+from shared.keys import EVENTS_STREAM
 
 from server.db.repositories import JobHourlyTrendRow, JobRepository
 from server.db.repositories.jobs_repository import InvalidCursorError
@@ -34,6 +38,7 @@ from server.services.registry import get_function_definitions
 router = APIRouter(tags=["jobs"])
 
 VALID_STATUSES = {s.value for s in JobStatus}
+STATUS_STREAM_MAXLEN = 50_000
 
 
 @router.get("", response_model=JobListResponse)
@@ -214,6 +219,50 @@ def _empty_trends(hours: int) -> JobTrendsResponse:
     return JobTrendsResponse(hourly=hourly)
 
 
+async def _publish_cancelled_status_event(
+    redis_client: Any,
+    job: Any,
+    *,
+    reason: str | None = None,
+) -> None:
+    """Emit job.cancelled so event ingestion and DB history stay in sync."""
+    cancelled_at = datetime.now(UTC).isoformat()
+    payload = {
+        "type": "job.cancelled",
+        "job_id": job.id,
+        "worker_id": job.worker_id or "server",
+        "ts": str(time.time()),
+        "data": json.dumps(
+            {
+                "function": job.function,
+                "function_name": job.function_name,
+                "parent_id": job.parent_id,
+                "root_id": job.root_id or job.id,
+                "attempt": job.attempts,
+                "reason": reason,
+                "cancelled_at": cancelled_at,
+            },
+            default=str,
+        ),
+    }
+    try:
+        await redis_client.xadd(
+            EVENTS_STREAM,
+            payload,
+            maxlen=STATUS_STREAM_MAXLEN,
+            approximate=True,
+        )
+    except TypeError:
+        await redis_client.xadd(
+            EVENTS_STREAM,
+            payload,
+            maxlen=STATUS_STREAM_MAXLEN,
+        )
+    except Exception:
+        # Best effort only; cancel mutation already succeeded.
+        return
+
+
 @router.get("/{job_id}/timeline", response_model=JobListResponse)
 async def get_job_timeline(
     job_id: str,
@@ -286,6 +335,12 @@ async def cancel_job_route(job_id: str) -> JobCancelResponse:
                 f"'{current_status}'."
             ),
         )
+
+    await _publish_cancelled_status_event(
+        redis_client,
+        job,
+        reason="Cancelled via API",
+    )
 
     return JobCancelResponse(
         job_id=job.id,

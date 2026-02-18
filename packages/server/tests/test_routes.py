@@ -40,6 +40,11 @@ from shared.keys.workers import FUNCTION_KEY_PREFIX
 from sqlalchemy.exc import IntegrityError
 
 
+@pytest.fixture(autouse=True)
+def _clear_health_metrics_cache() -> None:
+    health_route.clear_health_metrics_cache()
+
+
 @pytest.mark.asyncio
 async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
     sqlite_db, monkeypatch

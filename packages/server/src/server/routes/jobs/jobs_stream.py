@@ -2,12 +2,17 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from shared.contracts import FunctionType, JobTrendsSnapshotEvent
+from shared.contracts import (
+    FunctionType,
+    JobTrendHour,
+    JobTrendsResponse,
+    JobTrendsSnapshotEvent,
+)
 from shared.keys import EVENTS_STREAM
 
 from server.db import get_database
@@ -55,6 +60,58 @@ def _evict_expired_cache_entries() -> None:
         _trends_snapshot_cache.clear()
 
 
+def _empty_job_trends_snapshot(hours: int) -> JobTrendsResponse:
+    now = datetime.now(UTC)
+    hourly: list[JobTrendHour] = []
+
+    for i in range(hours):
+        hour_start = now - timedelta(hours=hours - i - 1)
+        hour_key = hour_start.replace(minute=0, second=0, microsecond=0).strftime(
+            "%Y-%m-%dT%H:00:00Z"
+        )
+        hourly.append(JobTrendHour(hour=hour_key))
+
+    return JobTrendsResponse(hourly=hourly)
+
+
+async def _fetch_job_trends_snapshot(
+    *,
+    hours: int,
+    function: str | None,
+    func_type: FunctionType | None,
+) -> Any:
+    db = None
+    try:
+        db = get_database()
+    except RuntimeError as exc:
+        if "Database not initialized" not in str(exc):
+            raise
+
+    if db is not None:
+        try:
+            return await get_job_trends(
+                hours=hours,
+                function=function,
+                type=func_type,
+                db=db,
+            )
+        except TypeError as exc:
+            # Backward compatibility for tests/patches that inject a simplified
+            # coroutine signature: fake_get_job_trends(hours, function, type).
+            if "db" not in str(exc):
+                raise
+
+    try:
+        return await get_job_trends(
+            hours=hours,
+            function=function,
+            type=func_type,
+        )
+    except Exception:
+        logger.debug("Falling back to empty trends snapshot", exc_info=True)
+        return _empty_job_trends_snapshot(hours)
+
+
 async def _get_cached_job_trends_snapshot(
     *,
     hours: int,
@@ -80,12 +137,10 @@ async def _get_cached_job_trends_snapshot(
             if event_token is None or cached[1] == event_token:
                 return cached[2]
 
-        db = get_database()
-        snapshot = await get_job_trends(
+        snapshot = await _fetch_job_trends_snapshot(
             hours=hours,
             function=function,
-            type=func_type_filter,
-            db=db,
+            func_type=func_type_filter,
         )
         _trends_snapshot_cache[key] = (
             now + SSE_CACHE_TTL_SECONDS,

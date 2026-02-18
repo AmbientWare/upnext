@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 import pytest
@@ -109,3 +110,45 @@ async def test_emit_function_alerts_respects_redis_cooldown(monkeypatch) -> None
     assert sent_payloads[0]["json"]["alerts"][0]["type"] == "function_failure_rate"
 
     await fake_redis.aclose()
+
+
+@pytest.mark.asyncio
+async def test_alert_emitter_loop_collects_snapshot_with_database(
+    monkeypatch,
+) -> None:
+    import server.db.session as session_module
+    import server.routes.functions as functions_route
+
+    service = alerts_module.AlertEmitterService(interval_seconds=5.0)
+    fake_db = object()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(session_module, "get_database", lambda: fake_db)
+
+    async def _collect_functions_snapshot(*, db, type=None):  # type: ignore[no-untyped-def]
+        captured["db"] = db
+        captured["type"] = type
+        service._stop_event.set()  # noqa: SLF001
+        return [_function()]
+
+    async def _emit_function_alerts(functions):  # type: ignore[no-untyped-def]
+        captured["functions"] = functions
+        return 1
+
+    async def _check_invalid_event_rate() -> None:
+        captured["checked"] = True
+
+    monkeypatch.setattr(
+        functions_route,
+        "collect_functions_snapshot",
+        _collect_functions_snapshot,
+    )
+    monkeypatch.setattr(alerts_module, "emit_function_alerts", _emit_function_alerts)
+    monkeypatch.setattr(service, "_check_invalid_event_rate", _check_invalid_event_rate)
+
+    await asyncio.wait_for(service._loop(), timeout=1.0)  # noqa: SLF001
+
+    assert captured["db"] is fake_db
+    assert captured["type"] is None
+    assert captured["checked"] is True
+    assert isinstance(captured["functions"], list)

@@ -413,6 +413,30 @@ class StatusPublisher:
             failed_at=datetime.now(UTC).isoformat(),
         )
 
+    async def record_job_cancelled(
+        self,
+        job_id: str,
+        function: str,
+        function_name: str,
+        root_id: str,
+        *,
+        attempt: int = 1,
+        parent_id: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Record job cancelled event."""
+        await self.record(
+            "job.cancelled",
+            job_id,
+            function=function,
+            function_name=function_name,
+            parent_id=parent_id,
+            root_id=root_id,
+            reason=reason,
+            attempt=attempt,
+            cancelled_at=datetime.now(UTC).isoformat(),
+        )
+
     async def record_job_retrying(
         self,
         job_id: str,

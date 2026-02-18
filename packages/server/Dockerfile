@@ -44,8 +44,17 @@ COPY --from=frontend-builder /static ./packages/server/static
 # Install dependencies using workspace
 RUN uv sync --frozen --no-dev --package upnext-server
 
+# Create an unprivileged runtime user.
+RUN useradd --create-home --home-dir /home/upnext --shell /usr/sbin/nologin upnext \
+    && mkdir -p /home/upnext/.upnext \
+    && chown -R upnext:upnext /app /home/upnext
+
 # Set working directory to server package
 WORKDIR /app/packages/server
+
+# Run server as non-root.
+USER upnext
+ENV HOME=/home/upnext
 
 # Expose port
 EXPOSE 8080

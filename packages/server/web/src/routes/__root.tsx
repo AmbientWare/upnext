@@ -5,7 +5,7 @@ import {
   EventStreamProvider,
   type EventStreamSubscriptions,
 } from "@/components/providers/event-stream-provider";
-import { useAuth } from "@/components/providers/auth-provider";
+import { useAuth } from "@/components/providers/use-auth";
 import { LoginPage } from "@/components/login-page";
 import { verifyAuth } from "@/lib/upnext-api";
 import { env } from "@/lib/env";

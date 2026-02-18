@@ -270,9 +270,13 @@ class AlertEmitterService:
         while not self._stop_event.is_set():
             try:
                 # Lazy import to avoid circular imports with route modules.
+                from server.db.session import get_database
                 from server.routes.functions import collect_functions_snapshot
 
-                functions = await collect_functions_snapshot(type=None)
+                functions = await collect_functions_snapshot(
+                    db=get_database(),
+                    type=None,
+                )
                 await emit_function_alerts(functions)
                 await self._check_invalid_event_rate()
             except asyncio.CancelledError:

@@ -170,8 +170,8 @@ class Worker:
 
         Returns a TaskHandle with typed .submit() and .wait() methods.
         """
-        return self._reg.task(
-            __func,
+        decorator = self._reg.task(
+            None,
             name=name,
             retries=retries,
             retry_delay=retry_delay,
@@ -190,6 +190,9 @@ class Worker:
             on_complete=on_complete,
             _worker=self,
         )
+        if __func is None:
+            return decorator
+        return decorator(__func)
 
     def cron(
         self,

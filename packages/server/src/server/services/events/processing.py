@@ -11,6 +11,7 @@ from shared.contracts import (
     ArtifactStreamEvent,
     CronJobSource,
     EventJobSource,
+    JobCancelledEvent,
     JobCheckpointEvent,
     JobCompletedEvent,
     JobFailedEvent,
@@ -35,6 +36,7 @@ JobLifecycleEvent: TypeAlias = (
     JobStartedEvent
     | JobCompletedEvent
     | JobFailedEvent
+    | JobCancelledEvent
     | JobRetryingEvent
     | JobProgressEvent
     | JobCheckpointEvent
@@ -139,6 +141,8 @@ async def process_event(
         return await _handle_job_completed(event, session=session)
     if isinstance(event, JobFailedEvent):
         return await _handle_job_failed(event, session=session)
+    if isinstance(event, JobCancelledEvent):
+        return await _handle_job_cancelled(event, session=session)
     if isinstance(event, JobRetryingEvent):
         return await _handle_job_retrying(event, session=session)
     if isinstance(event, JobProgressEvent):
@@ -427,6 +431,77 @@ async def _handle_job_failed(
                     completed_at=event.failed_at,
                     attempts=event.attempt,
                     max_retries=event.max_retries,
+                    parent_id=event.parent_id,
+                    root_id=event.root_id,
+                )
+            )
+            applied_terminal_state = True
+
+        await session.flush()
+        await _promote_pending_artifacts(session, event.job_id)
+        return True
+    finally:
+        if applied_terminal_state:
+            _progress_write_state.pop(event.job_id, None)
+
+
+async def _handle_job_cancelled(
+    event: JobCancelledEvent,
+    *,
+    session: AsyncSession | None = None,
+) -> bool:
+    """Handle job.cancelled event - update job with cancellation."""
+    logger.debug(
+        "Job cancelled: %s (%s) reason=%s",
+        event.job_id,
+        event.function_name,
+        event.reason,
+    )
+
+    applied_terminal_state = False
+    try:
+        if session is None:
+            db = get_database()
+            async with db.session() as managed_session:
+                return await _handle_job_cancelled(event, session=managed_session)
+
+        repo = JobRepository(session)
+        existing = await repo.get_by_id(event.job_id)
+        if existing:
+            existing_attempts = existing.attempts or 0
+            existing_completed_at = as_utc_aware(existing.completed_at)
+            incoming_cancelled_at = as_utc_aware(event.cancelled_at)
+            if event.attempt < existing_attempts:
+                return False
+            if (
+                existing.status in TERMINAL_STATUSES
+                and existing_completed_at
+                and incoming_cancelled_at
+                and incoming_cancelled_at <= existing_completed_at
+            ):
+                return False
+            existing.status = "cancelled"
+            existing.function = event.function
+            existing.function_name = event.function_name
+            existing.error = event.reason
+            existing.completed_at = event.cancelled_at
+            existing.attempts = max(existing_attempts, event.attempt)
+            existing.parent_id = event.parent_id
+            existing.root_id = event.root_id
+            if existing.created_at is None:
+                existing.created_at = existing.started_at or event.cancelled_at
+            applied_terminal_state = True
+        else:
+            await repo.record_job(
+                JobRecordCreate(
+                    id=event.job_id,
+                    function=event.function,
+                    function_name=event.function_name,
+                    status="cancelled",
+                    created_at=event.cancelled_at,
+                    error=event.reason,
+                    completed_at=event.cancelled_at,
+                    attempts=event.attempt,
                     parent_id=event.parent_id,
                     root_id=event.root_id,
                 )

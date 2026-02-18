@@ -70,7 +70,7 @@ class SubprocessBenchmarkClient:
 
         try:
             payload = self._extract_json_payload(proc.stdout)
-            return BenchmarkResult(**payload)
+            return self._benchmark_result_from_payload(payload)
         except Exception as exc:
             return BenchmarkResult(
                 framework=cfg.framework,
@@ -84,6 +84,72 @@ class SubprocessBenchmarkClient:
                 p95_enqueue_ms=0.0,
                 notes=f"Failed to parse subprocess output: {exc}",
             )
+
+    @staticmethod
+    def _benchmark_result_from_payload(payload: dict[str, object]) -> BenchmarkResult:
+        return BenchmarkResult(
+            framework=str(payload.get("framework", "")),
+            status=str(payload.get("status", "")),
+            jobs=SubprocessBenchmarkClient._coerce_int(payload.get("jobs"), default=0),
+            concurrency=SubprocessBenchmarkClient._coerce_int(
+                payload.get("concurrency"),
+                default=0,
+            ),
+            enqueue_seconds=SubprocessBenchmarkClient._coerce_float(
+                payload.get("enqueue_seconds"),
+                default=0.0,
+            ),
+            drain_seconds=SubprocessBenchmarkClient._coerce_float(
+                payload.get("drain_seconds"),
+                default=0.0,
+            ),
+            total_seconds=SubprocessBenchmarkClient._coerce_float(
+                payload.get("total_seconds"),
+                default=0.0,
+            ),
+            jobs_per_second=SubprocessBenchmarkClient._coerce_float(
+                payload.get("jobs_per_second"),
+                default=0.0,
+            ),
+            p95_enqueue_ms=SubprocessBenchmarkClient._coerce_float(
+                payload.get("p95_enqueue_ms"),
+                default=0.0,
+            ),
+            notes=str(payload.get("notes", "")),
+            framework_version=str(payload.get("framework_version", "")),
+        )
+
+    @staticmethod
+    def _coerce_int(value: object | None, *, default: int) -> int:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return default
+        return default
+
+    @staticmethod
+    def _coerce_float(value: object | None, *, default: float) -> float:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return default
+        return default
 
     @staticmethod
     def _extract_json_payload(stdout: str) -> dict[str, object]:

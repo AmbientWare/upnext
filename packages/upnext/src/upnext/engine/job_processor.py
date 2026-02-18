@@ -355,10 +355,22 @@ class JobProcessor:
             except AttributeError:
                 is_cancelled = False
             if is_cancelled:
+                if not job.root_id:
+                    job.root_id = job.id
                 await self._queue.record_dispatch_reason(
                     job.function,
                     DispatchReason.CANCELLED,
                     job_id=job.id,
+                )
+                await self._emit_status_event(
+                    "record_job_cancelled",
+                    job.id,
+                    job.function,
+                    job.function_name,
+                    job.root_id,
+                    attempt=job.attempts,
+                    parent_id=job.parent_id,
+                    reason="Cancelled before execution",
                 )
                 await self._queue.finish(
                     job,

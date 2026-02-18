@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/components/providers/auth-provider";
+import { useAuth } from "@/components/providers/use-auth";
 import { env } from "@/lib/env";
 
 export function LoginPage() {

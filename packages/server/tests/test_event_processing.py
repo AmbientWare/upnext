@@ -9,6 +9,7 @@ from server.db.tables import Artifact, JobHistory, PendingArtifact
 from server.services.events import process_event
 from server.shared_utils import as_utc_aware
 from shared.contracts import (
+    JobCancelledEvent,
     JobCheckpointEvent,
     JobCompletedEvent,
     JobFailedEvent,
@@ -225,6 +226,90 @@ async def test_terminal_events_backfill_created_at_when_started_was_missed(
         assert failed is not None
         assert as_utc_aware(completed.created_at) == completed_at
         assert as_utc_aware(failed.created_at) == failed_at
+
+
+@pytest.mark.asyncio
+async def test_job_cancelled_event_persists_terminal_state_and_reason(
+    sqlite_db,
+) -> None:
+    started_at = datetime.now(UTC)
+    await process_event(
+        JobStartedEvent.model_validate(
+            {
+                "job_id": "job-cancel-1",
+                "function": "task_key",
+                "function_name": "task_name",
+                "root_id": "job-cancel-1",
+                "attempt": 1,
+                "max_retries": 1,
+                "started_at": started_at,
+                "kwargs": {},
+                "worker_id": "worker-a",
+            }
+        )
+    )
+
+    cancelled_at = started_at + timedelta(seconds=2)
+    applied = await process_event(
+        JobCancelledEvent.model_validate(
+            {
+                "job_id": "job-cancel-1",
+                "function": "task_key",
+                "function_name": "task_name",
+                "root_id": "job-cancel-1",
+                "attempt": 1,
+                "reason": "Cancelled before execution",
+                "cancelled_at": cancelled_at,
+            }
+        )
+    )
+    assert applied is True
+
+    async with sqlite_db.session() as session:
+        row = await session.get(JobHistory, "job-cancel-1")
+        assert row is not None
+        assert row.status == "cancelled"
+        assert row.error == "Cancelled before execution"
+        assert as_utc_aware(row.completed_at) == cancelled_at
+
+
+@pytest.mark.asyncio
+async def test_job_cancelled_stale_event_does_not_override_newer_terminal_state(
+    sqlite_db,
+) -> None:
+    base = datetime.now(UTC)
+    await process_event(
+        JobCompletedEvent.model_validate(
+            {
+                "job_id": "job-cancel-stale-1",
+                "function": "task_key",
+                "function_name": "task_name",
+                "root_id": "job-cancel-stale-1",
+                "attempt": 2,
+                "completed_at": base + timedelta(seconds=5),
+            }
+        )
+    )
+
+    applied = await process_event(
+        JobCancelledEvent.model_validate(
+            {
+                "job_id": "job-cancel-stale-1",
+                "function": "task_key",
+                "function_name": "task_name",
+                "root_id": "job-cancel-stale-1",
+                "attempt": 1,
+                "reason": "late cancellation",
+                "cancelled_at": base + timedelta(seconds=1),
+            }
+        )
+    )
+    assert applied is False
+
+    async with sqlite_db.session() as session:
+        row = await session.get(JobHistory, "job-cancel-stale-1")
+        assert row is not None
+        assert row.status == "complete"
 
 
 @pytest.mark.asyncio

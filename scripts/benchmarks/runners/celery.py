@@ -57,7 +57,10 @@ class CeleryRunner(FrameworkRunner):
                 enqueue_seconds, enqueue_latencies = threaded_produce_jobs(
                     total_jobs=cfg.jobs,
                     producer_concurrency=cfg.producer_concurrency,
-                    submit_one=lambda: bench_task.delay(
+                    submit_one=lambda: getattr(
+                        bench_task,
+                        "delay",
+                    )(
                         cfg.payload,
                         cfg.done_key,
                         cfg.redis_url,

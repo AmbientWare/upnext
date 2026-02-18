@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -35,6 +35,8 @@ class _SettingsStub:
     alert_poll_interval_seconds: float = 60.0
     auth_enabled: bool = False
     api_key: str | None = None
+    is_production: bool = False
+    cors_allow_origins_list: list[str] = field(default_factory=lambda: ["*"])
 
 
 class _FakeDatabase:
@@ -157,6 +159,7 @@ def test_server_settings_defaults_and_flags(monkeypatch) -> None:
 
 def test_server_settings_database_override(monkeypatch) -> None:
     monkeypatch.setenv("UPNEXT_ENV", "prod")
+    monkeypatch.setenv("UPNEXT_SECRET_KEY", "test-secret-key")
     monkeypatch.setenv(
         "UPNEXT_DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/upnext"
     )
@@ -176,6 +179,38 @@ def test_server_settings_database_override(monkeypatch) -> None:
         "https://admin.example.com",
     ]
     assert settings.cors_allow_credentials is True
+
+
+def test_server_settings_env_aliases_are_accepted(monkeypatch) -> None:
+    monkeypatch.setenv("UPNEXT_ENV", "development")
+    settings = config_module.get_settings()
+    assert settings.env.value == "dev"
+    assert settings.is_development is True
+
+    config_module.get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_ENV", "production")
+    settings = config_module.get_settings()
+    assert settings.env.value == "prod"
+    assert settings.is_production is True
+
+
+def test_server_settings_effective_secret_read_policy(monkeypatch) -> None:
+    monkeypatch.setenv("UPNEXT_ENV", "dev")
+    monkeypatch.delenv("UPNEXT_SECRETS_REQUIRE_ADMIN_READS", raising=False)
+    settings = config_module.get_settings()
+    assert settings.effective_secrets_require_admin_reads is False
+
+    config_module.get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_ENV", "prod")
+    monkeypatch.setenv("UPNEXT_SECRET_KEY", "test-secret-key")
+    monkeypatch.delenv("UPNEXT_SECRETS_REQUIRE_ADMIN_READS", raising=False)
+    settings = config_module.get_settings()
+    assert settings.effective_secrets_require_admin_reads is False
+
+    config_module.get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_SECRETS_REQUIRE_ADMIN_READS", "true")
+    settings = config_module.get_settings()
+    assert settings.effective_secrets_require_admin_reads is True
 
 
 @pytest.mark.asyncio

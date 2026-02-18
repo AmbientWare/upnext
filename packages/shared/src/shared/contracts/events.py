@@ -16,6 +16,7 @@ class EventType(StrEnum):
     JOB_STARTED = "job.started"
     JOB_COMPLETED = "job.completed"
     JOB_FAILED = "job.failed"
+    JOB_CANCELLED = "job.cancelled"
     JOB_RETRYING = "job.retrying"
     JOB_PROGRESS = "job.progress"
     JOB_CHECKPOINT = "job.checkpoint"
@@ -84,6 +85,21 @@ class JobFailedEvent(BaseModel):
     failed_at: datetime
 
 
+class JobCancelledEvent(BaseModel):
+    """Event data for job.cancelled."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=1)
+    function: str = Field(min_length=1)
+    function_name: str = Field(min_length=1)
+    parent_id: str | None = None
+    root_id: str = Field(min_length=1)
+    reason: str | None = None
+    attempt: int = Field(default=1, ge=1)
+    cancelled_at: datetime
+
+
 class JobRetryingEvent(BaseModel):
     """Event data for job.retrying."""
 
@@ -145,6 +161,7 @@ class SSEJobEvent(BaseModel):
     completed_at: datetime | None = None
     error: str | None = None
     failed_at: datetime | None = None
+    cancelled_at: datetime | None = None
     current_attempt: int | None = None
     next_attempt: int | None = None
     progress: float | None = None
@@ -156,6 +173,7 @@ __all__ = [
     "JobStartedEvent",
     "JobCompletedEvent",
     "JobFailedEvent",
+    "JobCancelledEvent",
     "JobRetryingEvent",
     "JobProgressEvent",
     "JobCheckpointEvent",

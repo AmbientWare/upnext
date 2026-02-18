@@ -254,6 +254,9 @@ class JobRepository:
             func.sum(case((JobHistory.status == "failed", 1), else_=0)).label(
                 "failure_count"
             ),
+            func.sum(case((JobHistory.status == "cancelled", 1), else_=0)).label(
+                "cancelled_count"
+            ),
             func.avg(
                 case(
                     (
@@ -281,6 +284,7 @@ class JobRepository:
         total = row.total or 0
         success_count = row.success_count or 0
         failure_count = row.failure_count or 0
+        cancelled_count = row.cancelled_count or 0
         avg_duration_ms = (
             round(float(row.avg_duration_ms), 2)
             if row.avg_duration_ms is not None
@@ -292,7 +296,7 @@ class JobRepository:
             total=total,
             success_count=success_count,
             failure_count=failure_count,
-            cancelled_count=total - success_count - failure_count,
+            cancelled_count=cancelled_count,
             success_rate=round(success_rate, 2),
             avg_duration_ms=avg_duration_ms,
         )
