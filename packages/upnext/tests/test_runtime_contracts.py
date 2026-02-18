@@ -91,6 +91,44 @@ async def test_future_result_and_cancel_contracts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_future_value_returns_value_and_tracks_timeout() -> None:
+    queue = _FutureQueue(
+        job=Job(
+            id="job-value-1",
+            function="task-key",
+            function_name="task-name",
+            status=JobStatus.COMPLETE,
+            result={"ok": True},
+            root_id="job-value-1",
+        )
+    )
+    future = Future[dict[str, bool]]("job-value-1", queue=cast(BaseQueue, queue))
+
+    value = await future.value(timeout=1.25)
+    assert value == {"ok": True}
+    assert queue.timeout_calls == [1.25]
+
+
+@pytest.mark.asyncio
+async def test_future_value_allows_none_as_valid_task_return() -> None:
+    queue = _FutureQueue(
+        job=Job(
+            id="job-value-none",
+            function="task-key",
+            function_name="task-name",
+            status=JobStatus.COMPLETE,
+            result=None,
+            root_id="job-value-none",
+        )
+    )
+    future = Future[None]("job-value-none", queue=cast(BaseQueue, queue))
+
+    value = await future.value(timeout=0.5)
+    assert value is None
+    assert queue.timeout_calls == [0.5]
+
+
+@pytest.mark.asyncio
 async def test_future_result_raises_when_completed_job_is_missing() -> None:
     future = Future[int]("missing", queue=cast(BaseQueue, _FutureQueue(job=None)))
 
@@ -115,6 +153,23 @@ async def test_future_result_raises_task_execution_error_for_failed_job() -> Non
         await future.result(timeout=1)
     assert exc.value.job_id == failed_job.id
     assert exc.value.status == JobStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_future_value_raises_task_execution_error_for_failed_job() -> None:
+    failed_job = Job(
+        id="job-failed-value-1",
+        function="task-key",
+        function_name="task-name",
+        status=JobStatus.FAILED,
+        error="boom",
+        root_id="job-failed-value-1",
+    )
+    queue = _FutureQueue(job=failed_job, terminal_status=JobStatus.FAILED.value)
+    future = Future[int](failed_job.id, queue=cast(BaseQueue, queue))
+
+    with pytest.raises(TaskExecutionError, match="boom"):
+        await future.value(timeout=1)
 
 
 def test_settings_environment_flags_and_cache(monkeypatch) -> None:

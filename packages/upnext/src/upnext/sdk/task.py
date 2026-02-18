@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from shared.domain import FailureReason, JobStatus
 
@@ -19,8 +19,8 @@ class TaskResult[T]:
         print(result.value)
     """
 
-    value: T | None
-    """The return value from the task (None if failed/cancelled)."""
+    value: T
+    """The return value from the task."""
 
     job_id: str
     """Unique identifier for this job execution."""
@@ -98,7 +98,7 @@ class Future[T]:
             raise RuntimeError(f"Job {self._job_id} not found after completion")
 
         task_result = TaskResult(
-            value=job.result,
+            value=cast(T, job.result),
             job_id=job.id,
             function=job.function,
             function_name=job.function_name,
@@ -116,6 +116,23 @@ class Future[T]:
                 raise TaskTimeoutError(task_result)
             raise TaskExecutionError(task_result)
         return task_result
+
+    async def value(self, timeout: float | None = None) -> T:
+        """
+        Wait for completion and return only the task value.
+
+        Args:
+            timeout: Maximum time to wait in seconds (None waits indefinitely)
+
+        Returns:
+            The task return value, typed to the original task return type
+
+        Raises:
+            TimeoutError: If timeout reached before completion
+            TaskTimeoutError: If the task failed due to a timeout during execution
+            TaskExecutionError: If the task completed with failed/cancelled status
+        """
+        return _require_task_value(await self.result(timeout=timeout))
 
     async def cancel(self) -> bool:
         """
@@ -145,3 +162,8 @@ class TaskTimeoutError(TaskExecutionError):
     """Raised when a task exceeds its configured timeout."""
 
     pass
+
+
+def _require_task_value[T](task_result: TaskResult[T]) -> T:
+    """Extract task value from a successful TaskResult."""
+    return cast(T, task_result.value)

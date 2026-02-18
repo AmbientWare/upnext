@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Generic, ParamSpec, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, ParamSpec, TypeVar, overload
 
 from shared.domain import Job
 
@@ -19,9 +19,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 P = ParamSpec("P")
+T = TypeVar("T")
 
 
-class TaskHandle(Generic[P]):
+class TaskHandle(Generic[P, T]):
     """Handle for a registered task, allowing typed .submit() and .wait() calls.
 
     The type parameter P represents the parameters needed to call the task.
@@ -91,14 +92,14 @@ class TaskHandle(Generic[P]):
         kwargs: dict[str, Any],
         *,
         idempotency_key: str | None = None,
-    ) -> Future[Any]:
+    ) -> Future[T]:
         queue = self._ensure_queue()
         merged_kwargs = self._merge_args_kwargs(args, kwargs)
         job = self._create_job(merged_kwargs, idempotency_key=idempotency_key)
         job_id = await queue.enqueue(job)
         return Future(job_id=job_id, queue=queue)
 
-    async def submit(self, *args: P.args, **kwargs: P.kwargs) -> Future[Any]:
+    async def submit(self, *args: P.args, **kwargs: P.kwargs) -> Future[T]:
         """Submit task for background execution, return a Future.
 
         Parameters are typed based on the original function signature.
@@ -110,7 +111,7 @@ class TaskHandle(Generic[P]):
         idempotency_key: str,
         *args: P.args,
         **kwargs: P.kwargs,
-    ) -> Future[Any]:
+    ) -> Future[T]:
         """Submit task using a caller-supplied idempotency key."""
         return await self._enqueue_future(
             args,
@@ -119,7 +120,7 @@ class TaskHandle(Generic[P]):
         )
 
     @overload
-    async def wait(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]: ...
+    async def wait(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[T]: ...
 
     @overload
     async def wait(
@@ -127,14 +128,14 @@ class TaskHandle(Generic[P]):
         *args: Any,
         wait_timeout: float | None = None,
         **kwargs: Any,
-    ) -> TaskResult[Any]: ...
+    ) -> TaskResult[T]: ...
 
     async def wait(
         self,
         *args: Any,
         wait_timeout: float | None = None,
         **kwargs: Any,
-    ) -> TaskResult[Any]:
+    ) -> TaskResult[T]:
         """Submit and wait for a job to complete, returning the result.
 
         Parameters are typed based on the original function signature.
@@ -151,7 +152,7 @@ class TaskHandle(Generic[P]):
         *args: Any,
         wait_timeout: float | None = None,
         **kwargs: Any,
-    ) -> TaskResult[Any]:
+    ) -> TaskResult[T]:
         """Submit with idempotency key and wait for completion.
 
         Raises if the job finishes with failed/cancelled status.
@@ -164,7 +165,7 @@ class TaskHandle(Generic[P]):
         timeout = self.definition.timeout if wait_timeout is None else wait_timeout
         return await future.result(timeout=timeout)
 
-    def submit_sync(self, *args: P.args, **kwargs: P.kwargs) -> Future[Any]:
+    def submit_sync(self, *args: P.args, **kwargs: P.kwargs) -> Future[T]:
         """Submit task for background execution from a sync context.
 
         Blocks until the job is enqueued and returns a Future.
@@ -177,12 +178,12 @@ class TaskHandle(Generic[P]):
         idempotency_key: str,
         *args: P.args,
         **kwargs: P.kwargs,
-    ) -> Future[Any]:
+    ) -> Future[T]:
         """Submit task with idempotency key from a sync context."""
         return asyncio.run(self.submit_idempotent(idempotency_key, *args, **kwargs))
 
     @overload
-    def wait_sync(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[Any]: ...
+    def wait_sync(self, *args: P.args, **kwargs: P.kwargs) -> TaskResult[T]: ...
 
     @overload
     def wait_sync(
@@ -190,14 +191,14 @@ class TaskHandle(Generic[P]):
         *args: Any,
         wait_timeout: float | None = None,
         **kwargs: Any,
-    ) -> TaskResult[Any]: ...
+    ) -> TaskResult[T]: ...
 
     def wait_sync(
         self,
         *args: Any,
         wait_timeout: float | None = None,
         **kwargs: Any,
-    ) -> TaskResult[Any]:
+    ) -> TaskResult[T]:
         """Submit and wait for completion from a sync context.
 
         Blocks until the job completes and returns the result.
@@ -211,7 +212,7 @@ class TaskHandle(Generic[P]):
         *args: Any,
         wait_timeout: float | None = None,
         **kwargs: Any,
-    ) -> TaskResult[Any]:
+    ) -> TaskResult[T]:
         """Submit with idempotency key and wait from a sync context."""
         return asyncio.run(
             self.wait_idempotent(

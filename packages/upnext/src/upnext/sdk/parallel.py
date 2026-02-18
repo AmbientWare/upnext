@@ -2,9 +2,9 @@
 
 import asyncio
 from collections.abc import Awaitable
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, overload
 
-from upnext.sdk.task import Future, TaskResult
+from upnext.sdk.task import Future, _require_task_value
 
 
 class SubmittableTask[T](Protocol):
@@ -13,44 +13,75 @@ class SubmittableTask[T](Protocol):
     async def submit(self, **kwargs: Any) -> Future[T]: ...
 
 
-def _require_task_value[T](future_result: TaskResult[T]) -> T:
-    """Extract a successful task value or raise an explicit error."""
-    if not getattr(future_result, "ok", False):
-        raise RuntimeError(getattr(future_result, "error", "Task failed"))
-    value = future_result.value
-    if value is None:
-        raise RuntimeError("Task completed without a value")
-    return cast(T, value)
+@overload
+async def gather[T1](
+    a1: Awaitable[T1] | Future[T1],
+    /,
+    *,
+    return_exceptions: bool = ...,
+) -> list[T1]: ...
 
 
-async def gather[T](
-    *awaitables: Awaitable[T] | Future[T],
+@overload
+async def gather[T1, T2](
+    a1: Awaitable[T1] | Future[T1],
+    a2: Awaitable[T2] | Future[T2],
+    /,
+    *,
+    return_exceptions: bool = ...,
+) -> list[T1 | T2]: ...
+
+
+@overload
+async def gather[T1, T2, T3](
+    a1: Awaitable[T1] | Future[T1],
+    a2: Awaitable[T2] | Future[T2],
+    a3: Awaitable[T3] | Future[T3],
+    /,
+    *,
+    return_exceptions: bool = ...,
+) -> list[T1 | T2 | T3]: ...
+
+
+@overload
+async def gather[T1, T2, T3, T4](
+    a1: Awaitable[T1] | Future[T1],
+    a2: Awaitable[T2] | Future[T2],
+    a3: Awaitable[T3] | Future[T3],
+    a4: Awaitable[T4] | Future[T4],
+    /,
+    *,
+    return_exceptions: bool = ...,
+) -> list[T1 | T2 | T3 | T4]: ...
+
+
+@overload
+async def gather[T1, T2, T3, T4, T5](
+    a1: Awaitable[T1] | Future[T1],
+    a2: Awaitable[T2] | Future[T2],
+    a3: Awaitable[T3] | Future[T3],
+    a4: Awaitable[T4] | Future[T4],
+    a5: Awaitable[T5] | Future[T5],
+    /,
+    *,
+    return_exceptions: bool = ...,
+) -> list[T1 | T2 | T3 | T4 | T5]: ...
+
+
+@overload
+async def gather(
+    *awaitables: Awaitable[Any] | Future[Any],
+    return_exceptions: bool = ...,
+) -> list[Any]: ...
+
+
+async def gather(
+    *awaitables: Awaitable[Any] | Future[Any],
     return_exceptions: bool = False,
-) -> list[T]:
-    """
-    Execute multiple tasks concurrently, wait for all.
+) -> list[Any]:
+    """Execute multiple tasks concurrently, wait for all."""
 
-    Similar to asyncio.gather() but works with both awaitables and UpNext Futures.
-
-    Example:
-        user, orders, notifications = await gather(
-            fetch_user(user_id="123"),
-            fetch_orders(user_id="123"),
-            fetch_notifications(user_id="123"),
-        )
-
-    Args:
-        *awaitables: Coroutines or Futures to execute concurrently
-        return_exceptions: If True, exceptions are returned instead of raised
-
-    Returns:
-        List of results in the same order as input
-
-    Raises:
-        Exception: First exception encountered (if return_exceptions=False)
-    """
-
-    async def resolve(item: Awaitable[T] | Future[T]) -> T:
+    async def resolve(item: Awaitable[Any] | Future[Any]) -> Any:
         if isinstance(item, Future):
             task_result = await item.result()
             return _require_task_value(task_result)
@@ -59,13 +90,13 @@ async def gather[T](
     tasks = [asyncio.create_task(resolve(a)) for a in awaitables]
 
     if return_exceptions:
-        results: list[T | BaseException] = []
+        results: list[Any] = []
         for task in tasks:
             try:
                 results.append(await task)
             except Exception as e:
                 results.append(e)
-        return results  # type: ignore[return-value]
+        return results
 
     return list(await asyncio.gather(*tasks))
 

@@ -14,7 +14,7 @@ import socket
 import time as time_module
 import traceback
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, overload
@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 P = ParamSpec("P")
+R = TypeVar("R")
 
 DEFAULT_CONCURRENCY = 2
 
@@ -120,7 +121,9 @@ class Worker:
     # =========================================================================
 
     @overload
-    def task(self, __func: Callable[P, Any]) -> TaskHandle[P]: ...
+    def task(
+        self, __func: Callable[P, R] | Callable[P, Awaitable[R]]
+    ) -> TaskHandle[P, R]: ...
 
     @overload
     def task(
@@ -143,7 +146,7 @@ class Worker:
         on_failure: Callable[..., Any] | None = None,
         on_retry: Callable[..., Any] | None = None,
         on_complete: Callable[..., Any] | None = None,
-    ) -> Callable[[Callable[P, Any]], TaskHandle[P]]: ...
+    ) -> Callable[[Callable[P, R] | Callable[P, Awaitable[R]]], TaskHandle[P, R]]: ...
 
     def task(
         self,
@@ -663,7 +666,7 @@ class Worker:
     # =========================================================================
 
     @property
-    def tasks(self) -> dict[str, TaskHandle]:
+    def tasks(self) -> dict[str, TaskHandle[Any, Any]]:
         return dict(self._reg.task_handles)
 
     @property

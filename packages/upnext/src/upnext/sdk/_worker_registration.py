@@ -4,7 +4,7 @@ Extracted from worker.py to separate decorator-based registration logic
 from connection/lifecycle concerns.
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, ParamSpec, TypeVar, overload
 
@@ -16,6 +16,7 @@ from upnext.engine.registry import CronDefinition, Registry
 
 F = TypeVar("F", bound=Callable[..., Any])
 P = ParamSpec("P")
+R = TypeVar("R")
 
 
 @dataclass(frozen=True)
@@ -33,12 +34,12 @@ class WorkerRegistration:
     def __init__(self, name: str, registry: Registry) -> None:
         self._name = name
         self._registry = registry
-        self._task_handles: dict[str, TaskHandle] = {}
+        self._task_handles: dict[str, TaskHandle[Any, Any]] = {}
         self._crons: list[CronDefinition] = []
         self._event_handles: dict[str, EventHandle] = {}
 
     @property
-    def task_handles(self) -> dict[str, TaskHandle]:
+    def task_handles(self) -> dict[str, TaskHandle[Any, Any]]:
         return self._task_handles
 
     @property
@@ -53,10 +54,10 @@ class WorkerRegistration:
     @overload
     def task(
         self,
-        __func: Callable[P, Any],
+        __func: Callable[P, R] | Callable[P, Awaitable[R]],
         *,
         _worker: Any = None,
-    ) -> TaskHandle[P]: ...
+    ) -> TaskHandle[P, R]: ...
 
     # Overload for decorator factory: @worker.task() or @worker.task(retries=3)
     @overload
@@ -81,7 +82,7 @@ class WorkerRegistration:
         on_retry: Callable[..., Any] | None = None,
         on_complete: Callable[..., Any] | None = None,
         _worker: Any = None,
-    ) -> Callable[[Callable[P, Any]], TaskHandle[P]]: ...
+    ) -> Callable[[Callable[P, R] | Callable[P, Awaitable[R]]], TaskHandle[P, R]]: ...
 
     def task(
         self,
@@ -107,7 +108,7 @@ class WorkerRegistration:
     ) -> Any:
         """Register a task. Returns a TaskHandle with typed .submit()/.wait()."""
 
-        def decorator(fn: Callable[..., Any]) -> TaskHandle[Any]:
+        def decorator(fn: Callable[..., Any]) -> TaskHandle[Any, Any]:
             task_name = name or fn.__name__
             function_key = build_function_key(
                 "task",

@@ -31,6 +31,19 @@ print(result.value)    # {"order_id": "123", "status": "completed"}
 print(result.job_id)   # "abc-123-def"
 ```
 
+### Get just the value
+
+Use `Future.value()` when you only need the task return value:
+
+```python
+future = await process_order.submit(order_id="123", items=["A", "B"])
+value = await future.value(timeout=30.0)
+print(value)  # {"order_id": "123", "status": "completed"}
+```
+
+`future.value()` raises the same errors as `future.result()` (`TaskExecutionError`, `TaskTimeoutError`, and `TimeoutError`).
+Both `future.value()` and `result.value` are typed from your task's return annotation.
+
 ### Cancel a job
 
 ```python

@@ -263,13 +263,12 @@ async def timeline_demo_segment(segment: int, steps: int = 3) -> dict:
 
     for step in range(1, steps + 1):
         delay_s = 0.6 + (step * 0.3)
-        result = await timeline_demo_step.wait(
+        step_job = await timeline_demo_step.submit(
             segment=segment,
             step=step,
             delay_s=delay_s,
         )
-        if result.value:
-            completed_steps.append(result.value)
+        completed_steps.append(await step_job.value())
 
         ctx.set_progress(
             int(step / steps * 100),
@@ -291,9 +290,8 @@ async def timeline_demo_flow(segments: int = 3) -> dict:
 
     for segment in range(1, segments + 1):
         await asyncio.sleep(0.4)
-        segment_result = await timeline_demo_segment.wait(segment=segment, steps=3)
-        if segment_result.value:
-            segment_summaries.append(segment_result.value)
+        segment_job = await timeline_demo_segment.submit(segment=segment, steps=3)
+        segment_summaries.append(await segment_job.value())
 
         ctx.set_progress(
             int(segment / segments * 100),

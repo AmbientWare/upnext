@@ -13,20 +13,38 @@ Submit multiple tasks and wait for all of them to complete:
 ```python
 import upnext
 
+user_future = await fetch_user.submit(user_id="123")
+orders_future = await fetch_orders.submit(user_id="123")
+notifications_future = await fetch_notifications.submit(user_id="123")
+
 user, orders, notifications = await upnext.gather(
-    fetch_user.wait(user_id="123"),
-    fetch_orders.wait(user_id="123"),
-    fetch_notifications.wait(user_id="123"),
+    user_future,
+    orders_future,
+    notifications_future,
 )
 ```
 
-`gather` also works with Futures:
+`gather` also works with regular awaitables:
 
 ```python
-future_a = await task_a.submit(x=1)
-future_b = await task_b.submit(x=2)
+import asyncio
+import upnext
 
-results = await upnext.gather(future_a, future_b)
+total, ping = await upnext.gather(
+    asyncio.sleep(0, result=42),
+    asyncio.sleep(0, result="ok"),
+)
+```
+
+When you pass `Future` objects, `gather` returns task values (same as `await future.value()` for each future).  
+When you pass `task.wait(...)` coroutines, `gather` returns `TaskResult` objects because those awaitables resolve to `TaskResult`.
+
+```python
+results = await upnext.gather(
+    task_a.wait(x=1),
+    task_b.wait(x=2),
+)
+print(results[0].value)
 ```
 
 ### Handle errors gracefully

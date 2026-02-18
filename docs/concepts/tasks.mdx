@@ -59,6 +59,7 @@ Once a task is registered, you can submit it for background execution:
 # Submit and get a Future (non-blocking)
 future = await process_order.submit(order_id="123", items=["A", "B"])
 print(future.job_id)  # Unique job ID
+value = await future.value()  # {"order_id": "123", "status": "completed"}
 
 # Submit and wait for the result (blocking)
 result = await process_order.wait(order_id="123", items=["A", "B"])

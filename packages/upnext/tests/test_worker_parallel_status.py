@@ -101,6 +101,16 @@ async def test_parallel_helpers_cover_future_and_coroutine_paths() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gather_allows_none_from_future_values() -> None:
+    queue = cast(BaseQueue, _FutureQueue({"job-none": None, "job-num": 7}))
+    fut_none = Future[None](job_id="job-none", queue=queue)
+    fut_num = Future[int](job_id="job-num", queue=queue)
+
+    gathered = await gather(fut_none, fut_num)
+    assert gathered == [None, 7]
+
+
+@pytest.mark.asyncio
 async def test_status_publisher_records_required_job_fields(fake_redis) -> None:
     publisher = StatusPublisher(fake_redis, worker_id="worker-test")
 
