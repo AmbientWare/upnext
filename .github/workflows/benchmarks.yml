@@ -75,30 +75,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - uses: actions/download-artifact@v4
         with:
           path: results
 
       - name: Build combined summary
-        run: |
-          echo "## Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Config:** ${{ inputs.jobs }} jobs, concurrency ${{ inputs.concurrency }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-
-          for profile in throughput durability; do
-            echo "### ${profile} profile" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            for framework in upnext-async upnext-sync celery dramatiq; do
-              dir="results/benchmark-${profile}-${framework}"
-              if [ -f "${dir}/benchmark-output.txt" ]; then
-                echo "<details><summary>${framework}</summary>" >> "$GITHUB_STEP_SUMMARY"
-                echo "" >> "$GITHUB_STEP_SUMMARY"
-                echo '```' >> "$GITHUB_STEP_SUMMARY"
-                cat "${dir}/benchmark-output.txt" >> "$GITHUB_STEP_SUMMARY"
-                echo '```' >> "$GITHUB_STEP_SUMMARY"
-                echo "</details>" >> "$GITHUB_STEP_SUMMARY"
-                echo "" >> "$GITHUB_STEP_SUMMARY"
-              fi
-            done
-          done
+        run: python scripts/benchmarks/summarize.py results/ >> "$GITHUB_STEP_SUMMARY"

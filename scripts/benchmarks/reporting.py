@@ -4,7 +4,15 @@ import statistics
 from dataclasses import asdict
 from typing import Any
 
+from rich.box import ROUNDED, SIMPLE_HEAD
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
 from .models import BenchmarkResult, FrameworkSummary
+
+console = Console(highlight=False)
 
 
 def summarize_framework_runs(
@@ -59,84 +67,179 @@ def summarize_framework_runs(
     )
 
 
-def print_summary_table(summaries: list[FrameworkSummary]) -> None:
-    headers = [
-        "framework",
-        "ok/req",
-        "median_jobs/s",
-        "mean_jobs/s",
-        "stdev_jobs/s",
-        "median_total_s",
-        "p50_ms",
-        "p95_ms",
-        "p99_ms",
-        "max_ms",
-        "non_ok",
-    ]
-    rows = [headers]
+# ---------------------------------------------------------------------------
+# Rich output
+# ---------------------------------------------------------------------------
 
-    for summary in summaries:
-        rows.append(
-            [
-                summary.framework,
-                f"{summary.ok_runs}/{summary.requested_runs}",
-                f"{summary.median_jobs_per_second:.1f}",
-                f"{summary.mean_jobs_per_second:.1f}",
-                f"{summary.stdev_jobs_per_second:.1f}",
-                f"{summary.median_total_seconds:.3f}",
-                f"{summary.median_p50_enqueue_ms:.3f}",
-                f"{summary.median_p95_enqueue_ms:.3f}",
-                f"{summary.median_p99_enqueue_ms:.3f}",
-                f"{summary.median_max_enqueue_ms:.3f}",
-                str(summary.non_ok_count),
-            ]
+
+def _config_panel(config: dict[str, Any]) -> Panel:
+    """Build a Rich Panel showing benchmark configuration."""
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="dim", min_width=14)
+    grid.add_column(min_width=10)
+    grid.add_column(style="dim", min_width=14)
+    grid.add_column(min_width=10)
+
+    grid.add_row(
+        "Jobs",
+        f"{config['jobs']:,}",
+        "Payload",
+        f"{config['payload_bytes']:,} B",
+    )
+    grid.add_row(
+        "Concurrency",
+        str(config["concurrency"]),
+        "Producers",
+        str(config["producer_concurrency"]),
+    )
+    grid.add_row(
+        "Repeats",
+        str(config["repeats"]),
+        "Warmups",
+        str(config["warmups"]),
+    )
+
+    return Panel(
+        grid,
+        title=f"[bold]Benchmark · {config['profile']}[/bold]",
+        title_align="left",
+        border_style="dim",
+        box=ROUNDED,
+        padding=(1, 2),
+        expand=False,
+    )
+
+
+def _summary_table(summaries: list[FrameworkSummary]) -> Table:
+    """Build a Rich Table for the framework summary."""
+    best_jps = max(
+        (s.median_jobs_per_second for s in summaries if s.ok_runs > 0),
+        default=0.0,
+    )
+
+    table = Table(
+        box=SIMPLE_HEAD,
+        show_edge=False,
+        pad_edge=False,
+        padding=(0, 2),
+        expand=False,
+    )
+
+    table.add_column("Framework", style="bold", no_wrap=True)
+    table.add_column("Jobs/s", justify="right", no_wrap=True)
+    table.add_column("Total (s)", justify="right", no_wrap=True)
+    table.add_column("p50 (ms)", justify="right", no_wrap=True, header_style="dim")
+    table.add_column("p95 (ms)", justify="right", no_wrap=True, header_style="dim")
+    table.add_column("p99 (ms)", justify="right", no_wrap=True, header_style="dim")
+    table.add_column("max (ms)", justify="right", no_wrap=True, header_style="dim")
+    table.add_column("Runs", justify="right", no_wrap=True)
+
+    for s in summaries:
+        is_best = s.ok_runs > 0 and s.median_jobs_per_second == best_jps
+        has_failures = s.non_ok_count > 0
+
+        if has_failures:
+            row_style = "dim"
+        elif is_best and len(summaries) > 1:
+            row_style = "green"
+        else:
+            row_style = ""
+
+        stdev_note = f" ±{s.stdev_jobs_per_second:,.0f}" if s.stdev_jobs_per_second else ""
+
+        table.add_row(
+            s.framework,
+            f"{s.median_jobs_per_second:,.0f}{stdev_note}",
+            f"{s.median_total_seconds:.3f}",
+            f"{s.median_p50_enqueue_ms:.3f}",
+            f"{s.median_p95_enqueue_ms:.3f}",
+            f"{s.median_p99_enqueue_ms:.3f}",
+            f"{s.median_max_enqueue_ms:.3f}",
+            f"{s.ok_runs}/{s.requested_runs}",
+            style=row_style,
         )
 
-    widths = [max(len(row[idx]) for row in rows) for idx in range(len(headers))]
-    for idx, row in enumerate(rows):
-        line = " | ".join(item.ljust(widths[col]) for col, item in enumerate(row))
-        print(line)
-        if idx == 0:
-            print("-+-".join("-" * w for w in widths))
+    return table
 
 
-def print_raw_runs(framework: str, runs: list[BenchmarkResult]) -> None:
-    print(f"\n{framework} runs:")
-    headers = [
-        "run",
-        "status",
-        "jobs/s",
-        "enqueue_s",
-        "drain_s",
-        "total_s",
-        "p50_ms",
-        "p95_ms",
-        "p99_ms",
-        "max_ms",
-    ]
-    rows = [headers]
+def _runs_table(framework: str, runs: list[BenchmarkResult]) -> Table:
+    """Build a Rich Table for per-run detail."""
+    table = Table(
+        title=f"[bold]{framework}[/bold] [dim]· per-run detail[/dim]",
+        title_justify="left",
+        box=SIMPLE_HEAD,
+        show_edge=False,
+        pad_edge=False,
+        padding=(0, 2),
+        expand=False,
+    )
+
+    table.add_column("#", justify="right", style="dim", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Jobs/s", justify="right", no_wrap=True)
+    table.add_column("Enqueue (s)", justify="right", no_wrap=True)
+    table.add_column("Drain (s)", justify="right", no_wrap=True)
+    table.add_column("Total (s)", justify="right", no_wrap=True)
+    table.add_column("p50 (ms)", justify="right", no_wrap=True, header_style="dim")
+    table.add_column("p95 (ms)", justify="right", no_wrap=True, header_style="dim")
+    table.add_column("p99 (ms)", justify="right", no_wrap=True, header_style="dim")
+    table.add_column("max (ms)", justify="right", no_wrap=True, header_style="dim")
+
     for idx, run in enumerate(runs, start=1):
-        rows.append(
-            [
-                str(idx),
-                run.status,
-                f"{run.jobs_per_second:.1f}",
-                f"{run.enqueue_seconds:.3f}",
-                f"{run.drain_seconds:.3f}",
-                f"{run.total_seconds:.3f}",
-                f"{run.p50_enqueue_ms:.3f}",
-                f"{run.p95_enqueue_ms:.3f}",
-                f"{run.p99_enqueue_ms:.3f}",
-                f"{run.max_enqueue_ms:.3f}",
-            ]
+        status_text = Text(run.status)
+        if run.status == "ok":
+            status_text.stylize("green")
+        else:
+            status_text.stylize("red")
+
+        table.add_row(
+            str(idx),
+            status_text,
+            f"{run.jobs_per_second:,.0f}",
+            f"{run.enqueue_seconds:.3f}",
+            f"{run.drain_seconds:.3f}",
+            f"{run.total_seconds:.3f}",
+            f"{run.p50_enqueue_ms:.3f}",
+            f"{run.p95_enqueue_ms:.3f}",
+            f"{run.p99_enqueue_ms:.3f}",
+            f"{run.max_enqueue_ms:.3f}",
         )
 
-    widths = [max(len(row[idx]) for row in rows) for idx in range(len(headers))]
-    for idx, row in enumerate(rows):
-        line = " | ".join(item.ljust(widths[col]) for col, item in enumerate(row))
-        print(line)
-        if idx == 0:
-            print("-+-".join("-" * w for w in widths))
+    return table
+
+
+def print_report(
+    summaries: list[FrameworkSummary],
+    *,
+    config: dict[str, Any],
+    runs_by_framework: dict[str, list[BenchmarkResult]] | None = None,
+    warmups: int = 0,
+) -> None:
+    """Print the full human-readable benchmark report."""
+    # Use a wide console so tables are never truncated.
+    out = Console(highlight=False, width=max(console.width, 120))
+
+    out.print()
+    out.print(_config_panel(config))
+    out.print()
+    out.print(_summary_table(summaries))
+
+    if warmups > 0:
+        out.print(
+            f"\n  [dim]{warmups} warmup(s) per framework (excluded from summary)[/dim]"
+        )
+
+    if runs_by_framework:
+        for framework, runs in runs_by_framework.items():
+            out.print()
+            out.print(_runs_table(framework, runs))
+
+    out.print()
+
+
+# ---------------------------------------------------------------------------
+# JSON (unchanged — used by --json / CI)
+# ---------------------------------------------------------------------------
 
 
 def json_payload(

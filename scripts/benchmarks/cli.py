@@ -15,7 +15,7 @@ from .models import (
     SUPPORTED_PROFILES,
 )
 from .orchestrator import BenchmarkOrchestrator, BenchmarkRunSettings
-from .reporting import json_payload, print_raw_runs, print_summary_table, summarize_framework_runs
+from .reporting import json_payload, print_report, summarize_framework_runs
 from .runners import ensure_redis, parse_frameworks, run_single_framework
 from .subprocess_client import (
     JSON_END_MARKER,
@@ -239,12 +239,17 @@ def _normal_mode(
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print_summary_table(summaries)
-        if args.warmups > 0:
-            print(f"\nWarmups per framework: {args.warmups} (excluded from summary).")
-        if args.show_runs:
-            for framework in frameworks:
-                print_raw_runs(framework, runs_by_framework[framework])
+        print_report(
+            summaries,
+            config=_to_config(
+                args,
+                frameworks,
+                producer_concurrency,
+                consumer_prefetch=consumer_prefetch,
+            ),
+            runs_by_framework=runs_by_framework if args.show_runs else None,
+            warmups=args.warmups,
+        )
 
     any_non_ok = any(
         run.status != "ok"
