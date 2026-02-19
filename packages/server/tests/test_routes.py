@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import AsyncIterator, cast
 
 import pytest
+from shared._version import __version__
 import server.routes.apis as apis_route
 import server.routes.apis.apis_root as apis_root_route
 import server.routes.artifacts.artifacts_root as artifacts_root_route
@@ -133,7 +134,7 @@ async def test_health_route_includes_alert_metrics(monkeypatch) -> None:
             return True
 
     class _SettingsStub:
-        version = "0.0.1"
+        version = __version__
         redis_url = "redis://localhost:6379"
 
     async def _get_redis() -> _RedisStub:
@@ -163,7 +164,7 @@ async def test_health_route_includes_alert_metrics(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_readiness_route_returns_503_when_dependencies_fail(monkeypatch) -> None:
     class _SettingsStub:
-        version = "0.0.1"
+        version = __version__
         redis_url = "redis://localhost:6379"
 
     async def _get_redis():
@@ -204,7 +205,7 @@ async def test_readiness_requires_redis_in_production(monkeypatch) -> None:
             return _SessionStub()
 
     class _SettingsStub:
-        version = "0.0.1"
+        version = __version__
         redis_url = None
         is_production = True
         readiness_require_redis = False
@@ -240,7 +241,7 @@ async def test_readiness_allows_missing_redis_in_development(monkeypatch) -> Non
             return _SessionStub()
 
     class _SettingsStub:
-        version = "0.0.1"
+        version = __version__
         redis_url = None
         is_production = False
         readiness_require_redis = False
