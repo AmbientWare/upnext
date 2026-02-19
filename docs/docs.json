@@ -4,7 +4,8 @@
   "name": "UpNext",
   "logo": {
     "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "dark": "/logo/dark.svg",
+    "href": "https://upnext.run"
   },
   "favicon": "/favicon.svg",
   "colors": {
