@@ -76,6 +76,8 @@ class StatusPublisherConfig:
     pending_flush_batch_size: int = 128
     durable_buffer_key: str | None = None
     durable_buffer_maxlen: int = 10_000
+    durable_probe_interval_seconds: float = 2.0
+    durable_flush_interval_seconds: float = 0.25
     strict: bool = False
 
 
@@ -102,6 +104,9 @@ class StatusPublisher:
         self._durable_lock_ttl_seconds = 5
         self._last_capacity_warning_at: float = 0.0
         self._last_drop_warning_at: float = 0.0
+        self._durable_pending_hint = False
+        self._next_durable_probe_at = 0.0
+        self._next_durable_flush_at = 0.0
 
     @property
     def pending_count(self) -> int:
@@ -140,6 +145,10 @@ class StatusPublisher:
             buffered_durably = await self._buffer_pending_durable(payload)
             if not buffered_durably:
                 self._buffer_pending(payload)
+            else:
+                self._durable_pending_hint = True
+                # Try to flush durable backlog on the next successful publish.
+                self._next_durable_flush_at = 0.0
             message = (
                 f"Failed to publish status event {event_type} for job {job_id}: {e}; "
                 f"buffered={len(self._pending)} dropped={self._dropped_pending}"
@@ -148,8 +157,14 @@ class StatusPublisher:
                 raise RuntimeError(message) from e
             logger.warning(message)
 
-    async def _flush_pending(self) -> None:
-        await self._flush_durable_pending()
+    async def _flush_pending(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if force:
+            self._durable_pending_hint = True
+            self._next_durable_flush_at = 0.0
+
+        await self._probe_durable_pending(now)
+        await self._flush_durable_pending_if_due(now, force=force)
         if not self._pending:
             return
 
@@ -165,7 +180,7 @@ class StatusPublisher:
 
     async def flush_pending(self) -> None:
         """Best-effort flush of both durable and in-memory pending payloads."""
-        await self._flush_pending()
+        await self._flush_pending(force=True)
 
     async def close(self, *, timeout_seconds: float = 2.0) -> None:
         """Flush pending status payloads before shutdown."""
@@ -175,7 +190,7 @@ class StatusPublisher:
             before_durable = await self._durable_pending_count()
             if before_memory == 0 and before_durable == 0:
                 return
-            await self._flush_pending()
+            await self._flush_pending(force=True)
             after_memory = len(self._pending)
             after_durable = await self._durable_pending_count()
             if before_memory == after_memory and before_durable == after_durable:
@@ -196,15 +211,40 @@ class StatusPublisher:
         except Exception:
             return False
 
-    async def _flush_durable_pending(self) -> None:
+    async def _probe_durable_pending(self, now: float) -> None:
+        key = self._config.durable_buffer_key
+        if not key or self._durable_pending_hint:
+            return
+        if now < self._next_durable_probe_at:
+            return
+        probe_interval = max(0.1, self._config.durable_probe_interval_seconds)
+        self._next_durable_probe_at = now + probe_interval
+        if await self._durable_pending_count() > 0:
+            self._durable_pending_hint = True
+            self._next_durable_flush_at = now
+
+    async def _flush_durable_pending_if_due(self, now: float, *, force: bool) -> None:
+        if not self._config.durable_buffer_key:
+            return
+        if not (force or self._durable_pending_hint):
+            return
+        if not force and now < self._next_durable_flush_at:
+            return
+
+        has_more = await self._flush_durable_pending()
+        self._durable_pending_hint = has_more
+        flush_interval = max(0.05, self._config.durable_flush_interval_seconds)
+        self._next_durable_flush_at = (now + flush_interval) if has_more else 0.0
+
+    async def _flush_durable_pending(self) -> bool:
         key = self._config.durable_buffer_key
         if not key:
-            return
+            return False
         lock_key = f"{key}:flush_lock"
         lock_token = f"{self._worker_id}:{time.time_ns()}"
         acquired = await self._acquire_durable_lock(lock_key, lock_token)
         if not acquired:
-            return
+            return True
 
         try:
             flushed = 0
@@ -212,7 +252,7 @@ class StatusPublisher:
             while flushed < max_batch:
                 encoded = await self._redis.lindex(key, 0)
                 if encoded is None:
-                    return
+                    return False
                 if isinstance(encoded, bytes):
                     encoded = encoded.decode()
                 try:
@@ -221,9 +261,10 @@ class StatusPublisher:
                         raise TypeError("invalid durable payload")
                     await self._publish_with_retry(payload)
                 except Exception:
-                    return
+                    return True
                 await self._redis.lpop(key)
                 flushed += 1
+            return True
         finally:
             await self._release_durable_lock(lock_key, lock_token)
 

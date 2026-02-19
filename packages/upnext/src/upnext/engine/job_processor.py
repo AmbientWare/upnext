@@ -12,12 +12,12 @@ which delegates to JobProcessor for actual job processing.
 
 import asyncio
 import contextlib
-import contextvars
 import logging
 import multiprocessing
 import os
 import queue as thread_queue
 import signal
+import threading
 import time
 import traceback as tb
 import uuid
@@ -517,32 +517,41 @@ class JobProcessor:
         """
         kwargs = job.kwargs
 
-        # Choose the right queue type for this executor mode
-        cmd_queue: CommandQueueLike
-        if task_def.is_async:
-            cmd_queue = _AsyncQueueWrapper(asyncio.Queue[ContextCommandOrSentinel]())
-        elif isinstance(self._sync_pool, ProcessPoolExecutor):
-            cmd_queue = cast(CommandQueueLike, multiprocessing.Queue())
-        else:
-            cmd_queue = thread_queue.Queue[ContextCommandOrSentinel]()
-
-        ctx._cmd_queue = cmd_queue
-
         # Create backend for drain task
         backend = self._create_context_backend(job)
 
-        # Start drain task
-        drain = asyncio.create_task(
-            _drain_commands(cmd_queue, backend, is_async_queue=task_def.is_async)
-        )
-        poll_interval = 0.25 if (job.timeout or task_def.timeout or 0) <= 10 else 1.0
-        cancel_poll = asyncio.create_task(
-            self._poll_job_cancellation(
-                job,
-                ctx,
-                interval_seconds=poll_interval,
+        cmd_queue: CommandQueueLike
+        drain: asyncio.Task[None] | None = None
+        lazy_cmd_queue: _LazyCommandQueue | None = None
+
+        if not task_def.is_async and isinstance(self._sync_pool, ProcessPoolExecutor):
+            # Process workers must receive a real multiprocessing.Queue.
+            cmd_queue = cast(CommandQueueLike, multiprocessing.Queue())
+            drain = asyncio.create_task(
+                _drain_commands(cmd_queue, backend, is_async_queue=False)
             )
-        )
+        else:
+            # Most jobs do not emit context commands; avoid creating drain task
+            # and queue machinery until first command is actually sent.
+            lazy_cmd_queue = _LazyCommandQueue(
+                backend=backend,
+                is_async_queue=task_def.is_async,
+            )
+            cmd_queue = lazy_cmd_queue
+
+        ctx._cmd_queue = cmd_queue
+
+        poll_interval = 0.25 if (job.timeout or task_def.timeout or 0) <= 10 else 1.0
+        cancel_poll: asyncio.Task[None] | None = None
+        if not isinstance(self._sync_pool, ProcessPoolExecutor):
+            cancel_poll = asyncio.create_task(
+                self._poll_job_cancellation(
+                    job,
+                    ctx,
+                    interval_seconds=poll_interval,
+                    initial_delay_seconds=min(0.25, poll_interval),
+                )
+            )
 
         # Set context in contextvars so get_current_context() works
         set_current_context(ctx)
@@ -554,30 +563,28 @@ class JobProcessor:
             else:
                 # Sync function - run in thread/process pool
                 loop = asyncio.get_running_loop()
-                if isinstance(self._sync_pool, ProcessPoolExecutor):
-                    result = await loop.run_in_executor(
-                        self._sync_pool,
-                        _run_sync_task_with_context,
-                        task_def.func,
-                        kwargs,
-                        ctx,
-                    )
-                else:
-                    func_with_args = partial(task_def.func, **kwargs)
-                    ctx_copy = contextvars.copy_context()
-                    result = await loop.run_in_executor(
-                        self._sync_pool, ctx_copy.run, func_with_args
-                    )
+                result = await loop.run_in_executor(
+                    self._sync_pool,
+                    _run_sync_task_with_context,
+                    task_def.func,
+                    kwargs,
+                    ctx,
+                )
 
             return result
 
         finally:
-            cancel_poll.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await cancel_poll
-            # Signal drain to stop and wait for it to flush
-            cmd_queue.put(None)
-            await drain
+            if cancel_poll is not None:
+                cancel_poll.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await cancel_poll
+
+            if lazy_cmd_queue is not None:
+                await lazy_cmd_queue.close()
+            elif drain is not None:
+                # Signal drain to stop and wait for it to flush
+                cmd_queue.put(None)
+                await drain
 
             # Clear context
             set_current_context(None)
@@ -589,6 +596,7 @@ class JobProcessor:
         *,
         interval_seconds: float = 0.5,
         max_interval_seconds: float = 2.0,
+        initial_delay_seconds: float = 0.0,
     ) -> None:
         """Set context cancellation flag when external cancellation is requested."""
         # Process pool tasks run in a separate process and receive a copy of Context,
@@ -597,6 +605,10 @@ class JobProcessor:
             return
 
         current_interval = max(0.1, interval_seconds)
+        delay = max(0.0, initial_delay_seconds)
+        if delay > 0:
+            await asyncio.sleep(delay)
+
         while True:
             try:
                 if await self._queue.is_cancelled(job.id):
@@ -943,6 +955,79 @@ class _AsyncQueueWrapper:
 
     async def get(self) -> ContextCommandOrSentinel:
         return await self._q.get()
+
+
+class _LazyCommandQueue:
+    """Lazily instantiate queue/drain only if a context command is emitted."""
+
+    __slots__ = (
+        "_backend",
+        "_is_async_queue",
+        "_loop",
+        "_lock",
+        "_queue",
+        "_drain_task",
+    )
+
+    def __init__(self, *, backend: JobContextBackend, is_async_queue: bool) -> None:
+        self._backend = backend
+        self._is_async_queue = is_async_queue
+        self._loop = asyncio.get_running_loop()
+        self._lock = threading.Lock()
+        self._queue: CommandQueueLike | None = None
+        self._drain_task: asyncio.Task[None] | None = None
+
+    def _start_drain_task(self) -> None:
+        if self._queue is None or self._drain_task is not None:
+            return
+        self._drain_task = asyncio.create_task(
+            _drain_commands(
+                self._queue,
+                self._backend,
+                is_async_queue=self._is_async_queue,
+            )
+        )
+
+    def _activate(self) -> None:
+        with self._lock:
+            if self._queue is None:
+                if self._is_async_queue:
+                    self._queue = _AsyncQueueWrapper(
+                        asyncio.Queue[ContextCommandOrSentinel]()
+                    )
+                else:
+                    self._queue = thread_queue.Queue[ContextCommandOrSentinel]()
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is self._loop:
+            self._start_drain_task()
+        else:
+            self._loop.call_soon_threadsafe(self._start_drain_task)
+
+    def put(
+        self,
+        item: ContextCommandOrSentinel,
+        block: bool = True,
+        timeout: float | None = None,
+    ) -> None:
+        self._activate()
+        assert self._queue is not None
+        self._queue.put(item, block=block, timeout=timeout)
+
+    async def close(self) -> None:
+        if self._queue is None:
+            return
+        self._start_drain_task()
+        if self._drain_task is None:
+            await asyncio.sleep(0)
+            self._start_drain_task()
+        self._queue.put(None)
+        if self._drain_task is not None:
+            await self._drain_task
 
 
 async def _drain_commands(

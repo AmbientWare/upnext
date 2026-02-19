@@ -56,17 +56,23 @@ async def _wait_for(
 
 
 @pytest.mark.asyncio
-async def test_fetcher_skips_dequeue_when_inbox_has_too_little_capacity() -> None:
-    queue = _BatchQueueStub()
+async def test_fetcher_dequeues_with_partial_inbox_capacity() -> None:
+    job = Job(function="task_fn", function_name="task", key="fetcher-partial-capacity")
+    queue = _BatchQueueStub(batches=[[job]])
     fetcher = Fetcher(queue=cast(RedisQueue, queue), batch_size=2, inbox_size=1)
 
     await fetcher.start(["task_fn"])
     try:
-        await asyncio.sleep(0.05)
+        async def inbox_has_item() -> bool:
+            return not fetcher.inbox.empty()
+
+        assert await _wait_for(inbox_has_item)
+        received = await fetcher.inbox.get()
     finally:
         await fetcher.stop()
 
-    assert queue.calls == 0
+    assert queue.calls >= 1
+    assert received.id == job.id
 
 
 @pytest.mark.asyncio

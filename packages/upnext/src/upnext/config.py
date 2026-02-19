@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     status_durable_buffer_enabled: bool = True
     status_durable_buffer_key: str = "upnext:status:pending"
     status_durable_buffer_maxlen: int = 10_000
+    status_durable_probe_interval_seconds: float = 2.0
+    status_durable_flush_interval_seconds: float = 0.25
     status_shutdown_flush_timeout_seconds: float = 2.0
     status_publish_strict: bool = False
 

@@ -111,33 +111,49 @@ The dashboard and API views use a stream-first model:
 
 This keeps UI updates near-realtime while reducing avoidable polling load.
 
-## Worker Profiles
+## Worker Queue Defaults
 
-Workers use a `WorkerProfile` to control queue tuning. The default is `ProfileOptions.SAFE`:
+Workers now run with fixed, safe queue tuning defaults. Queue profile selection
+and custom profile overrides are intentionally not exposed in the public
+constructor.
 
-```python
-import upnext
+## Benchmarking
 
-# Built-in presets
-worker = upnext.Worker("my-worker", profile=upnext.ProfileOptions.THROUGHPUT)
-
-# Custom profile
-worker = upnext.Worker(
-    "my-worker",
-    profile=upnext.WorkerProfile(batch_size=500, inbox_size=5000),
-)
-```
-
-See the [Workers documentation](https://docs.upnext.run/concepts/workers#queue-tuning) for preset details.
-
-## Benchmark Profiles
-
-Benchmark harness now supports explicit profiles:
+The benchmark suite is fully command-driven:
 
 ```bash
-uv run benchmarks --profile throughput
-uv run benchmarks --profile durability
+# Validate Redis + framework imports
+uv run benchmarks doctor
+
+# Primary benchmark: sustained API-like workload (recommended)
+uv run benchmarks matrix \
+  --workload sustained \
+  --duration-seconds 60 \
+  --arrival-rate 200 \
+  --framework upnext-async \
+  --framework upnext-sync \
+  --framework celery \
+  --framework saq
+
+# Secondary benchmark: burst/backpressure guardrail
+uv run benchmarks matrix \
+  --workload burst \
+  --jobs 10000 \
+  --framework upnext-async \
+  --framework upnext-sync \
+  --framework celery \
+  --framework saq
 ```
+
+For GitHub Actions, use the `Benchmarks` workflow with:
+- `mode=quick` for routine checks (sustained only, light settings)
+- `mode=full` for deeper comparisons (sustained + burst)
+
+Both modes are deterministic/fair by default:
+- fixed framework set (`upnext-async`, `upnext-sync`, `celery`, `saq`)
+- fixed matrix seed (`42`)
+- quick: sustained `duration=30s`, `arrival=150/s`, `repeats=1`, `warmups=1`
+- full: sustained `duration=60s`, `arrival=200/s` + burst `jobs=10000`, `repeats=2`, `warmups=1`
 
 ## Testing and Verification
 

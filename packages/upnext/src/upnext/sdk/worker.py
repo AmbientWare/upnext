@@ -43,7 +43,6 @@ from upnext.sdk._worker_connection import (
 )
 from upnext.sdk._worker_registration import WorkerRegistration
 from upnext.sdk.context import Context, set_current_context
-from upnext.sdk.profile import SafeProfile, WorkerProfile
 from upnext.sdk.secrets import fetch_and_inject_secrets
 from upnext.types import SyncExecutor
 
@@ -54,6 +53,15 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 DEFAULT_CONCURRENCY = 2
+DEFAULT_QUEUE_BATCH_SIZE = 100
+DEFAULT_QUEUE_INBOX_SIZE = 1000
+DEFAULT_QUEUE_OUTBOX_SIZE = 10_000
+DEFAULT_QUEUE_FLUSH_INTERVAL_MS = 5.0
+DEFAULT_QUEUE_CLAIM_TIMEOUT_MS = 30_000
+DEFAULT_QUEUE_JOB_TTL_SECONDS = 86_400
+DEFAULT_QUEUE_RESULT_TTL_SECONDS = 3_600
+DEFAULT_QUEUE_STREAM_MAXLEN = 0
+DEFAULT_QUEUE_DLQ_STREAM_MAXLEN = 10_000
 
 
 @dataclass
@@ -79,7 +87,6 @@ class Worker:
 
     name: str = field(default_factory=lambda: f"worker-{uuid.uuid4().hex[:8]}")
     concurrency: int = DEFAULT_CONCURRENCY
-    profile: WorkerProfile = field(default_factory=SafeProfile)
     sync_executor: SyncExecutor = SyncExecutor.THREAD
     redis_url: str | None = None
     secrets: list[str] = field(default_factory=list)
@@ -258,22 +265,20 @@ class Worker:
             )
         self._redis_client = create_redis_client(self.redis_url)
 
-        p = self.profile
-
         # Enforce inbox_size >= batch_size to prevent fetcher starvation.
-        inbox_size = max(p.inbox_size, p.batch_size)
+        inbox_size = max(DEFAULT_QUEUE_INBOX_SIZE, DEFAULT_QUEUE_BATCH_SIZE)
 
         self._queue_backend = RedisQueue(
             client=self._redis_client,
-            claim_timeout_ms=p.claim_timeout_ms,
-            batch_size=p.batch_size,
+            claim_timeout_ms=DEFAULT_QUEUE_CLAIM_TIMEOUT_MS,
+            batch_size=DEFAULT_QUEUE_BATCH_SIZE,
             inbox_size=inbox_size,
-            outbox_size=p.outbox_size,
-            flush_interval=p.flush_interval_ms / 1000,
-            job_ttl_seconds=p.job_ttl_seconds,
-            result_ttl_seconds=p.result_ttl_seconds,
-            stream_maxlen=p.stream_maxlen,
-            dlq_stream_maxlen=p.dlq_stream_maxlen,
+            outbox_size=DEFAULT_QUEUE_OUTBOX_SIZE,
+            flush_interval=DEFAULT_QUEUE_FLUSH_INTERVAL_MS / 1000,
+            job_ttl_seconds=DEFAULT_QUEUE_JOB_TTL_SECONDS,
+            result_ttl_seconds=DEFAULT_QUEUE_RESULT_TTL_SECONDS,
+            stream_maxlen=DEFAULT_QUEUE_STREAM_MAXLEN,
+            dlq_stream_maxlen=DEFAULT_QUEUE_DLQ_STREAM_MAXLEN,
         )
 
         # Connect task handles to queue
@@ -313,6 +318,12 @@ class Worker:
                 ),
                 durable_buffer_key=durable_buffer_key,
                 durable_buffer_maxlen=max(1, settings.status_durable_buffer_maxlen),
+                durable_probe_interval_seconds=max(
+                    0.1, settings.status_durable_probe_interval_seconds
+                ),
+                durable_flush_interval_seconds=max(
+                    0.05, settings.status_durable_flush_interval_seconds
+                ),
                 strict=settings.status_publish_strict,
             ),
         )

@@ -71,16 +71,24 @@ class Fetcher:
         logger.debug(f"Fetch loop started, functions={self._functions}")
 
         while not self._stop_event.is_set():
-            # Wait if inbox is nearly full
+            # Refill whenever capacity is available; waiting for a full batch can
+            # starve consumers when only partial capacity is free.
             available = self._inbox.maxsize - self._inbox.qsize()
-            if available < self._batch_size:
-                await asyncio.sleep(0.01)
+            if available <= 0:
+                await asyncio.sleep(0.005)
                 continue
 
             try:
+                target_count = min(self._batch_size, available)
+                block_timeout = 1.0 if target_count >= self._batch_size else 0.05
                 jobs = await self._queue._dequeue_batch(
-                    self._functions, count=min(self._batch_size, available), timeout=1.0
+                    self._functions,
+                    count=target_count,
+                    timeout=block_timeout,
                 )
+                if not jobs:
+                    await asyncio.sleep(0.005)
+                    continue
                 for job in jobs:
                     await self._inbox.put(job)
             except asyncio.CancelledError:

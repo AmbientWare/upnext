@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 
-from .models import BenchmarkConfig, BenchmarkResult
-
-JSON_START_MARKER = "===BENCHMARK_JSON_START==="
-JSON_END_MARKER = "===BENCHMARK_JSON_END==="
+from .io import extract_marked_json
+from .models import BenchmarkConfig, BenchmarkResult, DiagnosticValue, SCHEMA_VERSION
 
 
 class SubprocessBenchmarkClient:
@@ -21,12 +18,17 @@ class SubprocessBenchmarkClient:
             sys.executable,
             "-m",
             self._module_name,
-            "--single-framework",
+            "run",
+            "--framework",
             cfg.framework,
-            "--profile",
-            cfg.profile.value,
+            "--workload",
+            cfg.workload.value,
             "--jobs",
             str(cfg.jobs),
+            "--duration-seconds",
+            str(cfg.duration_seconds),
+            "--arrival-rate",
+            str(cfg.arrival_rate),
             "--concurrency",
             str(cfg.concurrency),
             "--payload-bytes",
@@ -41,6 +43,10 @@ class SubprocessBenchmarkClient:
             cfg.redis_url,
             "--run-id",
             cfg.run_id,
+            "--queue-wait-sample-rate",
+            str(cfg.queue_wait_sample_rate),
+            "--queue-wait-max-samples",
+            str(cfg.queue_wait_max_samples),
             "--json",
         ]
 
@@ -50,54 +56,77 @@ class SubprocessBenchmarkClient:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=max(60.0, cfg.timeout_seconds + 60.0),
         )
 
         if proc.returncode != 0:
-            return BenchmarkResult(
-                framework=cfg.framework,
-                status="error",
-                jobs=cfg.jobs,
-                concurrency=cfg.concurrency,
-                enqueue_seconds=0.0,
-                drain_seconds=0.0,
-                total_seconds=0.0,
-                jobs_per_second=0.0,
-                p50_enqueue_ms=0.0,
-                p95_enqueue_ms=0.0,
-                p99_enqueue_ms=0.0,
-                max_enqueue_ms=0.0,
-                notes=f"Subprocess failed ({proc.returncode}): {proc.stderr.strip()[-300:]}",
-            )
+            stderr_tail = proc.stderr.strip()[-700:]
+            stdout_tail = proc.stdout.strip()[-700:]
+            note = f"Subprocess failed ({proc.returncode})"
+            if stderr_tail:
+                note += f": {stderr_tail}"
+            elif stdout_tail:
+                note += f": {stdout_tail}"
+            return BenchmarkResult.empty(cfg, status="error", notes=note)
 
         try:
-            payload = self._extract_json_payload(proc.stdout)
-            return self._benchmark_result_from_payload(payload)
+            payload = extract_marked_json(proc.stdout)
+            result_payload = payload.get("result")
+            if not isinstance(result_payload, dict):
+                raise TypeError("Expected object in 'result'")
+            return self._benchmark_result_from_payload(cfg, result_payload)
         except Exception as exc:
-            return BenchmarkResult(
-                framework=cfg.framework,
+            stdout_tail = proc.stdout.strip()[-700:]
+            return BenchmarkResult.empty(
+                cfg,
                 status="error",
-                jobs=cfg.jobs,
-                concurrency=cfg.concurrency,
-                enqueue_seconds=0.0,
-                drain_seconds=0.0,
-                total_seconds=0.0,
-                jobs_per_second=0.0,
-                p50_enqueue_ms=0.0,
-                p95_enqueue_ms=0.0,
-                p99_enqueue_ms=0.0,
-                max_enqueue_ms=0.0,
-                notes=f"Failed to parse subprocess output: {exc}",
+                notes=f"Failed to parse subprocess output: {exc}; tail={stdout_tail}",
             )
 
     @staticmethod
-    def _benchmark_result_from_payload(payload: dict[str, object]) -> BenchmarkResult:
+    def _benchmark_result_from_payload(
+        cfg: BenchmarkConfig,
+        payload: dict[str, object],
+    ) -> BenchmarkResult:
+        diagnostics: dict[str, DiagnosticValue] = {}
+        raw_diagnostics = payload.get("diagnostics")
+        if isinstance(raw_diagnostics, dict):
+            for key, value in raw_diagnostics.items():
+                if isinstance(value, str | int | float | bool):
+                    diagnostics[str(key)] = value
+
         return BenchmarkResult(
-            framework=str(payload.get("framework", "")),
-            status=str(payload.get("status", "")),
-            jobs=SubprocessBenchmarkClient._coerce_int(payload.get("jobs"), default=0),
+            schema_version=SubprocessBenchmarkClient._coerce_int(
+                payload.get("schema_version"),
+                default=SCHEMA_VERSION,
+            ),
+            framework=str(payload.get("framework", cfg.framework)),
+            status=str(payload.get("status", "error")),
+            workload=str(payload.get("workload", cfg.workload.value)),
+            jobs=SubprocessBenchmarkClient._coerce_int(payload.get("jobs"), default=cfg.jobs),
             concurrency=SubprocessBenchmarkClient._coerce_int(
                 payload.get("concurrency"),
-                default=0,
+                default=cfg.concurrency,
+            ),
+            producer_concurrency=SubprocessBenchmarkClient._coerce_int(
+                payload.get("producer_concurrency"),
+                default=cfg.producer_concurrency,
+            ),
+            consumer_prefetch=SubprocessBenchmarkClient._coerce_int(
+                payload.get("consumer_prefetch"),
+                default=cfg.consumer_prefetch,
+            ),
+            timeout_seconds=SubprocessBenchmarkClient._coerce_float(
+                payload.get("timeout_seconds"),
+                default=cfg.timeout_seconds,
+            ),
+            arrival_rate=SubprocessBenchmarkClient._coerce_float(
+                payload.get("arrival_rate"),
+                default=cfg.arrival_rate,
+            ),
+            duration_seconds=SubprocessBenchmarkClient._coerce_float(
+                payload.get("duration_seconds"),
+                default=cfg.duration_seconds,
             ),
             enqueue_seconds=SubprocessBenchmarkClient._coerce_float(
                 payload.get("enqueue_seconds"),
@@ -131,8 +160,29 @@ class SubprocessBenchmarkClient:
                 payload.get("max_enqueue_ms"),
                 default=0.0,
             ),
+            p50_queue_wait_ms=SubprocessBenchmarkClient._coerce_float(
+                payload.get("p50_queue_wait_ms"),
+                default=0.0,
+            ),
+            p95_queue_wait_ms=SubprocessBenchmarkClient._coerce_float(
+                payload.get("p95_queue_wait_ms"),
+                default=0.0,
+            ),
+            p99_queue_wait_ms=SubprocessBenchmarkClient._coerce_float(
+                payload.get("p99_queue_wait_ms"),
+                default=0.0,
+            ),
+            max_queue_wait_ms=SubprocessBenchmarkClient._coerce_float(
+                payload.get("max_queue_wait_ms"),
+                default=0.0,
+            ),
+            queue_wait_samples=SubprocessBenchmarkClient._coerce_int(
+                payload.get("queue_wait_samples"),
+                default=0,
+            ),
             notes=str(payload.get("notes", "")),
             framework_version=str(payload.get("framework_version", "")),
+            diagnostics=diagnostics,
         )
 
     @staticmethod
@@ -166,15 +216,3 @@ class SubprocessBenchmarkClient:
             except ValueError:
                 return default
         return default
-
-    @staticmethod
-    def _extract_json_payload(stdout: str) -> dict[str, object]:
-        start = stdout.find(JSON_START_MARKER)
-        end = stdout.find(JSON_END_MARKER)
-        if start < 0 or end < 0 or end <= start:
-            raise ValueError("Benchmark output markers missing")
-        payload = stdout[start + len(JSON_START_MARKER) : end].strip()
-        raw = json.loads(payload)
-        if not isinstance(raw, dict):
-            raise TypeError("Expected dict payload from subprocess benchmark run")
-        return raw

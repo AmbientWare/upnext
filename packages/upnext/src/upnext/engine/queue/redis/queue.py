@@ -1288,15 +1288,32 @@ class RedisQueue(BaseQueue):
         # Resolve canonical active job payload; stream entries can be stale.
         job_key: str
         parsed_job_id: str | None = None
-        job_data_raw = msg_data.get(b"data") or msg_data.get("data")
-        if job_data_raw:
-            job_str = (
+        job_id_raw = msg_data.get(b"job_id") or msg_data.get("job_id")
+        function_raw = msg_data.get(b"function") or msg_data.get("function")
+        if job_id_raw and function_raw:
+            job_id = (
+                job_id_raw.decode() if isinstance(job_id_raw, bytes) else job_id_raw
+            )
+            function = (
+                function_raw.decode()
+                if isinstance(function_raw, bytes)
+                else function_raw
+            )
+            parsed_job_id = job_id
+            job_key = shared_job_key(function, job_id, key_prefix=self._key_prefix)
+        else:
+            # Compatibility fallback for older payloads that only carry serialized data.
+            job_data_raw = msg_data.get(b"data") or msg_data.get("data")
+            if not job_data_raw:
+                await client.xack(stream_key, self._consumer_group, msg_id_str)
+                return None
+            payload = (
                 job_data_raw.decode()
                 if isinstance(job_data_raw, bytes)
                 else job_data_raw
             )
             try:
-                stream_job = Job.from_json(job_str)
+                stream_job = Job.from_json(payload)
             except Exception:
                 logger.warning(
                     "Skipping invalid stream payload stream=%s msg_id=%s",
@@ -1305,27 +1322,8 @@ class RedisQueue(BaseQueue):
                 )
                 await client.xack(stream_key, self._consumer_group, msg_id_str)
                 return None
-            job_key = self._job_key(stream_job)
             parsed_job_id = stream_job.id
-        else:
-            # Fallback for old messages
-            job_id_raw = msg_data.get(b"job_id") or msg_data.get("job_id")
-            if not job_id_raw:
-                await client.xack(stream_key, self._consumer_group, msg_id_str)
-                return None
-
-            job_id = (
-                job_id_raw.decode() if isinstance(job_id_raw, bytes) else job_id_raw
-            )
-            parsed_job_id = job_id
-            function_raw = msg_data.get(b"function") or msg_data.get("function")
-            function = (
-                function_raw.decode()
-                if isinstance(function_raw, bytes)
-                else function_raw or "unknown"
-            )
-
-            job_key = shared_job_key(function, job_id, key_prefix=self._key_prefix)
+            job_key = self._job_key(stream_job)
 
         job_data = await client.get(job_key)
         if not job_data:
@@ -1401,7 +1399,6 @@ class RedisQueue(BaseQueue):
 
         job.status = JobStatus.ACTIVE
         job.started_at = datetime.now(UTC)
-        await self._refresh_job_ttl(client, job, job_key=job_key)
         self._invalidate_function_active_count(job.function)
 
         return job

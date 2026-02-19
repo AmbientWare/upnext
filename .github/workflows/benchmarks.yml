@@ -3,24 +3,25 @@ name: Benchmarks
 on:
   workflow_dispatch:
     inputs:
-      jobs:
-        description: "Number of jobs per run"
+      mode:
+        description: "Benchmark mode"
+        required: true
+        type: choice
+        default: quick
+        options:
+          - quick
+          - full
+  workflow_call:
+    inputs:
+      mode:
         required: false
-        default: "10000"
-      concurrency:
-        description: "Worker concurrency"
-        required: false
-        default: "32"
+        type: string
+        default: "quick"
 
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        profile: [throughput, durability]
-        framework: [upnext-async, upnext-sync, celery, dramatiq]
-    environment: production
+    timeout-minutes: 20
     permissions:
       contents: read
     services:
@@ -48,42 +49,72 @@ jobs:
           mkdir -p packages/server/static
           uv sync --all-packages --group benchmark
 
-      - name: Run benchmark (${{ matrix.framework }} / ${{ matrix.profile }})
+      - name: Set benchmark params
+        id: params
+        run: |
+          case "${{ inputs.mode }}" in
+            full)
+              echo "workloads=sustained burst" >> "$GITHUB_OUTPUT"
+              echo "sustained_duration=60" >> "$GITHUB_OUTPUT"
+              echo "sustained_arrival=200" >> "$GITHUB_OUTPUT"
+              echo "burst_jobs=10000" >> "$GITHUB_OUTPUT"
+              echo "repeats=2" >> "$GITHUB_OUTPUT"
+              echo "warmups=1" >> "$GITHUB_OUTPUT"
+              ;;
+            quick|"")
+              echo "workloads=sustained" >> "$GITHUB_OUTPUT"
+              echo "sustained_duration=30" >> "$GITHUB_OUTPUT"
+              echo "sustained_arrival=150" >> "$GITHUB_OUTPUT"
+              echo "burst_jobs=5000" >> "$GITHUB_OUTPUT"
+              echo "repeats=1" >> "$GITHUB_OUTPUT"
+              echo "warmups=1" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported benchmarks mode: '${{ inputs.mode }}'" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Run standard matrix
         env:
           UPNEXT_PERF_REDIS_URL: redis://localhost:6379/15
         run: |
-          uv run python -m scripts.benchmarks \
-            --framework ${{ matrix.framework }} \
-            --profile ${{ matrix.profile }} \
-            --jobs ${{ inputs.jobs }} \
-            --concurrency ${{ inputs.concurrency }} \
-            --json \
-            --show-runs \
-            2>&1 | tee benchmark-output.txt
+          mkdir -p results
+          for workload in ${{ steps.params.outputs.workloads }}; do
+            extra_args=""
+            if [ "$workload" = "sustained" ]; then
+              extra_args="--duration-seconds ${{ steps.params.outputs.sustained_duration }} --arrival-rate ${{ steps.params.outputs.sustained_arrival }}"
+            else
+              extra_args="--jobs ${{ steps.params.outputs.burst_jobs }}"
+            fi
+            uv run benchmarks matrix \
+              --workload "$workload" \
+              --framework upnext-async \
+              --framework upnext-sync \
+              --framework celery \
+              --framework saq \
+              --concurrency 32 \
+              --repeats ${{ steps.params.outputs.repeats }} \
+              --warmups ${{ steps.params.outputs.warmups }} \
+              --seed 42 \
+              $extra_args \
+              --fail-on-non-ok \
+              --show-runs \
+              --output-json "results/benchmark-${workload}.json" \
+              2>&1 | tee "results/benchmark-${workload}.txt"
+          done
 
-      - name: Upload results
+      - name: Build markdown summary
+        if: always()
+        run: uv run python -m scripts.benchmarks summarize --input results --format markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build json summary artifact
+        if: always()
+        run: uv run python -m scripts.benchmarks summarize --input results --format json --output results/benchmark-summary.json > /dev/null
+
+      - name: Upload summary artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-${{ matrix.profile }}-${{ matrix.framework }}
-          path: benchmark-output.txt
-
-  summary:
-    runs-on: ubuntu-latest
-    needs: benchmark
-    if: always()
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: actions/download-artifact@v4
-        with:
+          name: benchmark-results
           path: results
-
-      - name: Build combined summary
-        run: python scripts/benchmarks/summarize.py results/ >> "$GITHUB_STEP_SUMMARY"

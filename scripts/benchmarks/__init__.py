@@ -1,1 +1,1 @@
-"""Benchmark scripts package."""
+"""Benchmark suite package."""

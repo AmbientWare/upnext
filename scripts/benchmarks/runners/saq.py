@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from typing import Any
 
@@ -16,13 +17,13 @@ from .common import (
 )
 
 
-class UpnextAsyncRunner(FrameworkRunner):
-    framework = "upnext-async"
+class SaqRunner(FrameworkRunner):
+    framework = "saq"
 
     async def _run_async(self, cfg: BenchmarkConfig) -> BenchmarkResult:
         try:
             from redis.asyncio import Redis as AsyncRedis
-            from upnext.sdk.worker import Worker
+            from saq import Queue, Worker
         except Exception as exc:
             return self._skip(cfg, f"Dependency missing: {exc}")
 
@@ -30,18 +31,17 @@ class UpnextAsyncRunner(FrameworkRunner):
         await done_client.delete(cfg.done_key, cfg.queue_wait_key)
         task_done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
 
-        worker = Worker(
-            name=f"bench-upnext-{cfg.run_id}",
-            concurrency=max(1, cfg.concurrency),
-            redis_url=cfg.redis_url,
-            handle_signals=False,
-        )
-        worker_task: asyncio.Task[None] | None = None
+        queue_name = f"bench_saq_{cfg.run_id}"
+        task_name = f"bench_task_{cfg.run_id}"
+        producer_queue = Queue.from_url(cfg.redis_url, name=queue_name)
+        worker_queue = Queue.from_url(cfg.redis_url, name=queue_name)
 
-        @worker.task(
-            name=f"bench_task_{cfg.run_id}", timeout=max(15.0, cfg.timeout_seconds)
-        )
-        async def bench_task(payload: dict[str, Any], done_key: str, redis_url: str) -> None:
+        async def bench_task(
+            ctx: Any,  # noqa: ARG001
+            payload: dict[str, Any],
+            done_key: str,
+            redis_url: str,
+        ) -> None:
             _ = redis_url
             await task_done_client.incr(done_key)
 
@@ -56,19 +56,33 @@ class UpnextAsyncRunner(FrameworkRunner):
                     max_samples=cfg.queue_wait_max_samples,
                 )
 
+        worker = Worker(
+            queue=worker_queue,
+            functions=[(task_name, bench_task)],
+            concurrency=max(1, cfg.concurrency),
+            dequeue_timeout=0.1,
+        )
+
+        async def run_worker() -> None:
+            await worker_queue.connect()
+            try:
+                await worker.start()
+            finally:
+                with contextlib.suppress(Exception):
+                    await worker_queue.disconnect()
+
+        worker_task: asyncio.Task[None] | None = None
         try:
-            worker_task = asyncio.create_task(worker.start())
-            for _ in range(400):
-                if getattr(bench_task, "_queue", None) is not None:
-                    break
-                await asyncio.sleep(0.01)
-            else:
-                raise RuntimeError("UpNext worker did not initialize task queue in time")
+            await producer_queue.connect()
+            worker_task = asyncio.create_task(run_worker())
+            # Allow the worker loop to initialize consumers before enqueue starts.
+            await asyncio.sleep(0.2)
 
             run_start = now()
 
             async def submit_one(idx: int) -> None:
-                await bench_task.submit(
+                job = await producer_queue.enqueue(
+                    task_name,
                     payload={
                         "payload": cfg.payload,
                         "submitted_at_ns": time.perf_counter_ns(),
@@ -77,6 +91,8 @@ class UpnextAsyncRunner(FrameworkRunner):
                     done_key=cfg.done_key,
                     redis_url=cfg.redis_url,
                 )
+                if job is None:
+                    raise RuntimeError("SAQ enqueue returned no job")
 
             if cfg.workload == BenchmarkWorkload.SUSTAINED:
                 enqueue_seconds, enqueue_latencies = await async_produce_jobs_sustained(
@@ -112,11 +128,13 @@ class UpnextAsyncRunner(FrameworkRunner):
                 queue_wait_ms_samples=queue_wait_samples,
                 notes=(
                     f"producer_concurrency={cfg.producer_concurrency}; "
+                    f"worker_concurrency={cfg.concurrency}; "
                     f"workload={cfg.workload.value}; "
                     f"arrival_rate={cfg.arrival_rate}"
                 ),
-                framework_version=self._framework_version("upnext"),
+                framework_version=self._framework_version("saq"),
                 diagnostics={
+                    "worker_concurrency": cfg.concurrency,
                     "workload": cfg.workload.value,
                     "arrival_rate": cfg.arrival_rate,
                     "duration_seconds": cfg.duration_seconds,
@@ -125,19 +143,20 @@ class UpnextAsyncRunner(FrameworkRunner):
                 },
             )
         except Exception as exc:
-            return self._error(cfg, f"UpNext async benchmark failed: {exc}")
+            return self._error(cfg, f"SAQ benchmark failed: {exc}")
         finally:
-            try:
-                await worker.stop(timeout=min(15.0, cfg.timeout_seconds))
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                await worker.stop()
             if worker_task is not None:
                 if not worker_task.done():
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(worker_task, timeout=5.0)
+                if not worker_task.done():
                     worker_task.cancel()
-                try:
+                with contextlib.suppress(Exception):
                     await worker_task
-                except Exception:
-                    pass
+            with contextlib.suppress(Exception):
+                await producer_queue.disconnect()
             await task_done_client.aclose()
             await done_client.aclose()
 
