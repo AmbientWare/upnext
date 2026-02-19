@@ -63,18 +63,15 @@ rg --files -g 'packages/**/tests/**/*.py' | xargs uv run --with ruff ruff check
 rg --files -g 'packages/**/tests/**/*.py' | xargs uv run --with basedpyright basedpyright
 ```
 
-## Packaging and Release Notes
+## Releases
 
-Workspace package names are development-oriented and may not be globally publishable.
-For public release, package names must be globally unique on PyPI.
+Releases are automated via the **Bump Version** GitHub Action (`Actions > Bump Version > Run workflow`). Only repository admins can trigger it. The workflow:
 
-When preparing a release:
-
-- verify package names and metadata are publish-safe
-- ensure dependency wiring works outside workspace-only sources
-- ensure `upnext` default install and `upnext-server` package wiring work outside workspace-only sources
-- run integration verification before publishing artifacts
-- include release notes describing behavior, compatibility, and migration impact
+- Bumps the version in `packages/shared/src/shared/_version.py` (single source of truth)
+- Updates the root `pyproject.toml` and regenerates `uv.lock`
+- Commits and pushes to `main`
+- Builds and publishes all three packages (`upnext`, `upnext-server`, `upnext-shared`) to PyPI
+- Creates a GitHub release with auto-generated notes
 
 ## Pull Request Checklist
 

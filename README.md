@@ -4,6 +4,8 @@ Background jobs and APIs for Python.
 
 UpNext is an alpha-stage framework for running workers, APIs, cron jobs, and event-driven tasks with a shared Redis-backed runtime.
 
+[Documentation](https://docs.upnext.run) | [PyPI](https://pypi.org/project/upnext/) | [GitHub](https://github.com/AmbientWare/upnext)
+
 ## Why UpNext
 
 - Task, cron, and event APIs with simple decorators
@@ -132,12 +134,6 @@ Useful tuning env vars include:
 - `UPNEXT_STATUS_PUBLISH_RETRY_ATTEMPTS`
 - `UPNEXT_STATUS_PENDING_BUFFER_SIZE`
 
-## Runtime Contract
-
-Queue and worker execution semantics are documented in:
-
-- `docs/execution-guarantees.md`
-
 ## Benchmark Profiles
 
 Benchmark harness now supports explicit profiles:
@@ -185,4 +181,4 @@ while keeping:
 
 See `CONTRIBUTING.md` for quality bar, tests, and release checks.
 
-Built by LazyCloud.
+Built by [AmbientWare](https://github.com/AmbientWare).
