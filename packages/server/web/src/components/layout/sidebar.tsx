@@ -18,8 +18,12 @@ export function Sidebar() {
   return (
     <aside className="w-48 bg-background border-r border-border flex flex-col">
       {/* Logo */}
-      <div className="h-14 flex items-center px-4 border-b border-border">
-        <span className="text-base font-bold"><span className="text-emerald-400">Up</span><span className="text-foreground">Next</span></span>
+      <div className="h-14 flex items-center gap-2 px-4 border-b border-border">
+        <img src="/upnext-logo.png" alt="UpNext" className="size-7" />
+        <span className="text-base font-bold inline-flex">
+          <span className="text-upnext">Up</span>
+          <span className="text-foreground">Next</span>
+        </span>
       </div>
 
       {/* Navigation */}
@@ -34,7 +38,7 @@ export function Sidebar() {
               className={cn(
                 "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors mb-1",
                 isActive
-                  ? "bg-emerald-500/15 text-emerald-400"
+                  ? "bg-upnext-500/15 text-upnext"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent"
               )}
             >

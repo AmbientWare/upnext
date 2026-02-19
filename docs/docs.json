@@ -8,7 +8,7 @@
   },
   "favicon": "/favicon.svg",
   "colors": {
-    "primary": "#00875A",
+    "primary": "#009d4c",
     "light": "#34D399",
     "dark": "#006644"
   },
@@ -141,12 +141,12 @@
   "topbarLinks": [
     {
       "label": "GitHub",
-      "url": "https://github.com/lazycloud-app/upnext"
+      "url": "https://github.com/ambientware/upnext"
     }
   ],
   "footer": {
     "socials": {
-      "github": "https://github.com/lazycloud-app/upnext"
+      "github": "https://github.com/ambientware/upnext"
     }
   },
   "feedback": {
