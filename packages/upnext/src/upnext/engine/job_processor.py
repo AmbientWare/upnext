@@ -89,7 +89,6 @@ class JobProcessor:
         concurrency: int = 100,
         functions: list[str] | None = None,
         sync_executor: SyncExecutor = SyncExecutor.THREAD,
-        sync_pool_size: int | None = None,
         dequeue_timeout: float = 5.0,
         status_buffer: Any | None = None,  # StatusPublisher
         status_flush_timeout_seconds: float = 2.0,
@@ -104,7 +103,6 @@ class JobProcessor:
             concurrency: Maximum concurrent jobs
             functions: Function names to process
             sync_executor: Executor type for sync tasks (THREAD or PROCESS)
-            sync_pool_size: Pool size for sync executor. Defaults to min(32, concurrency) for thread, cpu_count for process.
             dequeue_timeout: Timeout for dequeue operations
             status_buffer: Status buffer for batched event reporting
             status_flush_timeout_seconds: Max time budget for draining pending
@@ -126,12 +124,10 @@ class JobProcessor:
 
         # Executor pool for sync functions
         if sync_executor == SyncExecutor.PROCESS:
-            pool_size = sync_pool_size or os.cpu_count() or 4
-            self._sync_pool = ProcessPoolExecutor(max_workers=pool_size)
+            self._sync_pool = ProcessPoolExecutor(max_workers=os.cpu_count() or 4)
         else:
-            pool_size = sync_pool_size or min(32, concurrency)
             self._sync_pool = ThreadPoolExecutor(
-                max_workers=pool_size,
+                max_workers=concurrency,
                 thread_name_prefix="upnext-worker-",
             )
 

@@ -37,7 +37,6 @@ UpNext is configured via environment variables with the `UPNEXT_` prefix. All se
 | `UPNEXT_QUEUE_INBOX_SIZE` | `0` | Queue inbox capacity (0 = profile default) |
 | `UPNEXT_QUEUE_OUTBOX_SIZE` | `0` | Queue outbox capacity (0 = profile default) |
 | `UPNEXT_QUEUE_FLUSH_INTERVAL_MS` | `0` | Completion flush interval (0 = profile default) |
-| `UPNEXT_WORKER_PREFETCH_DEFAULT` | `0` | Worker prefetch count (0 = profile default) |
 
 ## Runtime profiles
 
@@ -46,14 +45,14 @@ The `UPNEXT_QUEUE_RUNTIME_PROFILE` setting controls defaults for several queue p
 ### `safe` (default)
 
 Conservative settings optimized for reliability:
-- Worker prefetch: `1`
+- Smaller batch sizes and queue buffers
 - Bounded stream sizes
-- Lower queue buffering
+- Best for workloads where delivery guarantees matter most
 
 ### `throughput`
 
 Aggressive settings optimized for maximum throughput:
-- Higher prefetch and batch sizes
+- Larger batch sizes and queue buffers
 - Larger stream buffers
 - Best for high-volume workloads where you can tolerate occasional reprocessing
 

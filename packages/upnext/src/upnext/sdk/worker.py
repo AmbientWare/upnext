@@ -76,7 +76,6 @@ class Worker:
 
     name: str = field(default_factory=lambda: f"worker-{uuid.uuid4().hex[:8]}")
     concurrency: int = DEFAULT_CONCURRENCY
-    prefetch: int | None = None
     queue_batch_size: int | None = None
     queue_inbox_size: int | None = None
     queue_outbox_size: int | None = None
@@ -87,7 +86,6 @@ class Worker:
     queue_stream_maxlen: int | None = None
     queue_dlq_stream_maxlen: int | None = None
     sync_executor: SyncExecutor = SyncExecutor.THREAD
-    sync_pool_size: int | None = None
     redis_url: str | None = None
     secrets: list[str] = field(default_factory=list)
     handle_signals: bool = True
@@ -279,14 +277,6 @@ class Worker:
                 "or UPNEXT_REDIS_URL in the environment."
             )
         self._redis_client = create_redis_client(self.redis_url)
-        prefetch_explicit = self.prefetch is not None
-        prefetch = (
-            int(self.prefetch)
-            if self.prefetch is not None
-            else settings.default_worker_prefetch(concurrency=self.concurrency)
-        )
-        if prefetch < 1:
-            raise ValueError("Worker prefetch must be >= 1")
 
         queue_batch_size = self._resolve_int_option(
             "queue_batch_size",
@@ -294,17 +284,10 @@ class Worker:
             settings.default_queue_batch_size(),
             minimum=1,
         )
-        default_inbox_size = settings.default_queue_inbox_size(prefetch=prefetch)
-        if self.queue_inbox_size is not None:
-            queue_inbox_default = default_inbox_size
-        elif prefetch_explicit:
-            queue_inbox_default = self.concurrency + prefetch
-        else:
-            queue_inbox_default = default_inbox_size
         queue_inbox_size = self._resolve_int_option(
             "queue_inbox_size",
             self.queue_inbox_size,
-            max(queue_inbox_default, queue_batch_size),
+            max(settings.default_queue_inbox_size(), queue_batch_size),
             minimum=queue_batch_size,
         )
         queue_outbox_size = self._resolve_int_option(
@@ -500,7 +483,6 @@ class Worker:
             concurrency=self.concurrency,
             functions=catalog.function_keys,
             sync_executor=self.sync_executor,
-            sync_pool_size=self.sync_pool_size,
             status_buffer=self._status_buffer,
             handle_signals=self.handle_signals,
         )

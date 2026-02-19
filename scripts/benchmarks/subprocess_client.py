@@ -35,8 +35,6 @@ class SubprocessBenchmarkClient:
             str(cfg.producer_concurrency),
             "--consumer-prefetch",
             str(cfg.consumer_prefetch),
-            "--upnext-prefetch",
-            str(cfg.upnext_prefetch),
             "--timeout-seconds",
             str(cfg.timeout_seconds),
             "--redis-url",

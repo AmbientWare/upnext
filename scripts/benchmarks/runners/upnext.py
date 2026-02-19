@@ -33,9 +33,6 @@ class UpnextAsyncRunner(FrameworkRunner):
         await done_client.delete(cfg.done_key)
         task_done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
 
-        # Let UpNext resolve its own queue tuning from the runtime profile.
-        # Don't pass prefetch explicitly — that triggers a smaller inbox_size
-        # (concurrency + prefetch) which starves the fetcher when inbox < batch_size.
         worker = Worker(
             name=f"bench-upnext-{cfg.run_id}",
             concurrency=max(1, cfg.concurrency),

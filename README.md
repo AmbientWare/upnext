@@ -116,11 +116,11 @@ This keeps UI updates near-realtime while reducing avoidable polling load.
 UpNext runtime defaults to a safety-oriented profile:
 
 - `UPNEXT_QUEUE_RUNTIME_PROFILE=safe` (default)
-  - conservative worker prefetch (`1`)
+  - smaller batch sizes and queue buffers
   - bounded stream sizes by default
-  - lower-risk queue buffering defaults
+  - optimized for reliability
 - `UPNEXT_QUEUE_RUNTIME_PROFILE=throughput`
-  - higher prefetch / queue batching defaults for peak throughput
+  - larger batch sizes and queue buffers for peak throughput
 
 Status-event publishing now retries and buffers transient failures by default.
 You can opt into fail-closed behavior with:

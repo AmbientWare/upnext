@@ -70,18 +70,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help=(
-            "Target reserved/inbox messages for consumers. "
-            "Mapped to UpNext prefetch and Celery prefetch multiplier. "
-            "0 = same as --concurrency."
-        ),
-    )
-    parser.add_argument(
-        "--upnext-prefetch",
-        type=int,
-        default=0,
-        help=(
-            "Legacy UpNext-only prefetch override. "
-            "Use --consumer-prefetch for cross-framework parity."
+            "Target reserved/inbox messages for Celery consumers. "
+            "Mapped to Celery prefetch multiplier. "
+            "0 = profile default."
         ),
     )
     parser.add_argument("--repeats", type=int, default=3)
@@ -125,8 +116,6 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error("--producer-concurrency must be >= 0")
     if args.consumer_prefetch < 0:
         parser.error("--consumer-prefetch must be >= 0")
-    if args.upnext_prefetch < 0:
-        parser.error("--upnext-prefetch must be >= 0")
     if args.repeats <= 0:
         parser.error("--repeats must be > 0")
     if args.warmups < 0:
@@ -139,20 +128,17 @@ def _effective_producer_concurrency(args: argparse.Namespace) -> int:
     return args.producer_concurrency if args.producer_concurrency > 0 else args.concurrency
 
 
-def _resolve_profile_prefetch(
+def _resolve_consumer_prefetch(
     *,
     profile: BenchmarkProfile,
     consumer_prefetch: int,
-    upnext_prefetch: int,
     concurrency: int,
-) -> tuple[int, int]:
+) -> int:
+    if consumer_prefetch > 0:
+        return consumer_prefetch
     if profile == BenchmarkProfile.DURABILITY:
-        resolved_consumer = consumer_prefetch if consumer_prefetch > 0 else 1
-        resolved_upnext = upnext_prefetch if upnext_prefetch > 0 else 1
-        return resolved_consumer, resolved_upnext
-    resolved_consumer = consumer_prefetch if consumer_prefetch > 0 else concurrency
-    resolved_upnext = upnext_prefetch
-    return resolved_consumer, resolved_upnext
+        return 1
+    return concurrency
 
 
 def _to_config(
@@ -161,7 +147,6 @@ def _to_config(
     producer_concurrency: int,
     *,
     consumer_prefetch: int,
-    upnext_prefetch: int,
 ) -> dict[str, Any]:
     return {
         "profile": args.profile.value,
@@ -171,7 +156,6 @@ def _to_config(
         "payload_bytes": args.payload_bytes,
         "producer_concurrency": producer_concurrency,
         "consumer_prefetch": consumer_prefetch,
-        "upnext_prefetch": upnext_prefetch,
         "repeats": args.repeats,
         "warmups": args.warmups,
         "timeout_seconds": args.timeout_seconds,
@@ -184,7 +168,6 @@ def _single_framework_mode(
     producer_concurrency: int,
     *,
     consumer_prefetch: int,
-    upnext_prefetch: int,
 ) -> int:
     cfg = BenchmarkConfig(
         framework=args.single_framework,
@@ -194,7 +177,6 @@ def _single_framework_mode(
         payload_bytes=args.payload_bytes,
         producer_concurrency=producer_concurrency,
         consumer_prefetch=consumer_prefetch,
-        upnext_prefetch=upnext_prefetch,
         timeout_seconds=args.timeout_seconds,
         redis_url=args.redis_url,
         run_id=args.run_id or uuid.uuid4().hex[:10],
@@ -213,7 +195,6 @@ def _normal_mode(
     producer_concurrency: int,
     *,
     consumer_prefetch: int,
-    upnext_prefetch: int,
 ) -> int:
     settings = BenchmarkRunSettings(
         profile=args.profile,
@@ -222,7 +203,6 @@ def _normal_mode(
         payload_bytes=args.payload_bytes,
         producer_concurrency=producer_concurrency,
         consumer_prefetch=consumer_prefetch,
-        upnext_prefetch=upnext_prefetch,
         timeout_seconds=args.timeout_seconds,
         redis_url=args.redis_url,
         repeats=args.repeats,
@@ -249,7 +229,6 @@ def _normal_mode(
                 frameworks,
                 producer_concurrency,
                 consumer_prefetch=consumer_prefetch,
-                upnext_prefetch=upnext_prefetch,
             ),
             runs_by_framework=runs_by_framework,
             summaries=summaries,
@@ -284,10 +263,9 @@ def main(argv: list[str] | None = None) -> int:
     _validate_args(parser, args)
 
     producer_concurrency = _effective_producer_concurrency(args)
-    consumer_prefetch, upnext_prefetch = _resolve_profile_prefetch(
+    consumer_prefetch = _resolve_consumer_prefetch(
         profile=args.profile,
         consumer_prefetch=args.consumer_prefetch,
-        upnext_prefetch=args.upnext_prefetch,
         concurrency=args.concurrency,
     )
     frameworks = (
@@ -305,7 +283,6 @@ def main(argv: list[str] | None = None) -> int:
                     frameworks,
                     producer_concurrency,
                     consumer_prefetch=consumer_prefetch,
-                    upnext_prefetch=upnext_prefetch,
                 ),
                 "error": f"Redis unavailable ({args.redis_url}): {exc}",
             }
@@ -319,14 +296,12 @@ def main(argv: list[str] | None = None) -> int:
             args,
             producer_concurrency,
             consumer_prefetch=consumer_prefetch,
-            upnext_prefetch=upnext_prefetch,
         )
     return _normal_mode(
         args,
         frameworks,
         producer_concurrency,
         consumer_prefetch=consumer_prefetch,
-        upnext_prefetch=upnext_prefetch,
     )
 
 

@@ -180,24 +180,6 @@ def test_worker_profile_defaults_shape_queue_tuning(fake_redis, monkeypatch) -> 
     get_settings.cache_clear()
 
 
-def test_worker_explicit_prefetch_adds_buffer_above_concurrency(
-    fake_redis, monkeypatch
-) -> None:
-    monkeypatch.setattr(
-        "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis
-    )
-
-    worker = Worker(
-        name="prefetch-capped-worker",
-        concurrency=16,
-        prefetch=3,
-        redis_url="redis://ignored",
-    )
-    worker.initialize(redis_url="redis://ignored")
-    queue = worker._queue_backend  # noqa: SLF001
-    assert queue._inbox_size == 19  # noqa: SLF001
-
-
 def test_worker_queue_kwargs_override_profile_defaults(fake_redis, monkeypatch) -> None:
     monkeypatch.setattr(
         "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis

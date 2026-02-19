@@ -15,7 +15,6 @@ class BenchmarkRunSettings:
     payload_bytes: int
     producer_concurrency: int
     consumer_prefetch: int
-    upnext_prefetch: int
     timeout_seconds: float
     redis_url: str
     repeats: int
@@ -57,7 +56,6 @@ class BenchmarkOrchestrator:
             payload_bytes=settings.payload_bytes,
             producer_concurrency=settings.producer_concurrency,
             consumer_prefetch=settings.consumer_prefetch,
-            upnext_prefetch=settings.upnext_prefetch,
             timeout_seconds=settings.timeout_seconds,
             redis_url=settings.redis_url,
             run_id=uuid.uuid4().hex[:10],

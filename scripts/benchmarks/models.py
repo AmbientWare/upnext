@@ -23,7 +23,6 @@ class BenchmarkConfig:
     payload_bytes: int
     producer_concurrency: int
     consumer_prefetch: int
-    upnext_prefetch: int
     timeout_seconds: float
     redis_url: str
     run_id: str

@@ -50,9 +50,7 @@ A worker manages:
 | --- | --- | --- | --- |
 | `name` | `str` | auto-generated | Worker name for dashboard identification |
 | `concurrency` | `int` | `2` | Maximum concurrent job executions |
-| `prefetch` | `int` | `None` | Jobs to prefetch from queue (auto-tuned by default) |
 | `sync_executor` | `SyncExecutor` | `THREAD` | Executor for sync tasks: `THREAD` or `PROCESS` |
-| `sync_pool_size` | `int` | `None` | Size of the sync executor pool |
 | `redis_url` | `str` | `None` | Redis URL (falls back to `UPNEXT_REDIS_URL` env var) |
 | `secrets` | `list[str]` | `[]` | Secret names to fetch on startup (requires server) |
 

@@ -194,9 +194,8 @@ def test_settings_runtime_profile_defaults(monkeypatch) -> None:
     monkeypatch.delenv("UPNEXT_QUEUE_RUNTIME_PROFILE", raising=False)
     settings = get_settings()
     assert settings.queue_runtime_profile == ThroughputMode.SAFE
-    assert settings.default_worker_prefetch(concurrency=32) == 1
     assert settings.default_queue_batch_size() == 100
-    assert settings.default_queue_inbox_size(prefetch=1) == 1000
+    assert settings.default_queue_inbox_size() == 1000
     assert settings.default_queue_flush_interval_seconds() == 0.005
     assert settings.default_queue_stream_maxlen() == 0
 
@@ -204,9 +203,8 @@ def test_settings_runtime_profile_defaults(monkeypatch) -> None:
     monkeypatch.setenv("UPNEXT_QUEUE_RUNTIME_PROFILE", ThroughputMode.THROUGHPUT.value)
     throughput = get_settings()
     assert throughput.queue_runtime_profile == ThroughputMode.THROUGHPUT
-    assert throughput.default_worker_prefetch(concurrency=32) == 32
     assert throughput.default_queue_batch_size() == 200
-    assert throughput.default_queue_inbox_size(prefetch=32) == 2000
+    assert throughput.default_queue_inbox_size() == 2000
     assert throughput.default_queue_flush_interval_seconds() == 0.02
     assert throughput.default_queue_stream_maxlen() == 200_000
     get_settings.cache_clear()

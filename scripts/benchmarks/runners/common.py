@@ -43,8 +43,6 @@ def max_ms(samples: list[float]) -> float:
 def effective_prefetch(cfg: BenchmarkConfig) -> int:
     if cfg.consumer_prefetch > 0:
         return cfg.consumer_prefetch
-    if cfg.upnext_prefetch > 0:
-        return cfg.upnext_prefetch
     if cfg.profile == BenchmarkProfile.DURABILITY:
         return 1
     return max(1, cfg.concurrency)

@@ -48,7 +48,6 @@ class Settings(BaseSettings):
     queue_inbox_size: int = 0
     queue_outbox_size: int = 0
     queue_flush_interval_ms: float = 0.0
-    worker_prefetch_default: int = 0
 
     # Status stream durability controls
     status_stream_max_len: int = 50_000
@@ -91,28 +90,17 @@ class Settings(BaseSettings):
         """Check if running in development mode."""
         return not self.is_production
 
-    def default_worker_prefetch(self, *, concurrency: int) -> int:
-        """Resolve worker prefetch for current runtime profile."""
-        if self.worker_prefetch_default > 0:
-            return self.worker_prefetch_default
-        if self.queue_runtime_profile == ThroughputMode.THROUGHPUT:
-            return max(1, concurrency)
-        return 1
-
     def default_queue_batch_size(self) -> int:
         """Resolve queue fetch/flush batch size for current runtime profile."""
         if self.queue_batch_size > 0:
             return self.queue_batch_size
         return 200 if self.queue_runtime_profile == ThroughputMode.THROUGHPUT else 100
 
-    def default_queue_inbox_size(self, *, prefetch: int) -> int:
+    def default_queue_inbox_size(self) -> int:
         """Resolve queue inbox capacity for current runtime profile."""
         if self.queue_inbox_size > 0:
-            return max(prefetch, self.queue_inbox_size)
-        return max(
-            prefetch,
-            2000 if self.queue_runtime_profile == ThroughputMode.THROUGHPUT else 1000,
-        )
+            return self.queue_inbox_size
+        return 2000 if self.queue_runtime_profile == ThroughputMode.THROUGHPUT else 1000
 
     def default_queue_outbox_size(self) -> int:
         """Resolve queue outbox capacity for current runtime profile."""
