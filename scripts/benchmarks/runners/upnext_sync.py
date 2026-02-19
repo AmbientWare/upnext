@@ -3,17 +3,17 @@ from __future__ import annotations
 import asyncio
 import os
 
+from redis import Redis
+
 from ..models import BenchmarkConfig, BenchmarkProfile, BenchmarkResult
 from .base import FrameworkRunner
 from .common import async_produce_jobs, now, wait_for_counter_async
 
 
-class UpnextAsyncRunner(FrameworkRunner):
-    framework = "upnext-async"
+class UpnextSyncRunner(FrameworkRunner):
+    framework = "upnext-sync"
 
     async def _run_async(self, cfg: BenchmarkConfig) -> BenchmarkResult:
-        # Set the runtime profile env var BEFORE importing upnext so Settings
-        # picks up the correct defaults for batch_size, inbox, outbox, flush.
         runtime_profile = (
             "throughput" if cfg.profile == BenchmarkProfile.THROUGHPUT else "safe"
         )
@@ -26,18 +26,17 @@ class UpnextAsyncRunner(FrameworkRunner):
         except Exception as exc:
             return self._skip(cfg, f"Dependency missing: {exc}")
 
-        # Clear the cached settings so the new env var takes effect.
         get_settings.cache_clear()
 
+        # Async client for polling the done counter.
         done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
         await done_client.delete(cfg.done_key)
-        task_done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
 
-        # Let UpNext resolve its own queue tuning from the runtime profile.
-        # Don't pass prefetch explicitly — that triggers a smaller inbox_size
-        # (concurrency + prefetch) which starves the fetcher when inbox < batch_size.
+        # Sync client used inside the sync task (runs in a thread pool).
+        task_done_client = Redis.from_url(cfg.redis_url, decode_responses=False)
+
         worker = Worker(
-            name=f"bench-upnext-{cfg.run_id}",
+            name=f"bench-upnext-sync-{cfg.run_id}",
             concurrency=max(1, cfg.concurrency),
             redis_url=cfg.redis_url,
             handle_signals=False,
@@ -45,11 +44,11 @@ class UpnextAsyncRunner(FrameworkRunner):
         worker_task: asyncio.Task[None] | None = None
 
         @worker.task(
-            name=f"bench_task_{cfg.run_id}", timeout=max(15.0, cfg.timeout_seconds)
+            name=f"bench_task_sync_{cfg.run_id}", timeout=max(15.0, cfg.timeout_seconds)
         )
-        async def bench_task(payload: str, done_key: str, redis_url: str) -> None:
+        def bench_task(payload: str, done_key: str, redis_url: str) -> None:
             _ = payload, redis_url
-            await task_done_client.incr(done_key)
+            task_done_client.incr(done_key)
 
         try:
             worker_task = asyncio.create_task(worker.start())
@@ -86,12 +85,13 @@ class UpnextAsyncRunner(FrameworkRunner):
                 enqueue_latencies=enqueue_latencies,
                 notes=(
                     f"producer_concurrency={cfg.producer_concurrency}; "
-                    f"runtime_profile={runtime_profile}"
+                    f"runtime_profile={runtime_profile}; "
+                    f"sync_executor=thread"
                 ),
                 framework_version=self._framework_version("upnext"),
             )
         except Exception as exc:
-            return self._error(cfg, f"UpNext async benchmark failed: {exc}")
+            return self._error(cfg, f"UpNext sync benchmark failed: {exc}")
         finally:
             try:
                 await worker.stop(timeout=min(15.0, cfg.timeout_seconds))
@@ -104,7 +104,7 @@ class UpnextAsyncRunner(FrameworkRunner):
                     await worker_task
                 except Exception:
                     pass
-            await task_done_client.aclose()
+            task_done_client.close()
             await done_client.aclose()
 
     def run(self, cfg: BenchmarkConfig) -> BenchmarkResult:

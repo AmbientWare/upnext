@@ -5,7 +5,7 @@ from importlib.metadata import version
 from typing import ClassVar
 
 from ..models import BenchmarkConfig, BenchmarkResult
-from .common import p95_ms
+from .common import max_ms, p50_ms, p95_ms, p99_ms
 
 
 class FrameworkRunner(ABC):
@@ -40,7 +40,10 @@ class FrameworkRunner(ABC):
             drain_seconds=max(0.0, total - enqueue),
             total_seconds=total,
             jobs_per_second=cfg.jobs / total,
+            p50_enqueue_ms=p50_ms(enqueue_latencies),
             p95_enqueue_ms=p95_ms(enqueue_latencies),
+            p99_enqueue_ms=p99_ms(enqueue_latencies),
+            max_enqueue_ms=max_ms(enqueue_latencies),
             notes=notes,
             framework_version=framework_version,
         )
@@ -55,7 +58,10 @@ class FrameworkRunner(ABC):
             drain_seconds=0.0,
             total_seconds=0.0,
             jobs_per_second=0.0,
+            p50_enqueue_ms=0.0,
             p95_enqueue_ms=0.0,
+            p99_enqueue_ms=0.0,
+            max_enqueue_ms=0.0,
             notes=notes,
         )
 
@@ -69,7 +75,10 @@ class FrameworkRunner(ABC):
             drain_seconds=0.0,
             total_seconds=0.0,
             jobs_per_second=0.0,
+            p50_enqueue_ms=0.0,
             p95_enqueue_ms=0.0,
+            p99_enqueue_ms=0.0,
+            max_enqueue_ms=0.0,
             notes=notes,
         )
 

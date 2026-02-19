@@ -56,7 +56,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    parser.add_argument("--jobs", type=int, default=5000)
+    parser.add_argument("--jobs", type=int, default=10000)
     parser.add_argument("--concurrency", type=int, default=32)
     parser.add_argument("--payload-bytes", type=int, default=256)
     parser.add_argument(
@@ -85,7 +85,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--warmups", type=int, default=1)
+    parser.add_argument("--warmups", type=int, default=3)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     parser.add_argument(
         "--redis-url",

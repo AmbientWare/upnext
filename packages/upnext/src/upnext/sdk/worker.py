@@ -279,11 +279,10 @@ class Worker:
                 "or UPNEXT_REDIS_URL in the environment."
             )
         self._redis_client = create_redis_client(self.redis_url)
-        prefetch_raw = self.prefetch
-        prefetch_explicit = prefetch_raw is not None
+        prefetch_explicit = self.prefetch is not None
         prefetch = (
-            int(prefetch_raw)
-            if prefetch_raw is not None
+            int(self.prefetch)
+            if self.prefetch is not None
             else settings.default_worker_prefetch(concurrency=self.concurrency)
         )
         if prefetch < 1:
@@ -305,8 +304,8 @@ class Worker:
         queue_inbox_size = self._resolve_int_option(
             "queue_inbox_size",
             self.queue_inbox_size,
-            queue_inbox_default,
-            minimum=1,
+            max(queue_inbox_default, queue_batch_size),
+            minimum=queue_batch_size,
         )
         queue_outbox_size = self._resolve_int_option(
             "queue_outbox_size",

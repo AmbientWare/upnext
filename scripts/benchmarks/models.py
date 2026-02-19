@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-SUPPORTED_FRAMEWORKS = ("upnext", "celery", "dramatiq")
+SUPPORTED_FRAMEWORKS = ("upnext-async", "upnext-sync", "celery", "dramatiq")
 
 
 class BenchmarkProfile(StrEnum):
@@ -47,7 +47,10 @@ class BenchmarkResult:
     drain_seconds: float
     total_seconds: float
     jobs_per_second: float
+    p50_enqueue_ms: float
     p95_enqueue_ms: float
+    p99_enqueue_ms: float
+    max_enqueue_ms: float
     notes: str = ""
     framework_version: str = ""
 
@@ -61,5 +64,8 @@ class FrameworkSummary:
     mean_jobs_per_second: float
     stdev_jobs_per_second: float
     median_total_seconds: float
+    median_p50_enqueue_ms: float
     median_p95_enqueue_ms: float
+    median_p99_enqueue_ms: float
+    median_max_enqueue_ms: float
     non_ok_count: int

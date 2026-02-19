@@ -64,7 +64,10 @@ class SubprocessBenchmarkClient:
                 drain_seconds=0.0,
                 total_seconds=0.0,
                 jobs_per_second=0.0,
+                p50_enqueue_ms=0.0,
                 p95_enqueue_ms=0.0,
+                p99_enqueue_ms=0.0,
+                max_enqueue_ms=0.0,
                 notes=f"Subprocess failed ({proc.returncode}): {proc.stderr.strip()[-300:]}",
             )
 
@@ -81,7 +84,10 @@ class SubprocessBenchmarkClient:
                 drain_seconds=0.0,
                 total_seconds=0.0,
                 jobs_per_second=0.0,
+                p50_enqueue_ms=0.0,
                 p95_enqueue_ms=0.0,
+                p99_enqueue_ms=0.0,
+                max_enqueue_ms=0.0,
                 notes=f"Failed to parse subprocess output: {exc}",
             )
 
@@ -111,8 +117,20 @@ class SubprocessBenchmarkClient:
                 payload.get("jobs_per_second"),
                 default=0.0,
             ),
+            p50_enqueue_ms=SubprocessBenchmarkClient._coerce_float(
+                payload.get("p50_enqueue_ms"),
+                default=0.0,
+            ),
             p95_enqueue_ms=SubprocessBenchmarkClient._coerce_float(
                 payload.get("p95_enqueue_ms"),
+                default=0.0,
+            ),
+            p99_enqueue_ms=SubprocessBenchmarkClient._coerce_float(
+                payload.get("p99_enqueue_ms"),
+                default=0.0,
+            ),
+            max_enqueue_ms=SubprocessBenchmarkClient._coerce_float(
+                payload.get("max_enqueue_ms"),
                 default=0.0,
             ),
             notes=str(payload.get("notes", "")),

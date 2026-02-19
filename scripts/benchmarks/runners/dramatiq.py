@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from redis import Redis
 
-from ..models import BenchmarkConfig, BenchmarkResult
+from ..models import BenchmarkConfig, BenchmarkProfile, BenchmarkResult
 from .base import FrameworkRunner
 from .common import now, threaded_produce_jobs, wait_for_counter_sync
 
@@ -25,7 +24,19 @@ class DramatiqRunner(FrameworkRunner):
         task_done_client = Redis.from_url(cfg.redis_url, decode_responses=False)
 
         queue_name = f"bench_dramatiq_{cfg.run_id}"
+        durability_mode = cfg.profile == BenchmarkProfile.DURABILITY
+
         broker = RedisBroker(url=cfg.redis_url)
+
+        # In durability mode, strip Retries middleware to match Celery's
+        # task_reject_on_worker_lost (no automatic retries on failure).
+        if durability_mode:
+            broker.middleware = [
+                m
+                for m in broker.middleware
+                if type(m).__name__ not in ("Retries",)
+            ]
+
         dramatiq.set_broker(broker)
 
         @dramatiq.actor(
@@ -37,13 +48,14 @@ class DramatiqRunner(FrameworkRunner):
             task_done_client.incr(done_key)
 
         try:
-            worker_kwargs: dict[str, Any] = {}
-            worker_ctor = getattr(dramatiq, "Worker")
-            if "worker_threads" in worker_ctor.__init__.__code__.co_varnames:
-                worker_kwargs["worker_threads"] = max(1, cfg.concurrency)
-            worker = worker_ctor(broker, **worker_kwargs)
+            worker = dramatiq.Worker(
+                broker,
+                worker_threads=max(1, cfg.concurrency),
+            )
             worker.start()
-            time.sleep(0.1)
+
+            # Give the worker time to start consuming.
+            time.sleep(0.5)
 
             run_start = now()
             enqueue_seconds, enqueue_latencies = threaded_produce_jobs(
@@ -84,7 +96,9 @@ class DramatiqRunner(FrameworkRunner):
             total_seconds=total_seconds,
             enqueue_latencies=enqueue_latencies,
             notes=(
-                f"producer_concurrency={cfg.producer_concurrency}; consumer_prefetch=n/a"
+                f"producer_concurrency={cfg.producer_concurrency}; "
+                f"worker_threads={cfg.concurrency}; "
+                f"durability={durability_mode}"
             ),
             framework_version=self._framework_version("dramatiq"),
         )

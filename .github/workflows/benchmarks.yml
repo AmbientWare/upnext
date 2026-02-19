@@ -1,0 +1,104 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: "Number of jobs per run"
+        required: false
+        default: "10000"
+      concurrency:
+        description: "Worker concurrency"
+        required: false
+        default: "32"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [throughput, durability]
+        framework: [upnext-async, upnext-sync, celery, dramatiq]
+    environment: production
+    permissions:
+      contents: read
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: |
+          mkdir -p packages/server/static
+          uv sync --all-packages --group benchmark
+
+      - name: Run benchmark (${{ matrix.framework }} / ${{ matrix.profile }})
+        env:
+          UPNEXT_PERF_REDIS_URL: redis://localhost:6379/15
+        run: |
+          uv run python -m scripts.benchmarks \
+            --framework ${{ matrix.framework }} \
+            --profile ${{ matrix.profile }} \
+            --jobs ${{ inputs.jobs }} \
+            --concurrency ${{ inputs.concurrency }} \
+            --json \
+            --show-runs \
+            2>&1 | tee benchmark-output.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ matrix.profile }}-${{ matrix.framework }}
+          path: benchmark-output.txt
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: benchmark
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+
+      - name: Build combined summary
+        run: |
+          echo "## Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Config:** ${{ inputs.jobs }} jobs, concurrency ${{ inputs.concurrency }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          for profile in throughput durability; do
+            echo "### ${profile} profile" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            for framework in upnext-async upnext-sync celery dramatiq; do
+              dir="results/benchmark-${profile}-${framework}"
+              if [ -f "${dir}/benchmark-output.txt" ]; then
+                echo "<details><summary>${framework}</summary>" >> "$GITHUB_STEP_SUMMARY"
+                echo "" >> "$GITHUB_STEP_SUMMARY"
+                echo '```' >> "$GITHUB_STEP_SUMMARY"
+                cat "${dir}/benchmark-output.txt" >> "$GITHUB_STEP_SUMMARY"
+                echo '```' >> "$GITHUB_STEP_SUMMARY"
+                echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+                echo "" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          done

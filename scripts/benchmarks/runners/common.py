@@ -14,12 +14,30 @@ def now() -> float:
     return time.perf_counter()
 
 
-def p95_ms(samples: list[float]) -> float:
+def _percentile_ms(samples: list[float], pct: float) -> float:
     if not samples:
         return 0.0
     ordered = sorted(samples)
-    idx = max(0, min(len(ordered) - 1, int(0.95 * (len(ordered) - 1))))
+    idx = max(0, min(len(ordered) - 1, int(pct * (len(ordered) - 1))))
     return ordered[idx] * 1000.0
+
+
+def p50_ms(samples: list[float]) -> float:
+    return _percentile_ms(samples, 0.50)
+
+
+def p95_ms(samples: list[float]) -> float:
+    return _percentile_ms(samples, 0.95)
+
+
+def p99_ms(samples: list[float]) -> float:
+    return _percentile_ms(samples, 0.99)
+
+
+def max_ms(samples: list[float]) -> float:
+    if not samples:
+        return 0.0
+    return max(samples) * 1000.0
 
 
 def effective_prefetch(cfg: BenchmarkConfig) -> int:

@@ -16,7 +16,10 @@ def summarize_framework_runs(
     ok = [run for run in runs if run.status == "ok"]
     jobs_per_second = [run.jobs_per_second for run in ok]
     total_seconds = [run.total_seconds for run in ok]
+    p50_enqueue_ms = [run.p50_enqueue_ms for run in ok]
     p95_enqueue_ms = [run.p95_enqueue_ms for run in ok]
+    p99_enqueue_ms = [run.p99_enqueue_ms for run in ok]
+    max_enqueue_ms = [run.max_enqueue_ms for run in ok]
 
     if not ok:
         return FrameworkSummary(
@@ -27,7 +30,10 @@ def summarize_framework_runs(
             mean_jobs_per_second=0.0,
             stdev_jobs_per_second=0.0,
             median_total_seconds=0.0,
+            median_p50_enqueue_ms=0.0,
             median_p95_enqueue_ms=0.0,
+            median_p99_enqueue_ms=0.0,
+            median_max_enqueue_ms=0.0,
             non_ok_count=len(runs),
         )
 
@@ -45,7 +51,10 @@ def summarize_framework_runs(
         mean_jobs_per_second=statistics.mean(jobs_per_second),
         stdev_jobs_per_second=stdev,
         median_total_seconds=statistics.median(total_seconds),
+        median_p50_enqueue_ms=statistics.median(p50_enqueue_ms),
         median_p95_enqueue_ms=statistics.median(p95_enqueue_ms),
+        median_p99_enqueue_ms=statistics.median(p99_enqueue_ms),
+        median_max_enqueue_ms=statistics.median(max_enqueue_ms),
         non_ok_count=len(runs) - len(ok),
     )
 
@@ -58,7 +67,10 @@ def print_summary_table(summaries: list[FrameworkSummary]) -> None:
         "mean_jobs/s",
         "stdev_jobs/s",
         "median_total_s",
-        "median_p95_enqueue_ms",
+        "p50_ms",
+        "p95_ms",
+        "p99_ms",
+        "max_ms",
         "non_ok",
     ]
     rows = [headers]
@@ -72,7 +84,10 @@ def print_summary_table(summaries: list[FrameworkSummary]) -> None:
                 f"{summary.mean_jobs_per_second:.1f}",
                 f"{summary.stdev_jobs_per_second:.1f}",
                 f"{summary.median_total_seconds:.3f}",
+                f"{summary.median_p50_enqueue_ms:.3f}",
                 f"{summary.median_p95_enqueue_ms:.3f}",
+                f"{summary.median_p99_enqueue_ms:.3f}",
+                f"{summary.median_max_enqueue_ms:.3f}",
                 str(summary.non_ok_count),
             ]
         )
@@ -94,7 +109,10 @@ def print_raw_runs(framework: str, runs: list[BenchmarkResult]) -> None:
         "enqueue_s",
         "drain_s",
         "total_s",
-        "p95_enqueue_ms",
+        "p50_ms",
+        "p95_ms",
+        "p99_ms",
+        "max_ms",
     ]
     rows = [headers]
     for idx, run in enumerate(runs, start=1):
@@ -106,7 +124,10 @@ def print_raw_runs(framework: str, runs: list[BenchmarkResult]) -> None:
                 f"{run.enqueue_seconds:.3f}",
                 f"{run.drain_seconds:.3f}",
                 f"{run.total_seconds:.3f}",
+                f"{run.p50_enqueue_ms:.3f}",
                 f"{run.p95_enqueue_ms:.3f}",
+                f"{run.p99_enqueue_ms:.3f}",
+                f"{run.max_enqueue_ms:.3f}",
             ]
         )
 

@@ -5,10 +5,12 @@ from .base import FrameworkRunner
 from .celery import CeleryRunner
 from .common import ensure_redis
 from .dramatiq import DramatiqRunner
-from .upnext import UpnextRunner
+from .upnext import UpnextAsyncRunner
+from .upnext_sync import UpnextSyncRunner
 
 RUNNER_REGISTRY: dict[str, type[FrameworkRunner]] = {
-    UpnextRunner.framework: UpnextRunner,
+    UpnextAsyncRunner.framework: UpnextAsyncRunner,
+    UpnextSyncRunner.framework: UpnextSyncRunner,
     CeleryRunner.framework: CeleryRunner,
     DramatiqRunner.framework: DramatiqRunner,
 }
@@ -47,7 +49,10 @@ def run_single_framework(cfg: BenchmarkConfig) -> BenchmarkResult:
             drain_seconds=0.0,
             total_seconds=0.0,
             jobs_per_second=0.0,
+            p50_enqueue_ms=0.0,
             p95_enqueue_ms=0.0,
+            p99_enqueue_ms=0.0,
+            max_enqueue_ms=0.0,
             notes=f"Redis unavailable ({cfg.redis_url}): {exc}",
         )
 
@@ -62,7 +67,10 @@ def run_single_framework(cfg: BenchmarkConfig) -> BenchmarkResult:
             drain_seconds=0.0,
             total_seconds=0.0,
             jobs_per_second=0.0,
+            p50_enqueue_ms=0.0,
             p95_enqueue_ms=0.0,
+            p99_enqueue_ms=0.0,
+            max_enqueue_ms=0.0,
             notes=f"Unsupported framework '{cfg.framework}'",
         )
 
