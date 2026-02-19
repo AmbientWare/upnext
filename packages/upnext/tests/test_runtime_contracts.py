@@ -11,7 +11,7 @@ import upnext
 from fastapi import APIRouter, FastAPI
 from shared.domain.jobs import Job, JobStatus
 from shared.keys.api import API_INSTANCE_PREFIX
-from upnext.config import ThroughputMode, get_settings
+from upnext.config import get_settings
 from upnext.engine import cron as cron_module
 from upnext.engine.cron import calculate_next_cron_run, calculate_next_cron_timestamp
 from upnext.engine.event_router import Event, get_event_router
@@ -186,27 +186,6 @@ def test_settings_environment_flags_and_cache(monkeypatch) -> None:
     development = get_settings()
     assert development.is_production is False
     assert development.is_development is True
-    get_settings.cache_clear()
-
-
-def test_settings_runtime_profile_defaults(monkeypatch) -> None:
-    get_settings.cache_clear()
-    monkeypatch.delenv("UPNEXT_QUEUE_RUNTIME_PROFILE", raising=False)
-    settings = get_settings()
-    assert settings.queue_runtime_profile == ThroughputMode.SAFE
-    assert settings.default_queue_batch_size() == 100
-    assert settings.default_queue_inbox_size() == 1000
-    assert settings.default_queue_flush_interval_seconds() == 0.005
-    assert settings.default_queue_stream_maxlen() == 0
-
-    get_settings.cache_clear()
-    monkeypatch.setenv("UPNEXT_QUEUE_RUNTIME_PROFILE", ThroughputMode.THROUGHPUT.value)
-    throughput = get_settings()
-    assert throughput.queue_runtime_profile == ThroughputMode.THROUGHPUT
-    assert throughput.default_queue_batch_size() == 200
-    assert throughput.default_queue_inbox_size() == 2000
-    assert throughput.default_queue_flush_interval_seconds() == 0.02
-    assert throughput.default_queue_stream_maxlen() == 200_000
     get_settings.cache_clear()
 
 

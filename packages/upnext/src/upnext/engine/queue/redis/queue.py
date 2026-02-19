@@ -57,7 +57,7 @@ from shared.queue_mutations import (
     prepare_job_for_manual_retry,
 )
 
-from upnext.config import ThroughputMode, get_settings
+from upnext.config import get_settings
 from upnext.engine.cron import calculate_next_cron_run
 from upnext.engine.queue.base import (
     BaseQueue,
@@ -178,14 +178,7 @@ class RedisQueue(BaseQueue):
         self._inbox_size = inbox_size
         self._outbox_size = outbox_size
         self._flush_interval = flush_interval
-        self._stream_maxlen = max(
-            0,
-            (
-                settings.default_queue_stream_maxlen()
-                if stream_maxlen is None
-                else int(stream_maxlen)
-            ),
-        )
+        self._stream_maxlen = max(0, int(stream_maxlen or 0))
         self._dlq_stream_maxlen = max(
             0,
             (
@@ -198,7 +191,7 @@ class RedisQueue(BaseQueue):
             0,
             int(settings.queue_dispatch_events_stream_maxlen),
         )
-        self._require_lua_atomic = settings.queue_runtime_profile == ThroughputMode.SAFE
+        self._require_lua_atomic = True
 
         self._consumer_id = f"consumer_{uuid.uuid4().hex[:8]}"
         self._client: Any = client

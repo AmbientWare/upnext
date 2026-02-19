@@ -7,41 +7,13 @@ from typing import Any
 import pytest
 import redis.asyncio as redis
 from shared.domain.jobs import Job, JobStatus
-from upnext.config import ThroughputMode, get_settings
 from upnext.engine.queue.redis.queue import RedisQueue
 
 
 @pytest.mark.asyncio
-async def test_enqueue_falls_back_when_script_loading_fails(
+async def test_enqueue_fails_fast_when_script_loading_fails(
     fake_redis, monkeypatch
 ) -> None:
-    get_settings.cache_clear()
-    monkeypatch.setenv("UPNEXT_QUEUE_RUNTIME_PROFILE", ThroughputMode.THROUGHPUT.value)
-    queue = RedisQueue(client=fake_redis, key_prefix="upnext-script-fallback")
-
-    async def fail_script_load(script: str) -> str:  # noqa: ARG001
-        raise RuntimeError("script load failed")
-
-    monkeypatch.setattr(fake_redis, "script_load", fail_script_load)
-
-    job = Job(function="task_fn", function_name="task", key="script-fallback-key")
-    await queue.enqueue(job)
-
-    # Script loading failed, so enqueue should have used the non-Lua fallback path.
-    assert queue._scripts_loaded is False  # noqa: SLF001
-
-    active = await queue.dequeue(["task_fn"], timeout=0.2)
-    assert active is not None
-    assert active.id == job.id
-    get_settings.cache_clear()
-
-
-@pytest.mark.asyncio
-async def test_enqueue_fails_fast_when_script_loading_fails_in_safe_mode(
-    fake_redis, monkeypatch
-) -> None:
-    get_settings.cache_clear()
-    monkeypatch.setenv("UPNEXT_QUEUE_RUNTIME_PROFILE", ThroughputMode.SAFE.value)
     queue = RedisQueue(client=fake_redis, key_prefix="upnext-script-required")
 
     async def fail_script_load(script: str) -> str:  # noqa: ARG001
@@ -52,7 +24,6 @@ async def test_enqueue_fails_fast_when_script_loading_fails_in_safe_mode(
     job = Job(function="task_fn", function_name="task", key="script-required-key")
     with pytest.raises(RuntimeError, match="Failed to load required Redis Lua scripts"):
         await queue.enqueue(job)
-    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

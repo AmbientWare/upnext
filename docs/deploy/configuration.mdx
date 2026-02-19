@@ -23,38 +23,16 @@ UpNext is configured via environment variables with the `UPNEXT_` prefix. All se
 | `UPNEXT_DATABASE_URL` | — | Database connection string (PostgreSQL or SQLite) |
 | `UPNEXT_AUTH_ENABLED` | `false` | Enable API key authentication |
 
-## Queue settings
+## Queue tuning
+
+Queue behavior is configured in Python via `WorkerProfile` — see [Workers: Queue tuning](/concepts/workers#queue-tuning) for details.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `UPNEXT_QUEUE_RUNTIME_PROFILE` | `safe` | Runtime profile: `safe` or `throughput` |
 | `UPNEXT_QUEUE_JOB_TTL_SECONDS` | `86400` | Job data TTL (24 hours) |
 | `UPNEXT_QUEUE_RESULT_TTL_SECONDS` | `3600` | Result data TTL (1 hour) |
 | `UPNEXT_QUEUE_CLAIM_TIMEOUT_MS` | `30000` | Job claim timeout (30 seconds) |
-| `UPNEXT_QUEUE_STREAM_MAXLEN` | `0` | Queue stream retention cap (0 = profile default) |
 | `UPNEXT_QUEUE_DLQ_STREAM_MAXLEN` | `10000` | Dead-letter queue stream max length |
-| `UPNEXT_QUEUE_BATCH_SIZE` | `0` | Queue fetch/flush batch size (0 = profile default) |
-| `UPNEXT_QUEUE_INBOX_SIZE` | `0` | Queue inbox capacity (0 = profile default) |
-| `UPNEXT_QUEUE_OUTBOX_SIZE` | `0` | Queue outbox capacity (0 = profile default) |
-| `UPNEXT_QUEUE_FLUSH_INTERVAL_MS` | `0` | Completion flush interval (0 = profile default) |
-
-## Runtime profiles
-
-The `UPNEXT_QUEUE_RUNTIME_PROFILE` setting controls defaults for several queue parameters:
-
-### `safe` (default)
-
-Conservative settings optimized for reliability:
-- Smaller batch sizes and queue buffers
-- Bounded stream sizes
-- Best for workloads where delivery guarantees matter most
-
-### `throughput`
-
-Aggressive settings optimized for maximum throughput:
-- Larger batch sizes and queue buffers
-- Larger stream buffers
-- Best for high-volume workloads where you can tolerate occasional reprocessing
 
 ## Status stream settings
 

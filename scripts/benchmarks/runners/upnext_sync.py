@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 
 from redis import Redis
 
@@ -14,19 +13,18 @@ class UpnextSyncRunner(FrameworkRunner):
     framework = "upnext-sync"
 
     async def _run_async(self, cfg: BenchmarkConfig) -> BenchmarkResult:
-        runtime_profile = (
-            "throughput" if cfg.profile == BenchmarkProfile.THROUGHPUT else "safe"
-        )
-        os.environ["UPNEXT_QUEUE_RUNTIME_PROFILE"] = runtime_profile
-
         try:
             from redis.asyncio import Redis as AsyncRedis
-            from upnext.config import get_settings
+            from upnext.sdk.profile import ProfileOptions
             from upnext.sdk.worker import Worker
         except Exception as exc:
             return self._skip(cfg, f"Dependency missing: {exc}")
 
-        get_settings.cache_clear()
+        profile = (
+            ProfileOptions.THROUGHPUT
+            if cfg.profile == BenchmarkProfile.THROUGHPUT
+            else ProfileOptions.SAFE
+        )
 
         # Async client for polling the done counter.
         done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
@@ -40,6 +38,7 @@ class UpnextSyncRunner(FrameworkRunner):
             concurrency=max(1, cfg.concurrency),
             redis_url=cfg.redis_url,
             handle_signals=False,
+            profile=profile,
         )
         worker_task: asyncio.Task[None] | None = None
 
@@ -85,7 +84,7 @@ class UpnextSyncRunner(FrameworkRunner):
                 enqueue_latencies=enqueue_latencies,
                 notes=(
                     f"producer_concurrency={cfg.producer_concurrency}; "
-                    f"runtime_profile={runtime_profile}; "
+                    f"profile={cfg.profile.value}; "
                     f"sync_executor=thread"
                 ),
                 framework_version=self._framework_version("upnext"),

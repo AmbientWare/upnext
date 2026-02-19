@@ -8,8 +8,10 @@ Connection/lifecycle helpers live in _worker_connection.py.
 
 import asyncio
 import contextlib
+import importlib
 import json
 import logging
+import pkgutil
 import socket
 import time as time_module
 import traceback
@@ -41,6 +43,7 @@ from upnext.sdk._worker_connection import (
 )
 from upnext.sdk._worker_registration import WorkerRegistration
 from upnext.sdk.context import Context, set_current_context
+from upnext.sdk.profile import SafeProfile, WorkerProfile
 from upnext.sdk.secrets import fetch_and_inject_secrets
 from upnext.types import SyncExecutor
 
@@ -76,15 +79,7 @@ class Worker:
 
     name: str = field(default_factory=lambda: f"worker-{uuid.uuid4().hex[:8]}")
     concurrency: int = DEFAULT_CONCURRENCY
-    queue_batch_size: int | None = None
-    queue_inbox_size: int | None = None
-    queue_outbox_size: int | None = None
-    queue_flush_interval_ms: float | None = None
-    queue_claim_timeout_ms: int | None = None
-    queue_job_ttl_seconds: int | None = None
-    queue_result_ttl_seconds: int | None = None
-    queue_stream_maxlen: int | None = None
-    queue_dlq_stream_maxlen: int | None = None
+    profile: WorkerProfile = field(default_factory=SafeProfile)
     sync_executor: SyncExecutor = SyncExecutor.THREAD
     redis_url: str | None = None
     secrets: list[str] = field(default_factory=list)
@@ -224,8 +219,6 @@ class Worker:
             worker = Worker("my-app")
             worker.autodiscover("myapp.tasks", "myapp.workflows")
         """
-        import importlib
-        import pkgutil
 
         for package_name in packages:
             package = importlib.import_module(package_name)
@@ -238,19 +231,6 @@ class Worker:
     # =========================================================================
     # INITIALIZATION
     # =========================================================================
-
-    @staticmethod
-    def _resolve_int_option(
-        option_name: str,
-        explicit: int | None,
-        default: int,
-        *,
-        minimum: int,
-    ) -> int:
-        value = default if explicit is None else explicit
-        if value < minimum:
-            raise ValueError(f"{option_name} must be >= {minimum}")
-        return int(value)
 
     def initialize(
         self,
@@ -278,71 +258,22 @@ class Worker:
             )
         self._redis_client = create_redis_client(self.redis_url)
 
-        queue_batch_size = self._resolve_int_option(
-            "queue_batch_size",
-            self.queue_batch_size,
-            settings.default_queue_batch_size(),
-            minimum=1,
-        )
-        queue_inbox_size = self._resolve_int_option(
-            "queue_inbox_size",
-            self.queue_inbox_size,
-            max(settings.default_queue_inbox_size(), queue_batch_size),
-            minimum=queue_batch_size,
-        )
-        queue_outbox_size = self._resolve_int_option(
-            "queue_outbox_size",
-            self.queue_outbox_size,
-            settings.default_queue_outbox_size(),
-            minimum=1,
-        )
-        queue_claim_timeout_ms = self._resolve_int_option(
-            "queue_claim_timeout_ms",
-            self.queue_claim_timeout_ms,
-            settings.queue_claim_timeout_ms,
-            minimum=1,
-        )
-        queue_job_ttl_seconds = self._resolve_int_option(
-            "queue_job_ttl_seconds",
-            self.queue_job_ttl_seconds,
-            settings.queue_job_ttl_seconds,
-            minimum=1,
-        )
-        queue_result_ttl_seconds = self._resolve_int_option(
-            "queue_result_ttl_seconds",
-            self.queue_result_ttl_seconds,
-            settings.queue_result_ttl_seconds,
-            minimum=1,
-        )
-        queue_stream_maxlen = self._resolve_int_option(
-            "queue_stream_maxlen",
-            self.queue_stream_maxlen,
-            settings.default_queue_stream_maxlen(),
-            minimum=0,
-        )
-        queue_dlq_stream_maxlen = self._resolve_int_option(
-            "queue_dlq_stream_maxlen",
-            self.queue_dlq_stream_maxlen,
-            settings.queue_dlq_stream_maxlen,
-            minimum=0,
-        )
-        queue_flush_interval = settings.default_queue_flush_interval_seconds()
-        if self.queue_flush_interval_ms is not None:
-            queue_flush_interval = self.queue_flush_interval_ms / 1000
-        if queue_flush_interval <= 0:
-            raise ValueError("queue_flush_interval_ms must be > 0")
+        p = self.profile
+
+        # Enforce inbox_size >= batch_size to prevent fetcher starvation.
+        inbox_size = max(p.inbox_size, p.batch_size)
 
         self._queue_backend = RedisQueue(
             client=self._redis_client,
-            claim_timeout_ms=queue_claim_timeout_ms,
-            batch_size=queue_batch_size,
-            inbox_size=queue_inbox_size,
-            outbox_size=queue_outbox_size,
-            flush_interval=queue_flush_interval,
-            job_ttl_seconds=queue_job_ttl_seconds,
-            result_ttl_seconds=queue_result_ttl_seconds,
-            stream_maxlen=queue_stream_maxlen,
-            dlq_stream_maxlen=queue_dlq_stream_maxlen,
+            claim_timeout_ms=p.claim_timeout_ms,
+            batch_size=p.batch_size,
+            inbox_size=inbox_size,
+            outbox_size=p.outbox_size,
+            flush_interval=p.flush_interval_ms / 1000,
+            job_ttl_seconds=p.job_ttl_seconds,
+            result_ttl_seconds=p.result_ttl_seconds,
+            stream_maxlen=p.stream_maxlen,
+            dlq_stream_maxlen=p.dlq_stream_maxlen,
         )
 
         # Connect task handles to queue

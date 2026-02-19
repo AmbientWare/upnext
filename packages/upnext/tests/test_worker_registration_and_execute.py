@@ -5,7 +5,7 @@ import json
 import pytest
 from shared.keys.workers import FUNCTION_KEY_PREFIX, WORKER_DEF_PREFIX
 from shared.contracts import MissedRunPolicy
-from upnext.config import ThroughputMode, get_settings
+from upnext.sdk.profile import ProfileOptions, SafeProfile, ThroughputProfile, WorkerProfile
 from upnext.sdk.worker import Worker
 
 
@@ -142,33 +142,30 @@ def test_worker_cron_default_policy_is_latest_only() -> None:
     assert worker.crons[0].missed_run_policy == MissedRunPolicy.LATEST_ONLY
 
 
-def test_worker_profile_defaults_shape_queue_tuning(fake_redis, monkeypatch) -> None:
+def test_worker_profile_presets_shape_queue_tuning(fake_redis, monkeypatch) -> None:
     monkeypatch.setattr(
         "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis
     )
 
-    get_settings.cache_clear()
-    monkeypatch.setenv(
-        "UPNEXT_QUEUE_RUNTIME_PROFILE",
-        ThroughputMode.SAFE.value,
+    safe_worker = Worker(
+        name="safe-worker",
+        concurrency=8,
+        redis_url="redis://ignored",
+        profile=ProfileOptions.SAFE,
     )
-    safe_worker = Worker(name="safe-worker", concurrency=8, redis_url="redis://ignored")
     safe_worker.initialize(redis_url="redis://ignored")
     safe_queue = safe_worker._queue_backend  # noqa: SLF001
     assert safe_queue._batch_size == 100  # noqa: SLF001
     assert safe_queue._inbox_size == 1000  # noqa: SLF001
     assert safe_queue._flush_interval == 0.005  # noqa: SLF001
     assert safe_queue._stream_maxlen == 0  # noqa: SLF001
+    assert isinstance(safe_worker.profile, SafeProfile)
 
-    get_settings.cache_clear()
-    monkeypatch.setenv(
-        "UPNEXT_QUEUE_RUNTIME_PROFILE",
-        ThroughputMode.THROUGHPUT.value,
-    )
     throughput_worker = Worker(
         name="throughput-worker",
         concurrency=8,
         redis_url="redis://ignored",
+        profile=ProfileOptions.THROUGHPUT,
     )
     throughput_worker.initialize(redis_url="redis://ignored")
     throughput_queue = throughput_worker._queue_backend  # noqa: SLF001
@@ -176,30 +173,30 @@ def test_worker_profile_defaults_shape_queue_tuning(fake_redis, monkeypatch) -> 
     assert throughput_queue._inbox_size == 2000  # noqa: SLF001
     assert throughput_queue._flush_interval == 0.02  # noqa: SLF001
     assert throughput_queue._stream_maxlen == 200_000  # noqa: SLF001
+    assert isinstance(throughput_worker.profile, ThroughputProfile)
 
-    get_settings.cache_clear()
 
-
-def test_worker_queue_kwargs_override_profile_defaults(fake_redis, monkeypatch) -> None:
+def test_worker_custom_profile_overrides_defaults(fake_redis, monkeypatch) -> None:
     monkeypatch.setattr(
         "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis
     )
-    get_settings.cache_clear()
-    monkeypatch.setenv("UPNEXT_QUEUE_RUNTIME_PROFILE", ThroughputMode.SAFE.value)
 
+    custom = WorkerProfile(
+        batch_size=64,
+        inbox_size=128,
+        outbox_size=256,
+        flush_interval_ms=15.0,
+        claim_timeout_ms=45_000,
+        job_ttl_seconds=99,
+        result_ttl_seconds=88,
+        stream_maxlen=77,
+        dlq_stream_maxlen=66,
+    )
     worker = Worker(
         name="tuned-worker",
         concurrency=16,
         redis_url="redis://ignored",
-        queue_batch_size=64,
-        queue_inbox_size=128,
-        queue_outbox_size=256,
-        queue_flush_interval_ms=15.0,
-        queue_claim_timeout_ms=45_000,
-        queue_job_ttl_seconds=99,
-        queue_result_ttl_seconds=88,
-        queue_stream_maxlen=77,
-        queue_dlq_stream_maxlen=66,
+        profile=custom,
     )
     worker.initialize(redis_url="redis://ignored")
     queue = worker._queue_backend  # noqa: SLF001
@@ -212,34 +209,17 @@ def test_worker_queue_kwargs_override_profile_defaults(fake_redis, monkeypatch) 
     assert queue._result_ttl_seconds == 88  # noqa: SLF001
     assert queue._stream_maxlen == 77  # noqa: SLF001
     assert queue._dlq_stream_maxlen == 66  # noqa: SLF001
-    get_settings.cache_clear()
 
 
-def test_worker_queue_kwargs_validate_ranges(fake_redis, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis
-    )
+def test_worker_profile_validates_ranges() -> None:
+    with pytest.raises(ValueError, match="batch_size must be >= 1"):
+        WorkerProfile(batch_size=0)
 
-    with pytest.raises(ValueError, match="queue_batch_size must be >= 1"):
-        Worker(
-            name="invalid-batch",
-            redis_url="redis://ignored",
-            queue_batch_size=0,
-        ).initialize(redis_url="redis://ignored")
+    with pytest.raises(ValueError, match="stream_maxlen must be >= 0"):
+        WorkerProfile(stream_maxlen=-1)
 
-    with pytest.raises(ValueError, match="queue_stream_maxlen must be >= 0"):
-        Worker(
-            name="invalid-stream",
-            redis_url="redis://ignored",
-            queue_stream_maxlen=-1,
-        ).initialize(redis_url="redis://ignored")
-
-    with pytest.raises(ValueError, match="queue_flush_interval_ms must be > 0"):
-        Worker(
-            name="invalid-flush",
-            redis_url="redis://ignored",
-            queue_flush_interval_ms=0,
-        ).initialize(redis_url="redis://ignored")
+    with pytest.raises(ValueError, match="flush_interval_ms must be > 0"):
+        WorkerProfile(flush_interval_ms=0)
 
 
 def test_worker_autodiscover(tmp_path) -> None:

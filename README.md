@@ -111,28 +111,24 @@ The dashboard and API views use a stream-first model:
 
 This keeps UI updates near-realtime while reducing avoidable polling load.
 
-## Runtime Profiles
+## Worker Profiles
 
-UpNext runtime defaults to a safety-oriented profile:
+Workers use a `WorkerProfile` to control queue tuning. The default is `ProfileOptions.SAFE`:
 
-- `UPNEXT_QUEUE_RUNTIME_PROFILE=safe` (default)
-  - smaller batch sizes and queue buffers
-  - bounded stream sizes by default
-  - optimized for reliability
-- `UPNEXT_QUEUE_RUNTIME_PROFILE=throughput`
-  - larger batch sizes and queue buffers for peak throughput
+```python
+import upnext
 
-Status-event publishing now retries and buffers transient failures by default.
-You can opt into fail-closed behavior with:
+# Built-in presets
+worker = upnext.Worker("my-worker", profile=upnext.ProfileOptions.THROUGHPUT)
 
-- `UPNEXT_STATUS_PUBLISH_STRICT=true`
+# Custom profile
+worker = upnext.Worker(
+    "my-worker",
+    profile=upnext.WorkerProfile(batch_size=500, inbox_size=5000),
+)
+```
 
-Useful tuning env vars include:
-
-- `UPNEXT_QUEUE_STREAM_MAXLEN`
-- `UPNEXT_STATUS_STREAM_MAX_LEN`
-- `UPNEXT_STATUS_PUBLISH_RETRY_ATTEMPTS`
-- `UPNEXT_STATUS_PENDING_BUFFER_SIZE`
+See the [Workers documentation](https://docs.upnext.run/concepts/workers#queue-tuning) for preset details.
 
 ## Benchmark Profiles
 

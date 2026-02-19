@@ -50,9 +50,45 @@ A worker manages:
 | --- | --- | --- | --- |
 | `name` | `str` | auto-generated | Worker name for dashboard identification |
 | `concurrency` | `int` | `2` | Maximum concurrent job executions |
+| `profile` | `WorkerProfile` | `ProfileOptions.SAFE` | Queue tuning profile (see [Queue tuning](#queue-tuning)) |
 | `sync_executor` | `SyncExecutor` | `THREAD` | Executor for sync tasks: `THREAD` or `PROCESS` |
 | `redis_url` | `str` | `None` | Redis URL (falls back to `UPNEXT_REDIS_URL` env var) |
 | `secrets` | `list[str]` | `[]` | Secret names to fetch on startup (requires server) |
+
+## Queue tuning
+
+Workers use a `WorkerProfile` to control queue batch sizes, buffer capacities, and stream limits. The default profile is `ProfileOptions.SAFE`.
+
+```python
+import upnext
+
+# Use the throughput preset for high-volume workloads
+worker = upnext.Worker("my-worker", profile=upnext.ProfileOptions.THROUGHPUT)
+
+# Or create a custom profile
+worker = upnext.Worker(
+    "my-worker",
+    profile=upnext.WorkerProfile(batch_size=500, inbox_size=5000),
+)
+```
+
+### Built-in presets
+
+| Preset | `batch_size` | `inbox_size` | `outbox_size` | `flush_interval_ms` | `stream_maxlen` |
+| --- | --- | --- | --- | --- | --- |
+| `ProfileOptions.SAFE` | 100 | 1,000 | 10,000 | 5.0 | 0 (unbounded) |
+| `ProfileOptions.THROUGHPUT` | 200 | 2,000 | 20,000 | 20.0 | 200,000 |
+
+You can also subclass `WorkerProfile` to create your own reusable presets:
+
+```python
+class HighVolumeProfile(upnext.WorkerProfile):
+    batch_size: int = 500
+    inbox_size: int = 5000
+    stream_maxlen: int = 500_000
+
+worker = upnext.Worker("my-worker", profile=HighVolumeProfile())
+```
 
 ## Run a worker
 

@@ -2,17 +2,9 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-class ThroughputMode(StrEnum):
-    """Throughput mode for queue runtime profile."""
-
-    THROUGHPUT = "throughput"
-    SAFE = "safe"
 
 
 class Settings(BaseSettings):
@@ -37,17 +29,11 @@ class Settings(BaseSettings):
 
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
-    queue_runtime_profile: ThroughputMode = ThroughputMode.SAFE
     queue_job_ttl_seconds: int = 86_400
     queue_result_ttl_seconds: int = 3_600
     queue_claim_timeout_ms: int = 30_000
-    queue_stream_maxlen: int = 0
     queue_dlq_stream_maxlen: int = 10_000
     queue_dispatch_events_stream_maxlen: int = 10_000
-    queue_batch_size: int = 0
-    queue_inbox_size: int = 0
-    queue_outbox_size: int = 0
-    queue_flush_interval_ms: float = 0.0
 
     # Status stream durability controls
     status_stream_max_len: int = 50_000
@@ -89,42 +75,6 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         """Check if running in development mode."""
         return not self.is_production
-
-    def default_queue_batch_size(self) -> int:
-        """Resolve queue fetch/flush batch size for current runtime profile."""
-        if self.queue_batch_size > 0:
-            return self.queue_batch_size
-        return 200 if self.queue_runtime_profile == ThroughputMode.THROUGHPUT else 100
-
-    def default_queue_inbox_size(self) -> int:
-        """Resolve queue inbox capacity for current runtime profile."""
-        if self.queue_inbox_size > 0:
-            return self.queue_inbox_size
-        return 2000 if self.queue_runtime_profile == ThroughputMode.THROUGHPUT else 1000
-
-    def default_queue_outbox_size(self) -> int:
-        """Resolve queue outbox capacity for current runtime profile."""
-        if self.queue_outbox_size > 0:
-            return self.queue_outbox_size
-        return (
-            20_000
-            if self.queue_runtime_profile == ThroughputMode.THROUGHPUT
-            else 10_000
-        )
-
-    def default_queue_flush_interval_seconds(self) -> float:
-        """Resolve queue completion flush interval for current runtime profile."""
-        if self.queue_flush_interval_ms > 0:
-            return self.queue_flush_interval_ms / 1000
-        return (
-            0.02 if self.queue_runtime_profile == ThroughputMode.THROUGHPUT else 0.005
-        )
-
-    def default_queue_stream_maxlen(self) -> int:
-        """Resolve queue stream retention cap for current runtime profile."""
-        if self.queue_stream_maxlen > 0:
-            return self.queue_stream_maxlen
-        return 200_000 if self.queue_runtime_profile == ThroughputMode.THROUGHPUT else 0
 
 
 @lru_cache

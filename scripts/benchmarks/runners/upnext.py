@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 
 from ..models import BenchmarkConfig, BenchmarkProfile, BenchmarkResult
 from .base import FrameworkRunner
@@ -12,22 +11,18 @@ class UpnextAsyncRunner(FrameworkRunner):
     framework = "upnext-async"
 
     async def _run_async(self, cfg: BenchmarkConfig) -> BenchmarkResult:
-        # Set the runtime profile env var BEFORE importing upnext so Settings
-        # picks up the correct defaults for batch_size, inbox, outbox, flush.
-        runtime_profile = (
-            "throughput" if cfg.profile == BenchmarkProfile.THROUGHPUT else "safe"
-        )
-        os.environ["UPNEXT_QUEUE_RUNTIME_PROFILE"] = runtime_profile
-
         try:
             from redis.asyncio import Redis as AsyncRedis
-            from upnext.config import get_settings
+            from upnext.sdk.profile import ProfileOptions
             from upnext.sdk.worker import Worker
         except Exception as exc:
             return self._skip(cfg, f"Dependency missing: {exc}")
 
-        # Clear the cached settings so the new env var takes effect.
-        get_settings.cache_clear()
+        profile = (
+            ProfileOptions.THROUGHPUT
+            if cfg.profile == BenchmarkProfile.THROUGHPUT
+            else ProfileOptions.SAFE
+        )
 
         done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
         await done_client.delete(cfg.done_key)
@@ -38,6 +33,7 @@ class UpnextAsyncRunner(FrameworkRunner):
             concurrency=max(1, cfg.concurrency),
             redis_url=cfg.redis_url,
             handle_signals=False,
+            profile=profile,
         )
         worker_task: asyncio.Task[None] | None = None
 
@@ -83,7 +79,7 @@ class UpnextAsyncRunner(FrameworkRunner):
                 enqueue_latencies=enqueue_latencies,
                 notes=(
                     f"producer_concurrency={cfg.producer_concurrency}; "
-                    f"runtime_profile={runtime_profile}"
+                    f"profile={cfg.profile.value}"
                 ),
                 framework_version=self._framework_version("upnext"),
             )
