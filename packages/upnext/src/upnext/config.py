@@ -30,9 +30,7 @@ class Settings(BaseSettings):
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
     queue_job_ttl_seconds: int = 86_400
-    queue_result_ttl_seconds: int = 3_600
     queue_claim_timeout_ms: int = 30_000
-    queue_dlq_stream_maxlen: int = 10_000
     queue_dispatch_events_stream_maxlen: int = 10_000
 
     # Status stream durability controls

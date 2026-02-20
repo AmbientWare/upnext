@@ -121,10 +121,10 @@ async def test_finisher_fallback_pipeline_flushes_and_acks(fake_redis) -> None:
 
         client = await queue._ensure_connected()  # noqa: SLF001
 
-        async def result_written() -> bool:
-            return await client.get(queue._result_key(job.id)) is not None  # noqa: SLF001
+        async def terminal_written() -> bool:
+            return await client.get(queue._job_key(job)) is not None  # noqa: SLF001
 
-        assert await _wait_for(result_written)
+        assert await _wait_for(terminal_written)
     finally:
         await finisher.stop()
 
@@ -173,10 +173,11 @@ async def test_finisher_retries_flush_without_dropping_batch(fake_redis) -> None
 
         client = await queue._ensure_connected()  # noqa: SLF001
 
-        async def result_written() -> bool:
-            return await client.get(queue._result_key(job.id)) is not None  # noqa: SLF001
+        async def terminal_written() -> bool:
+            stored = await queue.get_job(job.id)
+            return stored is not None and stored.status == JobStatus.COMPLETE
 
-        assert await _wait_for(result_written)
+        assert await _wait_for(terminal_written)
         assert state["calls"] >= 2
     finally:
         await finisher.stop()

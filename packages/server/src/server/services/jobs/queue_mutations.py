@@ -13,7 +13,6 @@ from shared.keys import (
     job_index_key,
     job_key,
     job_match_pattern,
-    job_result_key,
     job_status_channel,
 )
 from shared.queue_mutations import (
@@ -72,11 +71,7 @@ async def find_job_key_by_id(redis_client: Any, job_id: str) -> str | None:
 
 
 async def load_job(redis_client: Any, job_id: str) -> tuple[Job | None, str | None]:
-    """Load a job from result storage first, then active queue storage."""
-    result_data = await redis_client.get(job_result_key(job_id))
-    if result_data:
-        return Job.from_json(_decode_text(result_data)), None
-
+    """Load a job from active queue storage."""
     resolved_job_key = await find_job_key_by_id(redis_client, job_id)
     if resolved_job_key is None:
         return None, None
@@ -119,12 +114,9 @@ async def cancel_job(
     scheduled_key = function_scheduled_key(job.function)
     dedup_key = function_dedup_key(job.function)
     index_key = job_index_key(job.id)
-    result_key = job_result_key(job.id)
     cancel_key = job_cancelled_key(job.id)
 
     job_ttl = max(1, settings.queue_job_ttl_seconds)
-    result_ttl = max(1, settings.queue_result_ttl_seconds)
-
     marker_created = bool(
         await redis_client.set(
             cancel_key,
@@ -133,13 +125,20 @@ async def cancel_job(
             nx=True,
         )
     )
-    wrote_result = await redis_client.set(
-        result_key,
-        job.to_json(),
-        ex=result_ttl,
-        nx=True,
-    )
-    if not wrote_result:
+
+    if not existing_job_key:
+        if marker_created:
+            await redis_client.delete(cancel_key)
+        return CancelMutationResult(cancelled=False)
+
+    current = await redis_client.get(existing_job_key)
+    if not current:
+        if marker_created:
+            await redis_client.delete(cancel_key)
+        return CancelMutationResult(cancelled=False)
+
+    live_job = Job.from_json(_decode_text(current))
+    if live_job.status.is_terminal():
         if marker_created:
             await redis_client.delete(cancel_key)
         return CancelMutationResult(cancelled=False)
@@ -151,8 +150,7 @@ async def cancel_job(
         job.id,
     )
 
-    if existing_job_key:
-        await redis_client.delete(existing_job_key)
+    await redis_client.delete(existing_job_key)
     await redis_client.delete(index_key)
     if job.key:
         await redis_client.srem(dedup_key, job.key)
@@ -212,7 +210,6 @@ async def manual_retry(redis_client: Any, job: Job) -> None:
             max(1, settings.queue_job_ttl_seconds),
             stored_job_key,
         )
-        pipe.delete(job_result_key(job.id))
         pipe.delete(job_cancelled_key(job.id))
         pipe.zrem(scheduled_key, job.id)
         if job.key:

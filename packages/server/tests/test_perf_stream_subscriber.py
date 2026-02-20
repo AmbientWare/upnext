@@ -54,6 +54,7 @@ async def test_perf_stream_subscriber_ingestion_throughput(
         publish_started[job_id] = perf_counter()
         await publisher.record_job_started(
             job_id=job_id,
+            job_key=job_id,
             function="fn.perf",
             function_name="perf",
             attempt=1,

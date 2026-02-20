@@ -20,12 +20,19 @@ from shared.contracts import (
 )
 
 
+def _started(payload: dict[str, object]) -> JobStartedEvent:
+    if "job_key" not in payload:
+        payload = {**payload, "job_key": str(payload["job_id"])}
+    return JobStartedEvent.model_validate(payload)
+
+
 @pytest.mark.contract
 def test_event_model_contract_requires_lineage_fields() -> None:
     now = datetime.now(UTC)
 
     JobStartedEvent(
         job_id="job-1",
+        job_key="job-1",
         function="fn",
         function_name="fn",
         root_id="job-1",
@@ -56,6 +63,7 @@ def test_event_model_contract_requires_lineage_fields() -> None:
     with pytest.raises(ValidationError):
         JobStartedEvent(  # type: ignore[call-arg]
             job_id="job-1",
+            job_key="job-1",
             function="fn",
             function_name="fn",
             # missing root_id should fail contract
@@ -137,7 +145,7 @@ async def test_event_replay_invariant_same_final_state_for_permuted_sequences(
             materialized = {**payload, "job_id": job_id, "root_id": root_id}
             if event_type == "job.started":
                 await process_event(
-                    JobStartedEvent.model_validate(
+                    _started(
                         {**materialized, "worker_id": "worker-replay"}
                     )
                 )
@@ -185,13 +193,13 @@ async def test_outage_then_replay_recovers_without_duplicates(
     # First processing during outage fails and should be retried later.
     with pytest.raises(RuntimeError, match="db down"):
         await process_event(
-            JobStartedEvent.model_validate({**payload, "worker_id": "worker"})
+            _started({**payload, "worker_id": "worker"})
         )
 
     # Replay after DB recovery should persist exactly one row.
     assert (
         await process_event(
-            JobStartedEvent.model_validate({**payload, "worker_id": "worker"})
+            _started({**payload, "worker_id": "worker"})
         )
         is True
     )
@@ -293,7 +301,7 @@ async def test_started_event_time_comparison_handles_naive_and_aware_datetimes(
     started_at_naive = started_at_aware.replace(tzinfo=None)
 
     applied = await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-time-1",
                 "function": "fn.time",
@@ -311,7 +319,7 @@ async def test_started_event_time_comparison_handles_naive_and_aware_datetimes(
 
     # Same timestamp but naive form should still be treated as duplicate.
     duplicate = await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-time-1",
                 "function": "fn.time",
@@ -353,7 +361,7 @@ async def test_pending_artifact_promotion_preserves_all_rows_without_orphans(
         )
 
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "artifact-life-1",
                 "function": "fn.artifact",

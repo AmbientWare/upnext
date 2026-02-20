@@ -19,6 +19,12 @@ from shared.contracts import (
 )
 
 
+def _started(payload: dict[str, object]) -> JobStartedEvent:
+    if "job_key" not in payload:
+        payload = {**payload, "job_key": str(payload["job_id"])}
+    return JobStartedEvent.model_validate(payload)
+
+
 @pytest.mark.asyncio
 async def test_job_started_duplicate_is_ignored(sqlite_db) -> None:
     started_at = datetime.now(UTC)
@@ -36,14 +42,14 @@ async def test_job_started_duplicate_is_ignored(sqlite_db) -> None:
     }
 
     first = await process_event(
-        JobStartedEvent.model_validate({**payload, "worker_id": "worker-a"})
+        _started({**payload, "worker_id": "worker-a"})
     )
     assert first is True
 
     stale = dict(payload)
     stale["started_at"] = started_at - timedelta(seconds=1)
     second = await process_event(
-        JobStartedEvent.model_validate({**stale, "worker_id": "worker-a"})
+        _started({**stale, "worker_id": "worker-a"})
     )
     assert second is False
 
@@ -64,7 +70,7 @@ async def test_job_failed_stale_event_does_not_override_terminal_state(
 ) -> None:
     started_at = datetime.now(UTC)
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-fail-1",
                 "function": "task_key",
@@ -127,7 +133,7 @@ async def test_job_completed_stale_event_does_not_override_terminal_state(
 ) -> None:
     started_at = datetime.now(UTC)
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-complete-1",
                 "function": "task_key",
@@ -234,7 +240,7 @@ async def test_job_cancelled_event_persists_terminal_state_and_reason(
 ) -> None:
     started_at = datetime.now(UTC)
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-cancel-1",
                 "function": "task_key",
@@ -318,7 +324,7 @@ async def test_retrying_event_ignores_stale_payload_and_accepts_newer_payload(
 ) -> None:
     started_at = datetime.now(UTC)
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-retry-1",
                 "function": "task_key",
@@ -395,7 +401,7 @@ async def test_retrying_event_ignores_stale_payload_and_accepts_newer_payload(
 async def test_progress_and_checkpoint_update_job_state(sqlite_db) -> None:
     started_at = datetime.now(UTC)
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-progress-1",
                 "function": "task_key",
@@ -447,7 +453,7 @@ async def test_started_event_persists_runtime_fields(
 ) -> None:
     started_at = datetime.now(UTC)
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-runtime-meta-1",
                 "function": "task_key",
@@ -491,7 +497,7 @@ async def test_pending_artifacts_promote_when_job_is_recorded(sqlite_db) -> None
         assert pending.id
 
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-artifact-1",
                 "function": "task_key",
@@ -542,7 +548,7 @@ async def test_progress_events_are_coalesced_before_db_write(
 
     started_at = datetime.now(UTC)
     await process_event(
-        JobStartedEvent.model_validate(
+        _started(
             {
                 "job_id": "job-progress-coalesce-1",
                 "function": "task_key",

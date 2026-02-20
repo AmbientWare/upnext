@@ -100,6 +100,7 @@ class JobRecordCreate(BaseModel):
     )
 
     id: str = Field(min_length=1, validation_alias="job_id")
+    job_key: str | None = None
     function: str = Field(min_length=1)
     function_name: str | None = None
     job_type: JobType = JobType.TASK
@@ -122,8 +123,6 @@ class JobRecordCreate(BaseModel):
     startup_policy: str | None = None
     checkpoint: dict[str, Any] | None = None
     checkpoint_at: str | None = None
-    dlq_replayed_from: str | None = None
-    dlq_failed_at: str | None = None
     event_pattern: str | None = None
     event_handler_name: str | None = None
     queue_wait_ms: float | None = Field(default=None, ge=0)
@@ -134,6 +133,8 @@ class JobRecordCreate(BaseModel):
     def _apply_defaults(self) -> "JobRecordCreate":
         if not self.function_name:
             self.function_name = self.function
+        if not self.job_key:
+            self.job_key = self.id
         if not self.root_id:
             self.root_id = self.id
         return self

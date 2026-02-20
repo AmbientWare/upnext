@@ -51,6 +51,7 @@ async def test_process_batch_acks_only_successful_events(
                     "function": "task_key",
                     "function_name": "task_name",
                     "root_id": "job-ack-1",
+                    "job_key": "job-ack-1",
                     "attempt": 1,
                     "max_retries": 0,
                     "started_at": ts,
@@ -121,6 +122,7 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
                     "function": "task_key",
                     "function_name": "task_name",
                     "root_id": "job-old",
+                    "job_key": "job-old",
                     "attempt": 1,
                     "max_retries": 0,
                     "started_at": ts,
@@ -149,6 +151,7 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
                     "function": "task_key",
                     "function_name": "task_name",
                     "root_id": "job-new",
+                    "job_key": "job-new",
                     "attempt": 1,
                     "max_retries": 0,
                     "started_at": ts,
@@ -228,6 +231,7 @@ def test_parse_events_propagates_worker_id_for_started_events(fake_redis) -> Non
                         "function": "task_key",
                         "function_name": "task_name",
                         "root_id": "job-started-worker-1",
+                        "job_key": "job-started-worker-1",
                         "attempt": 1,
                         "max_retries": 0,
                         "started_at": ts,
@@ -281,10 +285,10 @@ def test_parse_events_supports_job_cancelled(fake_redis) -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_events_are_dead_lettered_before_ack(fake_redis) -> None:
+async def test_invalid_events_are_archived_before_ack(fake_redis) -> None:
     config = StreamSubscriberConfig(
         stream=EVENTS_STREAM,
-        group="test-invalid-dlq",
+        group="test-invalid-archive",
         consumer_id="consumer-invalid",
         invalid_events_stream=f"{EVENTS_STREAM}:invalid:test",
         batch_size=10,
@@ -317,12 +321,12 @@ async def test_invalid_events_are_dead_lettered_before_ack(fake_redis) -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_events_stay_pending_when_dead_letter_write_fails(
+async def test_invalid_events_stay_pending_when_archive_write_fails(
     fake_redis, monkeypatch
 ) -> None:
     config = StreamSubscriberConfig(
         stream=EVENTS_STREAM,
-        group="test-invalid-dlq-fail",
+        group="test-invalid-archive-fail",
         consumer_id="consumer-invalid-fail",
         invalid_events_stream=f"{EVENTS_STREAM}:invalid:fail",
         batch_size=10,
@@ -345,7 +349,7 @@ async def test_invalid_events_stay_pending_when_dead_letter_write_fails(
 
     async def fail_invalid_stream_xadd(*args, **kwargs):  # noqa: ANN002, ANN003
         if args and args[0] == config.invalid_events_stream:
-            raise RuntimeError("dlq stream down")
+            raise RuntimeError("invalid stream down")
         return await original_xadd(*args, **kwargs)
 
     monkeypatch.setattr(fake_redis, "xadd", fail_invalid_stream_xadd)
@@ -567,6 +571,7 @@ async def test_process_batch_returns_processed_when_ack_fails(
                     "function": "task_key",
                     "function_name": "task_name",
                     "root_id": "job-ack-fail-1",
+                    "job_key": "job-ack-fail-1",
                     "attempt": 1,
                     "max_retries": 0,
                     "started_at": datetime.now(UTC).isoformat(),

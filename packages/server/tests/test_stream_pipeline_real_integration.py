@@ -72,6 +72,7 @@ async def test_real_round_trip_worker_events_persist_to_postgres(real_infra) -> 
 
     await publisher.record_job_started(
         job_id=job_id,
+        job_key=job_id,
         function="task_key",
         function_name="task_name",
         attempt=1,
@@ -134,6 +135,7 @@ async def test_real_stale_pending_event_is_reclaimed_after_consumer_crash(
 
     await publisher.record_job_started(
         job_id=job_id,
+        job_key=job_id,
         function="task_key",
         function_name="task_name",
         attempt=1,
@@ -202,6 +204,7 @@ async def test_real_consumer_restart_continues_processing_same_group(
 
     await publisher.record_job_started(
         job_id=job_id,
+        job_key=job_id,
         function="task_key",
         function_name="task_name",
         attempt=1,

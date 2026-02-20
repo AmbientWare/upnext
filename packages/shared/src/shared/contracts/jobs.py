@@ -13,6 +13,7 @@ class JobHistoryResponse(BaseModel):
     """Single job history response."""
 
     id: str
+    job_key: str
     function: str
     function_name: str
     status: str
@@ -32,8 +33,6 @@ class JobHistoryResponse(BaseModel):
     source: JobSource = Field(default_factory=TaskJobSource)
     checkpoint: dict[str, Any] | None = None
     checkpoint_at: str | None = None
-    dlq_replayed_from: str | None = None
-    dlq_failed_at: str | None = None
     queue_wait_ms: float | None = None
     result: Any = None
     error: str | None = None

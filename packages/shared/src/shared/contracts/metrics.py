@@ -10,7 +10,6 @@ class FunctionQueueMetrics(BaseModel):
     waiting: int = 0
     claimed: int = 0
     backlog: int = 0
-    dlq_entries: int = 0
 
 
 class QueueMetricsTotals(BaseModel):
@@ -21,7 +20,6 @@ class QueueMetricsTotals(BaseModel):
     claimed: int = 0
     backlog: int = 0
     capacity: int = 0
-    dlq_entries: int = 0
 
 
 class QueueMetricsResponse(BaseModel):

@@ -8,14 +8,13 @@ from shared.keys import (
     job_cancelled_key,
     job_index_key,
     job_key,
-    job_result_key,
 )
 
 from server.services.jobs.queue_mutations import cancel_job, manual_retry
 
 
 @pytest.mark.asyncio
-async def test_cancel_job_does_not_override_existing_terminal_result(fake_redis) -> None:
+async def test_cancel_job_does_not_override_existing_terminal_payload(fake_redis) -> None:
     active = Job(id="job-race-cancel-1", function="fn.cancel", function_name="cancel")
     active.mark_queued("queued")
     active_key = job_key(active.function, active.id)
@@ -29,7 +28,7 @@ async def test_cancel_job_does_not_override_existing_terminal_result(fake_redis)
         status=JobStatus.COMPLETE,
     )
     terminal.mark_complete({"ok": True})
-    await fake_redis.setex(job_result_key(active.id), 3_600, terminal.to_json())
+    await fake_redis.setex(active_key, 86_400, terminal.to_json())
 
     active.mark_cancelled()
     result = await cancel_job(fake_redis, active, existing_job_key=active_key)
@@ -38,12 +37,10 @@ async def test_cancel_job_does_not_override_existing_terminal_result(fake_redis)
     assert result.deleted_stream_entries == 0
     assert await fake_redis.get(job_cancelled_key(active.id)) is None
 
-    stored_result = await fake_redis.get(job_result_key(active.id))
-    assert stored_result is not None
-    loaded = Job.from_json(stored_result.decode())
+    stored_job = await fake_redis.get(active_key)
+    assert stored_job is not None
+    loaded = Job.from_json(stored_job.decode())
     assert loaded.status == JobStatus.COMPLETE
-
-    assert await fake_redis.get(active_key) is not None
 
 
 @pytest.mark.asyncio
@@ -66,7 +63,7 @@ async def test_cancel_job_preserves_existing_cancel_marker_on_race(fake_redis) -
         status=JobStatus.COMPLETE,
     )
     terminal.mark_complete({"ok": True})
-    await fake_redis.setex(job_result_key(active.id), 3_600, terminal.to_json())
+    await fake_redis.setex(active_key, 86_400, terminal.to_json())
 
     active.mark_cancelled()
     result = await cancel_job(fake_redis, active, existing_job_key=active_key)
@@ -81,7 +78,9 @@ async def test_manual_retry_preserves_attempt_counter(fake_redis) -> None:
     failed.attempts = 3
     failed.mark_failed("boom")
     failed.key = "retry-attempts-key"
-    await fake_redis.setex(job_result_key(failed.id), 3_600, failed.to_json())
+    failed_key = job_key(failed.function, failed.id)
+    await fake_redis.setex(failed_key, 86_400, failed.to_json())
+    await fake_redis.setex(job_index_key(failed.id), 86_400, failed_key)
 
     await manual_retry(fake_redis, failed)
 
@@ -98,7 +97,7 @@ async def test_manual_retry_preserves_attempt_counter(fake_redis) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_job_successfully_persists_cancelled_result(fake_redis) -> None:
+async def test_cancel_job_successfully_deletes_queued_payload(fake_redis) -> None:
     queued = Job(id="job-cancel-success-1", function="fn.cancel", function_name="cancel")
     queued.mark_queued("queued")
     queued.key = "cancel-success-key"
@@ -115,11 +114,6 @@ async def test_cancel_job_successfully_persists_cancelled_result(fake_redis) -> 
     queued.mark_cancelled()
     result = await cancel_job(fake_redis, queued, existing_job_key=queued_key)
     assert result.cancelled is True
-
-    stored_result = await fake_redis.get(job_result_key(queued.id))
-    assert stored_result is not None
-    cancelled = Job.from_json(stored_result.decode())
-    assert cancelled.status == JobStatus.CANCELLED
 
     assert await fake_redis.get(queued_key) is None
     assert await fake_redis.sismember(function_dedup_key(queued.function), queued.key) == 0

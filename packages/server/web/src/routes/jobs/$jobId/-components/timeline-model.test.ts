@@ -10,6 +10,7 @@ import {
 function mkJob(partial: Partial<Job> & Pick<Job, "id">): Job {
   return {
     id: partial.id,
+    job_key: partial.job_key ?? partial.id,
     function: partial.function ?? "fn",
     function_name: partial.function_name ?? "fn",
     job_type: partial.job_type ?? "task",
@@ -29,8 +30,6 @@ function mkJob(partial: Partial<Job> & Pick<Job, "id">): Job {
     kwargs: partial.kwargs ?? {},
     checkpoint: partial.checkpoint ?? null,
     checkpoint_at: partial.checkpoint_at ?? null,
-    dlq_replayed_from: partial.dlq_replayed_from ?? null,
-    dlq_failed_at: partial.dlq_failed_at ?? null,
     result: partial.result ?? null,
     error: partial.error ?? null,
     duration_ms: partial.duration_ms ?? null,

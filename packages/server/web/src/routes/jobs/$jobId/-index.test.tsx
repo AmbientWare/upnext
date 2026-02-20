@@ -49,6 +49,7 @@ describe("Job detail page artifacts refresh", () => {
       jobs: [
         {
           id: "job-root",
+          job_key: "job-root",
           function: "fn.root",
           function_name: "root",
           job_type: "task",
@@ -68,8 +69,6 @@ describe("Job detail page artifacts refresh", () => {
           kwargs: {},
           checkpoint: null,
           checkpoint_at: null,
-          dlq_replayed_from: null,
-          dlq_failed_at: null,
           result: null,
           error: null,
           duration_ms: null,

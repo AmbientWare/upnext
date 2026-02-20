@@ -411,7 +411,7 @@ async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
-    fake_redis, monkeypatch
+    sqlite_db, fake_redis, monkeypatch
 ) -> None:
     async def _get_redis():
         return fake_redis
@@ -436,17 +436,29 @@ async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
     failed = Job(id="job-456", function="fn.retry", function_name="retry")
     failed.mark_failed("boom")
     failed.key = "retry-key-456"
-    await fake_redis.setex("upnext:result:job-456", 3_600, failed.to_json().encode())
+    async with sqlite_db.session() as session:
+        repo = JobRepository(session)
+        await repo.record_job(
+            {
+                "job_id": failed.id,
+                "job_key": failed.key,
+                "function": failed.function,
+                "function_name": failed.function_name,
+                "status": "failed",
+                "attempts": max(1, failed.attempts),
+                "max_retries": failed.max_retries,
+                "root_id": failed.id,
+                "error": failed.error,
+            }
+        )
 
     cancel_out = await jobs_route.cancel_job("job-123")
     assert cancel_out.job_id == "job-123"
     assert cancel_out.cancelled is True
     assert await fake_redis.get(queued_key) is None
-    cancelled_result = await fake_redis.get("upnext:result:job-123")
-    assert cancelled_result is not None
-    assert Job.from_json(cancelled_result.decode()).status.value == "cancelled"
+    assert await fake_redis.get("upnext:job_index:job-123") is None
 
-    retry_out = await jobs_route.retry_job("job-456")
+    retry_out = await jobs_route.retry_job("job-456", db=sqlite_db)
     assert retry_out.job_id == "job-456"
     assert retry_out.retried is True
     retried_job = await fake_redis.get("upnext:job:fn.retry:job-456")
@@ -459,7 +471,7 @@ async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
 
 @pytest.mark.asyncio
 async def test_jobs_cancel_and_retry_routes_validate_status_and_presence(
-    fake_redis, monkeypatch
+    sqlite_db, fake_redis, monkeypatch
 ) -> None:
     async def _get_redis():
         return fake_redis
@@ -478,15 +490,29 @@ async def test_jobs_cancel_and_retry_routes_validate_status_and_presence(
     await fake_redis.setex(
         "upnext:job_index:job-active", 86_400, "upnext:job:fn.active:job-active"
     )
+    async with sqlite_db.session() as session:
+        repo = JobRepository(session)
+        await repo.record_job(
+            {
+                "job_id": active.id,
+                "job_key": active.key,
+                "function": active.function,
+                "function_name": active.function_name,
+                "status": "queued",
+                "attempts": max(1, active.attempts),
+                "max_retries": active.max_retries,
+                "root_id": active.id,
+            }
+        )
 
     with pytest.raises(HTTPException, match="cannot be retried") as conflict:
-        await jobs_route.retry_job("job-active")
+        await jobs_route.retry_job("job-active", db=sqlite_db)
     assert conflict.value.status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_retry_route_rejects_active_idempotency_key(
-    fake_redis, monkeypatch
+    sqlite_db, fake_redis, monkeypatch
 ) -> None:
     async def _get_redis():
         return fake_redis
@@ -496,15 +522,25 @@ async def test_retry_route_rejects_active_idempotency_key(
     failed = Job(id="job-idempotency", function="fn.retry", function_name="retry")
     failed.mark_failed("boom")
     failed.key = "shared-key"
-    await fake_redis.setex(
-        "upnext:result:job-idempotency",
-        3_600,
-        failed.to_json().encode(),
-    )
+    async with sqlite_db.session() as session:
+        repo = JobRepository(session)
+        await repo.record_job(
+            {
+                "job_id": failed.id,
+                "job_key": failed.key,
+                "function": failed.function,
+                "function_name": failed.function_name,
+                "status": "failed",
+                "attempts": max(1, failed.attempts),
+                "max_retries": failed.max_retries,
+                "root_id": failed.id,
+                "error": failed.error,
+            }
+        )
     await fake_redis.sadd("upnext:fn:fn.retry:dedup", "shared-key")
 
     with pytest.raises(HTTPException, match="idempotency key 'shared-key'") as conflict:
-        await jobs_route.retry_job("job-idempotency")
+        await jobs_route.retry_job("job-idempotency", db=sqlite_db)
     assert conflict.value.status_code == 409
 
 

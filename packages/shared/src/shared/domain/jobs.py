@@ -285,8 +285,6 @@ class Job:
     # Explicit system/runtime fields (metadata dict removed).
     checkpoint: dict[str, Any] | None = None
     checkpoint_at: str | None = None
-    dlq_replayed_from: str | None = None
-    dlq_failed_at: str | None = None
 
     # Result
     result: Any = None
@@ -406,8 +404,6 @@ class Job:
             "startup_policy": source_data.get("startup_policy"),
             "checkpoint": self.checkpoint,
             "checkpoint_at": self.checkpoint_at,
-            "dlq_replayed_from": self.dlq_replayed_from,
-            "dlq_failed_at": self.dlq_failed_at,
             "event_pattern": source_data.get("event_pattern"),
             "event_handler_name": source_data.get("event_handler_name"),
             "result": self.result,
@@ -451,8 +447,6 @@ class Job:
             source=_source_from_dict(data),
             checkpoint=data.get("checkpoint"),
             checkpoint_at=data.get("checkpoint_at"),
-            dlq_replayed_from=data.get("dlq_replayed_from"),
-            dlq_failed_at=data.get("dlq_failed_at"),
             result=data.get("result"),
             error=data.get("error"),
             error_traceback=data.get("error_traceback"),

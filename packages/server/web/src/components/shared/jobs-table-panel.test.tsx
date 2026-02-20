@@ -8,6 +8,7 @@ import { JobsTablePanel } from "./jobs-table-panel";
 function mkJob(id: string, status: Job["status"], functionName: string): Job {
   return {
     id,
+    job_key: id,
     function: functionName,
     function_name: functionName,
     job_type: "task",
@@ -27,8 +28,6 @@ function mkJob(id: string, status: Job["status"], functionName: string): Job {
     kwargs: {},
     checkpoint: null,
     checkpoint_at: null,
-    dlq_replayed_from: null,
-    dlq_failed_at: null,
     result: null,
     error: null,
     duration_ms: status === "complete" ? 5000 : null,

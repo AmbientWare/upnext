@@ -43,21 +43,6 @@ def function_dedup_key(function: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> 
     """Redis set key for active idempotency keys of a function."""
     return queue_key("fn", function, "dedup", key_prefix=key_prefix)
 
-
-def function_dlq_stream_key(
-    function: str,
-    *,
-    key_prefix: str = QUEUE_KEY_PREFIX,
-) -> str:
-    """Redis stream key for dead-letter jobs of a function."""
-    return queue_key("fn", function, "dlq", key_prefix=key_prefix)
-
-
-def function_dlq_stream_pattern(*, key_prefix: str = QUEUE_KEY_PREFIX) -> str:
-    """SCAN pattern for all function dead-letter stream keys."""
-    return queue_key("fn", "*", "dlq", key_prefix=key_prefix)
-
-
 def function_rate_limit_key(
     function: str,
     *,
@@ -104,12 +89,6 @@ def job_match_pattern(job_id: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> str
 def job_index_key(job_id: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> str:
     """Redis key mapping job ID to canonical job storage key."""
     return queue_key("job_index", job_id, key_prefix=key_prefix)
-
-
-def job_result_key(job_id: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> str:
-    """Redis key storing a terminal job result snapshot."""
-    return queue_key("result", job_id, key_prefix=key_prefix)
-
 
 def job_cancelled_key(job_id: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> str:
     """Redis key used as pre-execution cancellation marker."""

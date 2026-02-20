@@ -120,6 +120,7 @@ class JobHistory(Base):
     # Job identity
     function: Mapped[str] = mapped_column(String(255), nullable=False)
     function_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    job_key: Mapped[str] = mapped_column(String(255), nullable=False)
     job_type: Mapped[str] = mapped_column(String(20), nullable=False, default="task")
 
     # Status: active, complete, failed, retrying
@@ -158,8 +159,6 @@ class JobHistory(Base):
     startup_policy: Mapped[str | None] = mapped_column(String(32), nullable=True)
     checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     checkpoint_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    dlq_replayed_from: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    dlq_failed_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     event_pattern: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_handler_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     result: Mapped[Any] = mapped_column(JSON, nullable=True)
@@ -174,6 +173,7 @@ class JobHistory(Base):
     __table_args__ = (
         Index("ix_job_history_function", "function"),
         Index("ix_job_history_function_name", "function_name"),
+        Index("ix_job_history_job_key", "job_key"),
         Index("ix_job_history_job_type", "job_type"),
         Index("ix_job_history_status", "status"),
         Index("ix_job_history_created_at", "created_at"),

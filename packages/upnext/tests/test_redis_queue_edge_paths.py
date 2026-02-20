@@ -112,7 +112,7 @@ async def test_dequeue_batch_recovers_after_nogroup_error(
 
 
 @pytest.mark.asyncio
-async def test_missing_payload_without_result_stays_pending(fake_redis) -> None:
+async def test_missing_payload_without_result_is_acked(fake_redis) -> None:
     queue = RedisQueue(client=fake_redis, key_prefix="upnext-missing-payload-pending")
     job = Job(function="task_fn", function_name="task", key="missing-payload-pending")
     await queue.enqueue(job)
@@ -124,7 +124,7 @@ async def test_missing_payload_without_result_stays_pending(fake_redis) -> None:
     assert active is None
 
     pending = await client.xpending(queue._stream_key("task_fn"), queue._consumer_group)  # noqa: SLF001
-    assert pending["pending"] == 1
+    assert pending["pending"] == 0
 
 
 @pytest.mark.asyncio
@@ -145,13 +145,12 @@ async def test_malformed_stream_payload_missing_identifiers_is_acked(fake_redis)
 
 
 @pytest.mark.asyncio
-async def test_missing_payload_with_terminal_result_is_acked(fake_redis) -> None:
+async def test_missing_payload_is_acked_as_stale_stream_entry(fake_redis) -> None:
     queue = RedisQueue(client=fake_redis, key_prefix="upnext-missing-payload-acked")
     job = Job(function="task_fn", function_name="task", key="missing-payload-acked")
     await queue.enqueue(job)
 
     client = await queue._ensure_connected()  # noqa: SLF001
-    await client.setex(queue._result_key(job.id), 60, job.to_json())  # noqa: SLF001
     await client.delete(queue._job_key(job))  # noqa: SLF001
 
     active = await queue.dequeue(["task_fn"], timeout=0.1)

@@ -32,7 +32,7 @@ from typing import Any
 
 import redis.asyncio as redis
 from pydantic import BaseModel
-from shared import CronSource, Job, JobStatus, clone_job_source
+from shared import CronSource, Job, JobStatus
 from shared.contracts import DispatchReason, FunctionConfig, MissedRunPolicy
 from shared.keys import (
     QUEUE_CONSUMER_GROUP,
@@ -44,7 +44,6 @@ from shared.keys import (
     function_dedup_key as shared_function_dedup_key,
     function_definition_key,
     function_definition_pattern,
-    function_dlq_stream_key as shared_function_dlq_stream_key,
     function_rate_limit_key as shared_function_rate_limit_key,
     function_scheduled_key as shared_function_scheduled_key,
     function_stream_key as shared_function_stream_key,
@@ -52,7 +51,6 @@ from shared.keys import (
     job_index_key as shared_job_index_key,
     job_key as shared_job_key,
     job_match_pattern,
-    job_result_key as shared_job_result_key,
     job_status_channel,
     queue_key,
 )
@@ -65,7 +63,6 @@ from upnext.config import get_settings
 from upnext.engine.cron import calculate_next_cron_run
 from upnext.engine.queue.base import (
     BaseQueue,
-    DeadLetterEntry,
     DuplicateJobError,
     QueueStats,
 )
@@ -137,7 +134,6 @@ class RedisQueue(BaseQueue):
         upnext:fn:{function}:dedup      - SET for deduplication keys
         upnext:job:{function}:{id}      - Job data (with TTL)
         upnext:job_index:{id}           - Job ID -> job key mapping (with TTL)
-        upnext:result:{job_id}          - Job result (with TTL)
         upnext:cron_window:{function}:{ms} - Schedule reservation key per cron window
     """
 
@@ -148,7 +144,6 @@ class RedisQueue(BaseQueue):
         consumer_group: str = QUEUE_CONSUMER_GROUP,
         claim_timeout_ms: int = DEFAULT_CLAIM_TIMEOUT_MS,
         job_ttl_seconds: int | None = None,
-        result_ttl_seconds: int | None = None,
         sweep_interval: float = 5.0,
         *,
         client: Any | None = None,
@@ -157,7 +152,6 @@ class RedisQueue(BaseQueue):
         outbox_size: int = DEFAULT_OUTBOX_SIZE,
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
         stream_maxlen: int | None = None,
-        dlq_stream_maxlen: int | None = None,
     ) -> None:
         settings = get_settings()
 
@@ -170,11 +164,6 @@ class RedisQueue(BaseQueue):
             if job_ttl_seconds is None
             else int(job_ttl_seconds)
         )
-        self._result_ttl_seconds = (
-            settings.queue_result_ttl_seconds
-            if result_ttl_seconds is None
-            else int(result_ttl_seconds)
-        )
         self._sweep_interval = sweep_interval
 
         # Batching config (stored for component creation)
@@ -183,14 +172,6 @@ class RedisQueue(BaseQueue):
         self._outbox_size = outbox_size
         self._flush_interval = flush_interval
         self._stream_maxlen = max(0, int(stream_maxlen or 0))
-        self._dlq_stream_maxlen = max(
-            0,
-            (
-                settings.queue_dlq_stream_maxlen
-                if dlq_stream_maxlen is None
-                else int(dlq_stream_maxlen)
-            ),
-        )
         self._dispatch_events_stream_maxlen = max(
             0,
             int(settings.queue_dispatch_events_stream_maxlen),
@@ -418,9 +399,6 @@ class RedisQueue(BaseQueue):
     def _dedup_key(self, function: str) -> str:
         return shared_function_dedup_key(function, key_prefix=self._key_prefix)
 
-    def _dlq_stream_key(self, function: str) -> str:
-        return shared_function_dlq_stream_key(function, key_prefix=self._key_prefix)
-
     def _dispatch_reasons_key(self, function: str) -> str:
         return shared_dispatch_reasons_key(function, key_prefix=self._key_prefix)
 
@@ -432,9 +410,6 @@ class RedisQueue(BaseQueue):
 
     def _job_index_key(self, job_id: str) -> str:
         return shared_job_index_key(job_id, key_prefix=self._key_prefix)
-
-    def _result_key(self, job_id: str) -> str:
-        return shared_job_result_key(job_id, key_prefix=self._key_prefix)
 
     def _cancel_marker_key(self, job_id: str) -> str:
         return shared_job_cancelled_key(job_id, key_prefix=self._key_prefix)
@@ -989,31 +964,6 @@ class RedisQueue(BaseQueue):
             return value.decode()
         return str(value)
 
-    def _dlq_payload(self, job: Job, reason: str | None) -> dict[str, Any]:
-        failed_at = (job.completed_at or datetime.now(UTC)).isoformat()
-        return {
-            "job_id": job.id,
-            "function": job.function,
-            "failed_at": failed_at,
-            "reason": reason or "",
-            "attempts": job.attempts,
-            "max_retries": job.max_retries,
-            "data": job.to_json(),
-        }
-
-    async def _write_dead_letter(
-        self,
-        client: Any,
-        job: Job,
-        reason: str | None,
-    ) -> None:
-        stream_key = self._dlq_stream_key(job.function)
-        payload = self._dlq_payload(job, reason)
-        if self._dlq_stream_maxlen > 0:
-            await client.xadd(stream_key, payload, maxlen=self._dlq_stream_maxlen)
-        else:
-            await client.xadd(stream_key, payload)
-
     async def _delete_stream_entries_for_job(
         self,
         stream_key: str,
@@ -1298,7 +1248,6 @@ class RedisQueue(BaseQueue):
 
         # Resolve canonical active job payload; stream entries can be stale.
         job_key: str
-        parsed_job_id: str | None = None
         job_id_raw = msg_data.get(b"job_id") or msg_data.get("job_id")
         function_raw = msg_data.get(b"function") or msg_data.get("function")
         if not job_id_raw or not function_raw:
@@ -1314,21 +1263,16 @@ class RedisQueue(BaseQueue):
         function = (
             function_raw.decode() if isinstance(function_raw, bytes) else function_raw
         )
-        parsed_job_id = job_id
         job_key = shared_job_key(function, job_id, key_prefix=self._key_prefix)
 
         job_data = await client.get(job_key)
         if not job_data:
-            # ACK only if the job already reached terminal state and payload was
-            # legitimately removed. Otherwise keep pending for investigation/replay.
-            if parsed_job_id and await client.exists(self._result_key(parsed_job_id)):
-                await client.xack(stream_key, self._consumer_group, msg_id_str)
-            else:
-                logger.warning(
-                    "Missing active job payload for stream=%s msg_id=%s; leaving pending",
-                    stream_key,
-                    msg_id_str,
-                )
+            logger.warning(
+                "Missing canonical job payload for stream=%s msg_id=%s; acking stale entry",
+                stream_key,
+                msg_id_str,
+            )
+            await client.xack(stream_key, self._consumer_group, msg_id_str)
             return None
 
         job_str = job_data.decode() if isinstance(job_data, bytes) else job_data
@@ -1436,7 +1380,6 @@ class RedisQueue(BaseQueue):
         job.result = result
         job.error = error
 
-        result_key = self._result_key(job.id)
         job_key = self._job_key(job)
         job_index_key = self._job_index_key(job.id)
         dedup_key = self._dedup_key(job.function)
@@ -1445,9 +1388,8 @@ class RedisQueue(BaseQueue):
         if self._finish_sha:
             await self._evalsha_with_reload(
                 "_finish_sha",
-                6,
+                5,
                 stream_key,
-                result_key,
                 job_key,
                 job_index_key,
                 dedup_key,
@@ -1455,24 +1397,18 @@ class RedisQueue(BaseQueue):
                 self._consumer_group,
                 msg_id or "",
                 job.to_json(),
-                str(self._result_ttl_seconds),
+                str(self._job_ttl_seconds),
                 job.key or "",
                 status.value,
             )
         else:
             if msg_id:
                 await client.xack(stream_key, self._consumer_group, msg_id)
-            await client.setex(
-                result_key, self._result_ttl_seconds, job.to_json().encode()
-            )
-            await client.delete(job_key)
-            await client.delete(job_index_key)
+            await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
+            await client.setex(job_index_key, self._job_ttl_seconds, job_key)
             if job.key:
                 await client.srem(dedup_key, job.key)
             await client.publish(pubsub_channel, status.value)
-
-        if status == JobStatus.FAILED:
-            await self._write_dead_letter(client, job, error)
 
         # Job has terminally finished; clear cancellation marker if present.
         await client.delete(self._cancel_marker_key(job.id))
@@ -1574,7 +1510,6 @@ class RedisQueue(BaseQueue):
         async with client.pipeline(transaction=True) as pipe:
             pipe.setex(job_key, self._job_ttl_seconds, payload_json)
             pipe.setex(job_index_key, self._job_ttl_seconds, job_key)
-            pipe.delete(self._result_key(job.id))
             pipe.delete(self._cancel_marker_key(job.id))
             pipe.zrem(scheduled_key, job.id)
             if job.key:
@@ -1612,7 +1547,6 @@ class RedisQueue(BaseQueue):
         msg_id = claim.msg_id if claim else None
         stream_key = self._stream_key(job.function)
         scheduled_key = self._scheduled_key(job.function)
-        result_key = self._result_key(job.id)
         job_index_key = self._job_index_key(job.id)
         dedup_key = self._dedup_key(job.function)
         cancel_marker_key = self._cancel_marker_key(job.id)
@@ -1634,9 +1568,8 @@ class RedisQueue(BaseQueue):
         if self._cancel_sha:
             result = await self._evalsha_with_reload(
                 "_cancel_sha",
-                6,  # number of keys
+                5,  # number of keys
                 stream_key,
-                result_key,
                 job_key,
                 job_index_key,
                 dedup_key,
@@ -1644,31 +1577,35 @@ class RedisQueue(BaseQueue):
                 self._consumer_group,
                 msg_id or "",
                 job.to_json(),
-                str(self._result_ttl_seconds),
+                str(self._job_ttl_seconds),
                 job.key or "",
             )
             result_text = result.decode() if isinstance(result, bytes) else str(result)
             cancelled = result_text == "OK"
         else:
             # Fallback without Lua
-            stored = await client.set(
-                result_key,
-                job.to_json().encode(),
-                ex=self._result_ttl_seconds,
-                nx=True,
+            current_data = await client.get(job_key)
+            if not current_data:
+                if marker_created:
+                    await client.delete(cancel_marker_key)
+                return False
+            current_job = Job.from_json(
+                current_data.decode()
+                if isinstance(current_data, bytes)
+                else current_data
             )
-            cancelled = bool(stored)
-            if not cancelled:
+            if current_job.status.is_terminal():
                 if marker_created:
                     await client.delete(cancel_marker_key)
                 return False
             if msg_id:
                 await client.xack(stream_key, self._consumer_group, msg_id)
-            await client.delete(job_key)
-            await client.delete(job_index_key)
+            await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
+            await client.setex(job_index_key, self._job_ttl_seconds, job_key)
             if job.key:
                 await client.srem(dedup_key, job.key)
             await client.publish(pubsub_channel, JobStatus.CANCELLED.value)
+            cancelled = True
 
         if not cancelled:
             if marker_created:
@@ -1693,16 +1630,6 @@ class RedisQueue(BaseQueue):
     async def get_job(self, job_id: str) -> Job | None:
         """Get a job by ID."""
         client = await self._ensure_connected()
-
-        # Check result key first
-        result_key = self._result_key(job_id)
-        result_data = await client.get(result_key)
-
-        if result_data:
-            result_str = (
-                result_data.decode() if isinstance(result_data, bytes) else result_data
-            )
-            return Job.from_json(result_str)
 
         # Lookup active job via ID index; SCAN fallback is only for index recovery.
         job_key = await self._find_job_key_by_id(job_id)
@@ -2095,98 +2022,6 @@ class RedisQueue(BaseQueue):
                     jobs.append(job)
 
         return jobs
-
-    async def get_dead_letters(
-        self,
-        function: str,
-        *,
-        limit: int = 100,
-    ) -> list[DeadLetterEntry]:
-        client = await self._ensure_connected()
-        dlq_stream = self._dlq_stream_key(function)
-
-        try:
-            rows = await client.xrevrange(dlq_stream, count=max(1, limit))
-        except redis.ResponseError:
-            return []
-
-        entries: list[DeadLetterEntry] = []
-        for msg_id, msg_data in rows:
-            data_raw = msg_data.get(b"data") or msg_data.get("data")
-            if not data_raw:
-                continue
-
-            try:
-                job = Job.from_json(self._decode_text(data_raw))
-            except Exception:
-                continue
-
-            failed_at_raw = msg_data.get(b"failed_at") or msg_data.get("failed_at")
-            failed_at = None
-            if failed_at_raw:
-                try:
-                    failed_at = datetime.fromisoformat(self._decode_text(failed_at_raw))
-                except ValueError:
-                    failed_at = None
-
-            reason_raw = msg_data.get(b"reason") or msg_data.get("reason")
-            reason = self._decode_text(reason_raw) if reason_raw else None
-            if reason == "":
-                reason = None
-
-            entries.append(
-                DeadLetterEntry(
-                    entry_id=self._decode_text(msg_id),
-                    function=function,
-                    job=job,
-                    failed_at=failed_at,
-                    reason=reason,
-                )
-            )
-
-        return entries
-
-    async def replay_dead_letter(self, function: str, entry_id: str) -> str | None:
-        client = await self._ensure_connected()
-        dlq_stream = self._dlq_stream_key(function)
-        rows = await client.xrange(dlq_stream, min=entry_id, max=entry_id, count=1)
-        if not rows:
-            return None
-
-        _msg_id, msg_data = rows[0]
-        data_raw = msg_data.get(b"data") or msg_data.get("data")
-        if not data_raw:
-            return None
-
-        dead_job = Job.from_json(self._decode_text(data_raw))
-        if dead_job.function != function:
-            raise ValueError(
-                f"Dead-letter function mismatch: expected '{function}', got '{dead_job.function}'"
-            )
-
-        replayed = Job(
-            function=dead_job.function,
-            function_name=dead_job.function_name,
-            kwargs=dict(dead_job.kwargs),
-            key=dead_job.key,
-            timeout=dead_job.timeout,
-            max_retries=dead_job.max_retries,
-            retry_delay=dead_job.retry_delay,
-            retry_backoff=dead_job.retry_backoff,
-            parent_id=dead_job.parent_id,
-            root_id=dead_job.root_id if dead_job.parent_id else "",
-            source=clone_job_source(dead_job.source),
-            checkpoint=dead_job.checkpoint,
-            checkpoint_at=dead_job.checkpoint_at,
-        )
-        replayed.dlq_replayed_from = entry_id
-        failed_at_raw = msg_data.get(b"failed_at") or msg_data.get("failed_at")
-        if failed_at_raw:
-            replayed.dlq_failed_at = self._decode_text(failed_at_raw)
-
-        new_job_id = await self.enqueue(replayed)
-        await client.xdel(dlq_stream, entry_id)
-        return new_job_id
 
     # =========================================================================
     # STREAM OPERATIONS (for user-facing stream processing)

@@ -25,6 +25,7 @@ async def test_worker_events_round_trip_to_database_via_stream_subscriber(
     job_id = "roundtrip-job-1"
     await publisher.record_job_started(
         job_id=job_id,
+        job_key=job_id,
         function="task_key",
         function_name="task_name",
         attempt=1,
@@ -77,6 +78,7 @@ async def test_stale_pending_worker_event_is_reclaimed_and_persisted_once(
     job_id = "reclaim-job-1"
     await publisher.record_job_started(
         job_id=job_id,
+        job_key=job_id,
         function="task_key",
         function_name="task_name",
         attempt=1,

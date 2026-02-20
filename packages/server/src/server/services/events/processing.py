@@ -243,6 +243,7 @@ async def _handle_job_started(
         ):
             return False
         existing.status = "active"
+        existing.job_key = event.job_key
         existing.function = event.function
         existing.function_name = event.function_name
         existing.attempts = max(existing_attempts, event.attempt)
@@ -263,14 +264,13 @@ async def _handle_job_started(
         existing.startup_policy = source_columns.startup_policy
         existing.checkpoint = event.checkpoint
         existing.checkpoint_at = event.checkpoint_at
-        existing.dlq_replayed_from = event.dlq_replayed_from
-        existing.dlq_failed_at = event.dlq_failed_at
         existing.event_pattern = source_columns.event_pattern
         existing.event_handler_name = source_columns.event_handler_name
     else:
         await repo.record_job(
             JobRecordCreate(
                 id=event.job_id,
+                job_key=event.job_key,
                 function=event.function,
                 function_name=event.function_name,
                 job_type=source_columns.job_type,
@@ -291,8 +291,6 @@ async def _handle_job_started(
                 startup_policy=source_columns.startup_policy,
                 checkpoint=event.checkpoint,
                 checkpoint_at=event.checkpoint_at,
-                dlq_replayed_from=event.dlq_replayed_from,
-                dlq_failed_at=event.dlq_failed_at,
                 event_pattern=source_columns.event_pattern,
                 event_handler_name=source_columns.event_handler_name,
             )

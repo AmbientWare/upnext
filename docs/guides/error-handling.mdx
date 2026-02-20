@@ -4,7 +4,7 @@ description: Configure retries, handle timeouts, and manage failed jobs.
 icon: triangle-exclamation
 ---
 
-UpNext provides automatic retries, timeout enforcement, and a dead-letter queue for jobs that exhaust all attempts.
+UpNext provides automatic retries, timeout enforcement, and durable history for jobs that exhaust all attempts.
 
 ## Retries
 
@@ -143,14 +143,14 @@ for result in results:
         print(f"Task succeeded: {result.value}")
 ```
 
-## Dead-letter queue
+## Failed jobs and manual retry
 
-Jobs that exhaust all retry attempts are moved to the **dead-letter queue (DLQ)**. You can browse and manage DLQ entries from the dashboard, or via the server's REST API at `/api/v1/dlq`.
+When a job exhausts all retry attempts, its final state is recorded as `failed` in job history. From the dashboard (or jobs API), you can inspect the failure details and trigger a manual retry of that same job ID.
 
-The DLQ stores:
-- The original job payload
-- The error that caused the final failure
-- All attempt metadata
+Failed job history includes:
+- Original job payload and function metadata
+- Final error details
+- Attempt and retry metadata
 
 ## Lifecycle hooks
 

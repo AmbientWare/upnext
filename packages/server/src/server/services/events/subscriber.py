@@ -103,7 +103,7 @@ class StreamSubscriberConfig:
     # Time before claiming events from dead consumers (ms)
     stale_claim_ms: int = 30000
 
-    # Dead-letter stream for malformed/unsupported events.
+    # Stream for malformed/unsupported events.
     invalid_events_stream: str = f"{EVENTS_STREAM}:invalid"
     invalid_events_stream_maxlen: int = 10_000
 
@@ -327,7 +327,7 @@ class StreamSubscriber:
         self._last_batch_event_count = len(event_ids)
 
         parsed_events, discard_summary = self._parse_events(events)
-        ack_ids.extend(await self._dead_letter_invalid_events(discard_summary))
+        ack_ids.extend(await self._archive_invalid_events(discard_summary))
         self._invalid_envelope_total += discard_summary.invalid_envelope
         self._invalid_payload_total += discard_summary.invalid_payload
         self._unsupported_type_total += discard_summary.unsupported_type
@@ -519,7 +519,7 @@ class StreamSubscriber:
             ),
         )
 
-    async def _dead_letter_invalid_events(
+    async def _archive_invalid_events(
         self,
         summary: _ParseDiscardSummary,
     ) -> list[str]:
@@ -567,7 +567,7 @@ class StreamSubscriber:
                 ack_ids.append(invalid.event_id)
             except Exception as exc:
                 logger.warning(
-                    "Failed to dead-letter invalid stream event %s: %s",
+                    "Failed to archive invalid stream event %s: %s",
                     invalid.event_id,
                     exc,
                 )

@@ -44,13 +44,6 @@ class QueueHealthSummary(BaseModel):
     capacity: int = 0
 
 
-class DlqHealthSummary(BaseModel):
-    """Dead-letter queue summary surfaced by health endpoints."""
-
-    total_entries: int = 0
-    functions_affected: int = 0
-
-
 class EventProcessingStats(BaseModel):
     """Subscriber event processing counters surfaced by health endpoints."""
 
@@ -69,7 +62,6 @@ class HealthMetrics(BaseModel):
     alerts: AlertDeliveryStats = Field(default_factory=AlertDeliveryStats)
     readiness: ReadinessMetrics = Field(default_factory=ReadinessMetrics)
     queue: QueueHealthSummary = Field(default_factory=QueueHealthSummary)
-    dlq: DlqHealthSummary = Field(default_factory=DlqHealthSummary)
     events: EventProcessingStats = Field(default_factory=EventProcessingStats)
 
 
@@ -85,7 +77,6 @@ class HealthResponse(BaseModel):
 __all__ = [
     "AlertDeliveryStats",
     "DependencyHealth",
-    "DlqHealthSummary",
     "EventProcessingStats",
     "HealthMetrics",
     "HealthResponse",

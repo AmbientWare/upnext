@@ -59,9 +59,7 @@ DEFAULT_QUEUE_OUTBOX_SIZE = 10_000
 DEFAULT_QUEUE_FLUSH_INTERVAL_MS = 5.0
 DEFAULT_QUEUE_CLAIM_TIMEOUT_MS = 30_000
 DEFAULT_QUEUE_JOB_TTL_SECONDS = 86_400
-DEFAULT_QUEUE_RESULT_TTL_SECONDS = 3_600
 DEFAULT_QUEUE_STREAM_MAXLEN = 0
-DEFAULT_QUEUE_DLQ_STREAM_MAXLEN = 10_000
 
 
 @dataclass
@@ -276,9 +274,7 @@ class Worker:
             outbox_size=DEFAULT_QUEUE_OUTBOX_SIZE,
             flush_interval=DEFAULT_QUEUE_FLUSH_INTERVAL_MS / 1000,
             job_ttl_seconds=DEFAULT_QUEUE_JOB_TTL_SECONDS,
-            result_ttl_seconds=DEFAULT_QUEUE_RESULT_TTL_SECONDS,
             stream_maxlen=DEFAULT_QUEUE_STREAM_MAXLEN,
-            dlq_stream_maxlen=DEFAULT_QUEUE_DLQ_STREAM_MAXLEN,
         )
 
         # Connect task handles to queue
@@ -477,6 +473,7 @@ class Worker:
             await self._emit_status_event(
                 "record_job_started",
                 job.id,
+                job.key,
                 job.function,
                 job.function_name,
                 job.attempts,
@@ -486,8 +483,6 @@ class Worker:
                 source=job.source_data,
                 checkpoint=job.checkpoint,
                 checkpoint_at=job.checkpoint_at,
-                dlq_replayed_from=job.dlq_replayed_from,
-                dlq_failed_at=job.dlq_failed_at,
                 scheduled_at=job.scheduled_at,
                 queue_wait_ms=round(
                     max(

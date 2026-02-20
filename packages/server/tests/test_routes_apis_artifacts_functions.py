@@ -1106,31 +1106,3 @@ async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
     assert first["trends"]["hourly"][0]["success_2xx"] == 1
     assert second["type"] == "apis.trends.snapshot"
     assert second["trends"]["hourly"][0]["success_2xx"] == 2
-
-
-@pytest.mark.asyncio
-async def test_dlq_routes_map_non_runtime_redis_errors_to_503(monkeypatch) -> None:
-    """DLQ routes must catch any exception from the service layer — not just RuntimeError."""
-    import server.routes.dlq as dlq_route
-    import server.services.dlq as dlq_service
-
-    async def _raise_connection_error(*_args, **_kwargs):
-        raise ConnectionError("redis connection lost")
-
-    monkeypatch.setattr(dlq_service, "list_dead_letters", _raise_connection_error)
-    monkeypatch.setattr(dlq_service, "get_dlq_count", _raise_connection_error)
-    monkeypatch.setattr(dlq_service, "get_dead_letter_entry", _raise_connection_error)
-    monkeypatch.setattr(dlq_service, "delete_dead_letter", _raise_connection_error)
-    monkeypatch.setattr(dlq_service, "purge_dead_letters", _raise_connection_error)
-
-    with pytest.raises(HTTPException) as list_exc:
-        await dlq_route.list_function_dead_letters("fn.test", limit=10)
-    assert list_exc.value.status_code == 503
-
-    with pytest.raises(HTTPException) as delete_exc:
-        await dlq_route.delete_function_dead_letter("fn.test", "1234-0")
-    assert delete_exc.value.status_code == 503
-
-    with pytest.raises(HTTPException) as purge_exc:
-        await dlq_route.purge_function_dead_letters("fn.test")
-    assert purge_exc.value.status_code == 503

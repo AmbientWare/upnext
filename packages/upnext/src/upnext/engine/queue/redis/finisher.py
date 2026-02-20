@@ -8,7 +8,6 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from shared.domain import JobStatus
 from shared.keys import job_status_channel
 
 from upnext.engine.queue.redis.constants import CompletedJob
@@ -126,9 +125,8 @@ class Finisher:
                 if self._queue._finish_sha:
                     pipe.evalsha(
                         self._queue._finish_sha,
-                        6,
+                        5,
                         stream_key,
-                        self._queue._result_key(job.id),
                         self._queue._job_key(job),
                         self._queue._job_index_key(job.id),
                         self._queue._dedup_key(job.function),
@@ -136,7 +134,7 @@ class Finisher:
                         self._queue._consumer_group,
                         msg_id or "",
                         job.to_json(),
-                        str(self._queue._result_ttl_seconds),
+                        str(self._queue._job_ttl_seconds),
                         job.key or "",
                         completed.status.value,
                     )
@@ -145,29 +143,21 @@ class Finisher:
                     if msg_id:
                         pipe.xack(stream_key, self._queue._consumer_group, msg_id)
                     pipe.setex(
-                        self._queue._result_key(job.id),
-                        self._queue._result_ttl_seconds,
+                        self._queue._job_key(job),
+                        self._queue._job_ttl_seconds,
                         job.to_json().encode(),
                     )
-                    pipe.delete(self._queue._job_key(job))
-                    pipe.delete(self._queue._job_index_key(job.id))
+                    pipe.setex(
+                        self._queue._job_index_key(job.id),
+                        self._queue._job_ttl_seconds,
+                        self._queue._job_key(job),
+                    )
                     if job.key:
                         pipe.srem(self._queue._dedup_key(job.function), job.key)
                     pipe.publish(
                         job_status_channel(job.id),
                         completed.status.value,
                     )
-                if completed.status == JobStatus.FAILED:
-                    dlq_stream_key = self._queue._dlq_stream_key(job.function)
-                    dlq_payload = self._queue._dlq_payload(job, completed.error)
-                    if self._queue._dlq_stream_maxlen > 0:
-                        pipe.xadd(
-                            dlq_stream_key,
-                            dlq_payload,
-                            maxlen=self._queue._dlq_stream_maxlen,
-                        )
-                    else:
-                        pipe.xadd(dlq_stream_key, dlq_payload)
                 pipe.delete(self._queue._cancel_marker_key(job.id))
 
             await pipe.execute()

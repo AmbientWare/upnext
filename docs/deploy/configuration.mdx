@@ -25,14 +25,13 @@ UpNext is configured via environment variables with the `UPNEXT_` prefix. All se
 
 ## Queue tuning
 
-Queue behavior is configured in Python via `WorkerProfile` — see [Workers: Queue tuning](/concepts/workers#queue-tuning) for details.
+Queue behavior can be tuned with environment variables.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `UPNEXT_QUEUE_JOB_TTL_SECONDS` | `86400` | Job data TTL (24 hours) |
-| `UPNEXT_QUEUE_RESULT_TTL_SECONDS` | `3600` | Result data TTL (1 hour) |
 | `UPNEXT_QUEUE_CLAIM_TIMEOUT_MS` | `30000` | Job claim timeout (30 seconds) |
-| `UPNEXT_QUEUE_DLQ_STREAM_MAXLEN` | `10000` | Dead-letter queue stream max length |
+| `UPNEXT_QUEUE_DISPATCH_EVENTS_STREAM_MAXLEN` | `10000` | Dispatch diagnostics stream max length |
 
 ## Status stream settings
 

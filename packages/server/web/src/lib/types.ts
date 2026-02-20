@@ -52,6 +52,7 @@ export type JobSource = TaskJobSource | CronJobSource | EventJobSource;
 
 export interface Job {
   id: string;
+  job_key: string;
   function: string;
   function_name: string;
   job_type: JobType;
@@ -71,8 +72,6 @@ export interface Job {
   kwargs: Record<string, unknown>;
   checkpoint: Record<string, unknown> | null;
   checkpoint_at: string | null;
-  dlq_replayed_from: string | null;
-  dlq_failed_at: string | null;
   result: unknown;
   error: string | null;
   duration_ms: number | null;

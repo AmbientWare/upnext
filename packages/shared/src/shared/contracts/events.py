@@ -28,6 +28,7 @@ class JobStartedEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     job_id: str = Field(min_length=1)
+    job_key: str = Field(min_length=1)
     function: str = Field(min_length=1)
     function_name: str = Field(min_length=1)
     parent_id: str | None = None
@@ -36,8 +37,6 @@ class JobStartedEvent(BaseModel):
     source: JobSource = Field(default_factory=TaskJobSource)
     checkpoint: dict[str, Any] | None = None
     checkpoint_at: str | None = None
-    dlq_replayed_from: str | None = None
-    dlq_failed_at: str | None = None
     scheduled_at: datetime | None = None
     queue_wait_ms: float | None = Field(default=None, ge=0)
     attempt: int = Field(default=1, ge=1)

@@ -71,6 +71,26 @@ def upgrade() -> None:
         sa.Index("ix_api_keys_key_hash", "key_hash"),
     )
 
+    op.create_table(
+        "secrets",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column("name", sa.String(255), unique=True, nullable=False),
+        sa.Column("encrypted_data", sa.Text, nullable=False),
+        sa.Index("ix_secrets_name", "name"),
+    )
+
     # Job tables
     op.create_table(
         "job_history",
@@ -90,6 +110,7 @@ def upgrade() -> None:
         # Job identity
         sa.Column("function", sa.String(255), nullable=False),
         sa.Column("function_name", sa.String(255), nullable=False),
+        sa.Column("job_key", sa.String(255), nullable=False),
         sa.Column("job_type", sa.String(20), nullable=False, server_default="task"),
         # Status
         sa.Column("status", sa.String(20), nullable=False),
@@ -115,8 +136,6 @@ def upgrade() -> None:
         sa.Column("startup_policy", sa.String(32), nullable=True),
         sa.Column("checkpoint", sa.JSON, nullable=True),
         sa.Column("checkpoint_at", sa.String(64), nullable=True),
-        sa.Column("dlq_replayed_from", sa.String(64), nullable=True),
-        sa.Column("dlq_failed_at", sa.String(64), nullable=True),
         sa.Column("event_pattern", sa.String(255), nullable=True),
         sa.Column("event_handler_name", sa.String(255), nullable=True),
         sa.Column("result", sa.JSON, nullable=True),
@@ -124,6 +143,7 @@ def upgrade() -> None:
         # Single-column indexes
         sa.Index("ix_job_history_function", "function"),
         sa.Index("ix_job_history_function_name", "function_name"),
+        sa.Index("ix_job_history_job_key", "job_key"),
         sa.Index("ix_job_history_job_type", "job_type"),
         sa.Index("ix_job_history_status", "status"),
         sa.Index("ix_job_history_created_at", "created_at"),
@@ -218,5 +238,6 @@ def downgrade() -> None:
     op.drop_table("pending_artifacts")
     op.drop_table("artifacts")
     op.drop_table("job_history")
+    op.drop_table("secrets")
     op.drop_table("api_keys")
     op.drop_table("users")

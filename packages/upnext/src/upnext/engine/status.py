@@ -366,6 +366,7 @@ class StatusPublisher:
     async def record_job_started(
         self,
         job_id: str,
+        job_key: str,
         function: str,
         function_name: str,
         attempt: int,
@@ -375,8 +376,6 @@ class StatusPublisher:
         source: dict[str, Any] | None = None,
         checkpoint: dict[str, Any] | None = None,
         checkpoint_at: str | None = None,
-        dlq_replayed_from: str | None = None,
-        dlq_failed_at: str | None = None,
         scheduled_at: datetime | None = None,
         queue_wait_ms: float | None = None,
     ) -> None:
@@ -384,6 +383,7 @@ class StatusPublisher:
         await self.record(
             "job.started",
             job_id,
+            job_key=job_key,
             function=function,
             function_name=function_name,
             parent_id=parent_id,
@@ -391,8 +391,6 @@ class StatusPublisher:
             source=source or {"type": "task"},
             checkpoint=checkpoint,
             checkpoint_at=checkpoint_at,
-            dlq_replayed_from=dlq_replayed_from,
-            dlq_failed_at=dlq_failed_at,
             scheduled_at=scheduled_at.isoformat() if scheduled_at else None,
             queue_wait_ms=queue_wait_ms,
             attempt=attempt,

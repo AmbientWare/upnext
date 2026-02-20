@@ -8,6 +8,7 @@ import { JobsTable } from "./jobs-table";
 function mkJob(id: string): Job {
   return {
     id,
+    job_key: id,
     function: "fn.key",
     function_name: "my_task",
     job_type: "task",
@@ -27,8 +28,6 @@ function mkJob(id: string): Job {
     kwargs: {},
     checkpoint: null,
     checkpoint_at: null,
-    dlq_replayed_from: null,
-    dlq_failed_at: null,
     result: null,
     error: null,
     duration_ms: null,

@@ -16,7 +16,7 @@ from shared.contracts import (
     JobTrendHour,
     JobTrendsResponse,
 )
-from shared.domain import JobStatus
+from shared.domain import CronSource, EventSource, Job, JobStatus, TaskSource
 from shared.keys import EVENTS_STREAM
 
 from server.db.repositories import JobHourlyTrendRow, JobRepository
@@ -39,6 +39,52 @@ router = APIRouter(tags=["jobs"])
 
 VALID_STATUSES = {s.value for s in JobStatus}
 STATUS_STREAM_MAXLEN = 50_000
+
+
+def _history_row_to_runtime_job(row: Any) -> Job:
+    source_data = row.source
+    source: TaskSource | CronSource | EventSource
+    source_type = str(getattr(source_data, "type", "task"))
+    if source_type == "cron":
+        source = CronSource(
+            schedule=getattr(source_data, "schedule"),
+            cron_window_at=getattr(source_data, "cron_window_at", None),
+            startup_reconciled=bool(
+                getattr(source_data, "startup_reconciled", False)
+            ),
+            startup_policy=getattr(source_data, "startup_policy", None),
+        )
+    elif source_type == "event":
+        source = EventSource(
+            event_pattern=getattr(source_data, "event_pattern"),
+            event_handler_name=getattr(source_data, "event_handler_name"),
+        )
+    else:
+        source = TaskSource()
+
+    return Job(
+        id=row.id,
+        key=getattr(row, "job_key", row.id) or row.id,
+        function=row.function,
+        function_name=row.function_name,
+        kwargs=dict(row.kwargs or {}),
+        status=JobStatus(row.status),
+        scheduled_at=row.scheduled_at or datetime.now(UTC),
+        started_at=row.started_at,
+        completed_at=row.completed_at,
+        timeout=row.timeout,
+        attempts=int(row.attempts or 0),
+        max_retries=int(row.max_retries or 0),
+        worker_id=row.worker_id,
+        parent_id=row.parent_id,
+        root_id=row.root_id or row.id,
+        progress=float(row.progress or 0.0),
+        source=source,
+        checkpoint=row.checkpoint,
+        checkpoint_at=row.checkpoint_at,
+        result=row.result,
+        error=row.error,
+    )
 
 
 @router.get("", response_model=JobListResponse)
@@ -350,16 +396,23 @@ async def cancel_job_route(job_id: str) -> JobCancelResponse:
 
 
 @router.post("/{job_id}/retry", response_model=JobRetryResponse)
-async def retry_job(job_id: str) -> JobRetryResponse:
+async def retry_job(
+    job_id: str,
+    db: Database = Depends(require_database),
+) -> JobRetryResponse:
     """Retry a failed job."""
     try:
         redis_client = await get_redis()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    job, _ = await load_job(redis_client, job_id)
-    if job is None:
+    async with db.session() as session:
+        repo = JobRepository(session)
+        row = await repo.get_by_id(job_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _history_row_to_runtime_job(row)
 
     if job.status not in {JobStatus.FAILED, JobStatus.CANCELLED}:
         raise HTTPException(

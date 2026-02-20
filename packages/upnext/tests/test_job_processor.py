@@ -12,6 +12,14 @@ from upnext.engine.job_processor import JobProcessor
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.registry import Registry
 from upnext.sdk.context import get_current_context
+from upnext.types import SyncExecutor
+
+
+def _process_sleep_task(delay: float = 0.2) -> str:
+    import time
+
+    time.sleep(delay)
+    return "ok"
 
 
 @dataclass
@@ -77,6 +85,7 @@ class _StatusRecorder:
     async def record_job_started(
         self,
         job_id: str,
+        job_key: str,
         function: str,
         function_name: str,
         attempt: int,
@@ -86,20 +95,24 @@ class _StatusRecorder:
         source: dict[str, Any] | None = None,
         checkpoint: dict[str, Any] | None = None,
         checkpoint_at: str | None = None,
-        dlq_replayed_from: str | None = None,
-        dlq_failed_at: str | None = None,
         scheduled_at: datetime | None = None,
         queue_wait_ms: float | None = None,
     ) -> None:
-        _ = (function, function_name, attempt, max_retries, root_id, parent_id)
+        _ = (
+            function,
+            function_name,
+            attempt,
+            max_retries,
+            root_id,
+            parent_id,
+            job_key,
+        )
         self.started.append(
             {
                 "job_id": job_id,
                 "source": source,
                 "checkpoint": checkpoint,
                 "checkpoint_at": checkpoint_at,
-                "dlq_replayed_from": dlq_replayed_from,
-                "dlq_failed_at": dlq_failed_at,
                 "scheduled_at": scheduled_at,
                 "queue_wait_ms": queue_wait_ms,
             }
@@ -629,6 +642,72 @@ async def test_process_one_exposes_cooperative_cancellation_flag() -> None:
     try:
         await processor._process_one()  # noqa: SLF001
         assert queue.finished == [(job.id, JobStatus.COMPLETE, "cancelled", None)]
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_process_executor_timeout_hard_stops_and_marks_failed() -> None:
+    registry = Registry()
+    registry.register_task("task_key", _process_sleep_task)
+
+    job = Job(
+        function="task_key",
+        function_name="task",
+        kwargs={"delay": 0.5},
+        timeout=0.05,
+    )
+    queue = _SingleJobQueue(job=job)
+    processor = JobProcessor(
+        queue=cast(BaseQueue, queue),
+        registry=registry,
+        sync_executor=SyncExecutor.PROCESS,
+    )
+
+    try:
+        started = asyncio.get_running_loop().time()
+        await processor._process_one()  # noqa: SLF001
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert elapsed < 1.0
+        assert len(queue.finished) == 1
+        _job_id, status, _result, error = queue.finished[0]
+        assert status == JobStatus.FAILED
+        assert error is not None
+        assert "timed out after 0.05s" in error
+    finally:
+        processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_process_executor_cancelled_mid_flight_marks_cancelled() -> None:
+    registry = Registry()
+    registry.register_task("task_key", _process_sleep_task)
+
+    job = Job(
+        function="task_key",
+        function_name="task",
+        kwargs={"delay": 2.0},
+    )
+    queue = _CooperativeCancelQueue(job=job)
+    processor = JobProcessor(
+        queue=cast(BaseQueue, queue),
+        registry=registry,
+        sync_executor=SyncExecutor.PROCESS,
+    )
+
+    try:
+        started = asyncio.get_running_loop().time()
+        await processor._process_one()  # noqa: SLF001
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert elapsed < 1.5
+        assert queue.cancel_checks >= 2
+        assert len(queue.finished) == 1
+        _job_id, status, _result, error = queue.finished[0]
+        assert status == JobStatus.CANCELLED
+        assert error is not None
+        assert "Cancelled during execution" in error
     finally:
         processor._sync_pool.shutdown(wait=False)  # noqa: SLF001
 

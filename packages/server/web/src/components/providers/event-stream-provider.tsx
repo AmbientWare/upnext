@@ -238,6 +238,7 @@ function createJobFromPatch(patch: Partial<Job> & { id: string }): Job {
   const status = patch.status ?? "active";
   return {
     id: patch.id,
+    job_key: patch.job_key ?? patch.id,
     function: patch.function ?? "",
     function_name: patch.function_name ?? patch.function ?? "",
     job_type: jobType,
@@ -257,8 +258,6 @@ function createJobFromPatch(patch: Partial<Job> & { id: string }): Job {
     kwargs: patch.kwargs ?? {},
     checkpoint: patch.checkpoint ?? null,
     checkpoint_at: patch.checkpoint_at ?? null,
-    dlq_replayed_from: patch.dlq_replayed_from ?? null,
-    dlq_failed_at: patch.dlq_failed_at ?? null,
     result: patch.result ?? null,
     error: patch.error ?? null,
     duration_ms: patch.duration_ms ?? null,

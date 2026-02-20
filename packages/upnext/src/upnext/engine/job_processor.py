@@ -14,7 +14,6 @@ import asyncio
 import contextlib
 import logging
 import multiprocessing
-import os
 import queue as thread_queue
 import signal
 import threading
@@ -22,7 +21,7 @@ import time
 import traceback as tb
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
@@ -55,6 +54,42 @@ def _run_sync_task_with_context(
         return func(**kwargs)
     finally:
         set_current_context(None)
+
+
+class _ProcessTaskCancelledError(Exception):
+    """Raised when a process-mode task is externally cancelled during execution."""
+
+
+def _run_sync_task_in_subprocess(
+    func: Callable[..., Any],
+    kwargs: dict[str, Any],
+    ctx: Context,
+    result_queue: Any,
+) -> None:
+    """Execute a sync task in a subprocess and publish terminal payload to queue."""
+    set_current_context(ctx)
+    try:
+        result = func(**kwargs)
+        result_queue.put(("ok", result, ""))
+    except Exception as exc:
+        result_queue.put(("error", str(exc), tb.format_exc()))
+    finally:
+        set_current_context(None)
+
+
+def _read_process_result_with_timeout(
+    result_queue: Any,
+    timeout_seconds: float,
+) -> tuple[bool, tuple[str, Any, str]]:
+    """Read one process result tuple with timeout, returning (received, payload)."""
+    try:
+        payload = result_queue.get(timeout=max(0.001, timeout_seconds))
+        if isinstance(payload, tuple) and len(payload) == 3:
+            status, value, trace_text = payload
+            return True, (str(status), value, str(trace_text))
+        return True, ("error", "Invalid process payload", "")
+    except thread_queue.Empty:
+        return False, ("", None, "")
 
 
 class JobProcessor:
@@ -118,18 +153,17 @@ class JobProcessor:
         self._status_buffer = status_buffer
         self._status_flush_timeout_seconds = max(0.1, status_flush_timeout_seconds)
         self._handle_signals = handle_signals
+        self._sync_executor = sync_executor
 
         # Worker identity
         self._worker_id = f"worker_{uuid.uuid4().hex[:8]}"
 
-        # Executor pool for sync functions
-        if sync_executor == SyncExecutor.PROCESS:
-            self._sync_pool = ProcessPoolExecutor(max_workers=os.cpu_count() or 4)
-        else:
-            self._sync_pool = ThreadPoolExecutor(
-                max_workers=concurrency,
-                thread_name_prefix="upnext-worker-",
-            )
+        # Thread pool is used for async bridges and sync hooks.
+        # Sync task execution in process mode uses dedicated subprocesses.
+        self._sync_pool = ThreadPoolExecutor(
+            max_workers=concurrency,
+            thread_name_prefix="upnext-worker-",
+        )
 
         # Active processor tasks
         self._tasks: set[asyncio.Task[None]] = set()
@@ -439,6 +473,7 @@ class JobProcessor:
             await self._emit_status_event(
                 "record_job_started",
                 job.id,
+                job.key,
                 job.function,
                 job.function_name,
                 job.attempts,
@@ -448,8 +483,6 @@ class JobProcessor:
                 source=job.source_data,
                 checkpoint=job.checkpoint,
                 checkpoint_at=job.checkpoint_at,
-                dlq_replayed_from=job.dlq_replayed_from,
-                dlq_failed_at=job.dlq_failed_at,
                 scheduled_at=job.scheduled_at,
                 queue_wait_ms=queue_wait_ms,
             )
@@ -461,6 +494,8 @@ class JobProcessor:
                 result = await self._execute_job(job, task_def)
                 duration_ms = (time.time() - start_time) * 1000
                 await self._handle_success(job, task_def, result, duration_ms)
+            except _ProcessTaskCancelledError as exc:
+                await self._handle_cancellation(job, str(exc))
             except Exception as e:
                 await self._handle_failure(job, task_def, e)
             finally:
@@ -524,7 +559,11 @@ class JobProcessor:
         drain: asyncio.Task[None] | None = None
         lazy_cmd_queue: _LazyCommandQueue | None = None
 
-        if not task_def.is_async and isinstance(self._sync_pool, ProcessPoolExecutor):
+        process_mode_sync = (
+            not task_def.is_async and self._sync_executor == SyncExecutor.PROCESS
+        )
+
+        if process_mode_sync:
             # Process workers must receive a real multiprocessing.Queue.
             cmd_queue = cast(CommandQueueLike, multiprocessing.Queue())
             drain = asyncio.create_task(
@@ -543,7 +582,7 @@ class JobProcessor:
 
         poll_interval = 0.25 if (job.timeout or task_def.timeout or 0) <= 10 else 1.0
         cancel_poll: asyncio.Task[None] | None = None
-        if not isinstance(self._sync_pool, ProcessPoolExecutor):
+        if not process_mode_sync:
             cancel_poll = asyncio.create_task(
                 self._poll_job_cancellation(
                     job,
@@ -560,6 +599,13 @@ class JobProcessor:
             if task_def.is_async:
                 # Async function - call directly
                 result = await task_def.func(**kwargs)
+            elif process_mode_sync:
+                result = await self._run_sync_function_subprocess(
+                    task_def,
+                    kwargs,
+                    ctx,
+                    job,
+                )
             else:
                 # Sync function - run in thread/process pool
                 loop = asyncio.get_running_loop()
@@ -589,6 +635,88 @@ class JobProcessor:
             # Clear context
             set_current_context(None)
 
+    async def _run_sync_function_subprocess(
+        self,
+        task_def: TaskDefinition,
+        kwargs: dict[str, Any],
+        ctx: "Context",
+        job: Job,
+    ) -> Any:
+        """Execute a sync task in an isolated subprocess with hard-stop controls."""
+        result_queue: Any = multiprocessing.Queue()
+        process = multiprocessing.Process(
+            target=_run_sync_task_in_subprocess,
+            args=(task_def.func, kwargs, ctx, result_queue),
+            daemon=True,
+        )
+        process.start()
+
+        loop = asyncio.get_running_loop()
+        poll_interval = 0.25 if (job.timeout or task_def.timeout or 0) <= 10 else 1.0
+
+        try:
+            while True:
+                received, payload = await loop.run_in_executor(
+                    self._sync_pool,
+                    _read_process_result_with_timeout,
+                    result_queue,
+                    poll_interval,
+                )
+                if received:
+                    status, value, trace_text = payload
+                    if status == "ok":
+                        return value
+                    if trace_text:
+                        raise RuntimeError(f"{value}\n{trace_text}")
+                    raise RuntimeError(str(value))
+
+                is_cancelled = False
+                try:
+                    is_cancelled = await self._queue.is_cancelled(job.id)
+                except AttributeError:
+                    is_cancelled = False
+                except Exception:
+                    is_cancelled = False
+
+                if is_cancelled:
+                    self._terminate_subprocess(process)
+                    raise _ProcessTaskCancelledError(
+                        f"Cancelled during execution: job {job.id}"
+                    )
+
+                if not process.is_alive():
+                    # Process exited without posting a result payload.
+                    raise RuntimeError(
+                        f"Process exited before returning a result for job {job.id}"
+                    )
+        except asyncio.CancelledError:
+            self._terminate_subprocess(process)
+            raise
+        finally:
+            self._terminate_subprocess(process)
+            with contextlib.suppress(Exception):
+                result_queue.close()
+            with contextlib.suppress(Exception):
+                result_queue.join_thread()
+
+    def _terminate_subprocess(self, process: multiprocessing.Process) -> None:
+        """Best-effort hard-stop for a subprocess."""
+        if not process.is_alive():
+            with contextlib.suppress(Exception):
+                process.join(timeout=0.05)
+            return
+
+        with contextlib.suppress(Exception):
+            process.terminate()
+        with contextlib.suppress(Exception):
+            process.join(timeout=0.5)
+
+        if process.is_alive():
+            with contextlib.suppress(Exception):
+                process.kill()
+            with contextlib.suppress(Exception):
+                process.join(timeout=0.5)
+
     async def _poll_job_cancellation(
         self,
         job: Job,
@@ -599,11 +727,6 @@ class JobProcessor:
         initial_delay_seconds: float = 0.0,
     ) -> None:
         """Set context cancellation flag when external cancellation is requested."""
-        # Process pool tasks run in a separate process and receive a copy of Context,
-        # so cancellation flag updates here cannot be observed there.
-        if isinstance(self._sync_pool, ProcessPoolExecutor):
-            return
-
         current_interval = max(0.1, interval_seconds)
         delay = max(0.0, initial_delay_seconds)
         if delay > 0:
@@ -618,6 +741,27 @@ class JobProcessor:
                 return
             await asyncio.sleep(current_interval)
             current_interval = min(max_interval_seconds, current_interval * 1.5)
+
+    async def _handle_cancellation(self, job: Job, reason: str) -> None:
+        """Handle a job cancelled during execution (mid-flight revoke)."""
+        job.failure_reason = FailureReason.CANCELLED
+
+        await self._queue.record_dispatch_reason(
+            job.function,
+            DispatchReason.CANCELLED,
+            job_id=job.id,
+        )
+        await self._emit_status_event(
+            "record_job_cancelled",
+            job.id,
+            job.function,
+            job.function_name,
+            job.root_id,
+            attempt=job.attempts,
+            parent_id=job.parent_id,
+            reason=reason,
+        )
+        await self._queue.finish(job, JobStatus.CANCELLED, error=reason)
 
     async def _call_hook(
         self,

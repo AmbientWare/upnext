@@ -7,6 +7,7 @@ import { JobDetailsPanel } from "./job-details-panel";
 function mkJob(): Job {
   return {
     id: "job-details-1",
+    job_key: "job-details-1",
     function: "fn.long",
     function_name: "fn.long",
     job_type: "task",
@@ -31,8 +32,6 @@ function mkJob(): Job {
         "upnext:fn:very_long_function_name:stream:with:extra:segments:that:force:horizontal:overflow",
     },
     checkpoint_at: "2026-02-08T10:00:05Z",
-    dlq_replayed_from: null,
-    dlq_failed_at: null,
     result: null,
     error: null,
     duration_ms: 9000,

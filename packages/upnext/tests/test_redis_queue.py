@@ -35,7 +35,7 @@ async def test_enqueue_duplicate_job_key_raises(queue: RedisQueue) -> None:
 
 
 @pytest.mark.asyncio
-async def test_queue_lifecycle_enqueue_dequeue_finish_cleans_keys(
+async def test_queue_lifecycle_enqueue_dequeue_finish_persists_terminal_payload(
     queue: RedisQueue,
 ) -> None:
     job = Job(function="task_fn", function_name="task", key="job-key-1")
@@ -48,14 +48,12 @@ async def test_queue_lifecycle_enqueue_dequeue_finish_cleans_keys(
     await queue.finish(active, JobStatus.COMPLETE, result={"ok": True})
 
     client = await queue._ensure_connected()  # noqa: SLF001
-    result_data = await client.get(queue._result_key(job.id))  # noqa: SLF001
     job_data = await client.get(queue._job_key(job))  # noqa: SLF001
     index_data = await client.get(queue._job_index_key(job.id))  # noqa: SLF001
     dedup_exists = await client.sismember(queue._dedup_key(job.function), job.key)  # noqa: SLF001
 
-    assert result_data is not None
-    assert job_data is None
-    assert index_data is None
+    assert job_data is not None
+    assert index_data is not None
     assert dedup_exists == 0
 
 
@@ -173,7 +171,7 @@ async def test_cancel_terminal_job_returns_false(queue: RedisQueue) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_does_not_override_existing_terminal_result(
+async def test_cancel_does_not_override_existing_terminal_payload(
     queue: RedisQueue,
 ) -> None:
     job = Job(function="task_fn", function_name="task", key="cancel-race-key")
@@ -188,9 +186,14 @@ async def test_cancel_does_not_override_existing_terminal_result(
     )
     completed.mark_complete({"ok": True})
     await client.setex(
-        queue._result_key(job.id),  # noqa: SLF001
-        queue._result_ttl_seconds,  # noqa: SLF001
+        queue._job_key(job),  # noqa: SLF001
+        queue._job_ttl_seconds,  # noqa: SLF001
         completed.to_json().encode(),
+    )
+    await client.setex(
+        queue._job_index_key(job.id),  # noqa: SLF001
+        queue._job_ttl_seconds,  # noqa: SLF001
+        queue._job_key(job),  # noqa: SLF001
     )
 
     assert await queue.cancel(job.id) is False
@@ -224,9 +227,14 @@ async def test_cancel_does_not_clear_existing_cancel_marker_on_race(
     )
     completed.mark_complete({"ok": True})
     await client.setex(
-        queue._result_key(job.id),  # noqa: SLF001
-        queue._result_ttl_seconds,  # noqa: SLF001
+        queue._job_key(job),  # noqa: SLF001
+        queue._job_ttl_seconds,  # noqa: SLF001
         completed.to_json().encode(),
+    )
+    await client.setex(
+        queue._job_index_key(job.id),  # noqa: SLF001
+        queue._job_ttl_seconds,  # noqa: SLF001
+        queue._job_key(job),  # noqa: SLF001
     )
 
     assert await queue.cancel(job.id) is False
@@ -392,53 +400,35 @@ async def test_default_stream_maxlen_does_not_trim_unconsumed_jobs(queue: RedisQ
 
 
 @pytest.mark.asyncio
-async def test_failed_job_moves_to_dead_letter_and_can_be_replayed(
-    queue: RedisQueue,
-) -> None:
-    job = Job(function="task_fn", function_name="task", key="dlq-key-1")
+async def test_failed_job_persists_on_job_key_for_retry(queue: RedisQueue) -> None:
+    job = Job(function="task_fn", function_name="task", key="failed-key-1")
     await queue.enqueue(job)
 
     active = await queue.dequeue(["task_fn"], timeout=0.2)
     assert active is not None
     await queue.finish(active, JobStatus.FAILED, error="poison payload")
 
-    dead_letters = await queue.get_dead_letters("task_fn", limit=10)
-    assert len(dead_letters) == 1
-    entry = dead_letters[0]
-    assert entry.job.id == job.id
-    assert entry.reason == "poison payload"
-
-    replayed_job_id = await queue.replay_dead_letter("task_fn", entry.entry_id)
-    assert replayed_job_id is not None
-    assert replayed_job_id != job.id
-
-    replayed = await queue.dequeue(["task_fn"], timeout=0.2)
-    assert replayed is not None
-    assert replayed.id == replayed_job_id
-    assert replayed.dlq_replayed_from == entry.entry_id
-
-    assert await queue.get_dead_letters("task_fn", limit=10) == []
+    stored = await queue.get_job(job.id)
+    assert stored is not None
+    assert stored.status == JobStatus.FAILED
+    assert stored.error == "poison payload"
 
 
 @pytest.mark.asyncio
-async def test_replay_dead_letter_rejects_duplicate_active_key(queue: RedisQueue) -> None:
-    first = Job(function="task_fn", function_name="task", key="dlq-dup-key")
+async def test_manual_retry_rejects_duplicate_active_key(queue: RedisQueue) -> None:
+    first = Job(function="task_fn", function_name="task", key="retry-dup-key")
     await queue.enqueue(first)
     active = await queue.dequeue(["task_fn"], timeout=0.2)
     assert active is not None
     await queue.finish(active, JobStatus.FAILED, error="failed")
 
-    entry = (await queue.get_dead_letters("task_fn", limit=1))[0]
-
-    blocking = Job(function="task_fn", function_name="task", key="dlq-dup-key")
+    blocking = Job(function="task_fn", function_name="task", key="retry-dup-key")
     await queue.enqueue(blocking)
 
+    failed = await queue.get_job(first.id)
+    assert failed is not None
     with pytest.raises(DuplicateJobError):
-        await queue.replay_dead_letter("task_fn", entry.entry_id)
-
-    # Replay failed and entry should remain for future manual handling.
-    remaining = await queue.get_dead_letters("task_fn", limit=10)
-    assert len(remaining) == 1
+        await queue.manual_retry(failed)
 
 
 @pytest.mark.asyncio

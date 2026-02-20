@@ -197,9 +197,7 @@ def test_worker_uses_fixed_queue_tuning(fake_redis, monkeypatch) -> None:
     assert queue._flush_interval == 0.005  # noqa: SLF001
     assert queue._claim_timeout_ms == 30_000  # noqa: SLF001
     assert queue._job_ttl_seconds == 86_400  # noqa: SLF001
-    assert queue._result_ttl_seconds == 3_600  # noqa: SLF001
     assert queue._stream_maxlen == 0  # noqa: SLF001
-    assert queue._dlq_stream_maxlen == 10_000  # noqa: SLF001
 
 
 def test_worker_rejects_profile_constructor_arg() -> None:

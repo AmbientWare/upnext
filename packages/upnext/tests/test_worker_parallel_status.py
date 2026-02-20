@@ -145,6 +145,7 @@ async def test_status_publisher_records_required_job_fields(fake_redis) -> None:
 
     await publisher.record_job_started(
         job_id="job-1",
+        job_key="job-1",
         function="task_key",
         function_name="task_name",
         attempt=1,
@@ -183,6 +184,7 @@ async def test_status_publisher_writes_lineage_for_all_lifecycle_events(
 
     await publisher.record_job_started(
         job_id="job-2",
+        job_key="job-2",
         function="task_key",
         function_name="task_name",
         attempt=1,
