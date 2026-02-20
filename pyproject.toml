@@ -1,6 +1,6 @@
 [project]
 name = "upnext-workspace"
-version = "0.0.3"
+version = "0.0.4"
 description = "UpNext - Modal-inspired task queue and API framework"
 readme = "README.md"
 requires-python = ">=3.12"
