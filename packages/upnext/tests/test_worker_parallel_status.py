@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
+from shared.keys import EVENTS_STREAM
 from shared.domain.jobs import Job, JobStatus
 from upnext.engine.queue.base import BaseQueue
 from upnext.engine.status import StatusPublisher, StatusPublisherConfig
@@ -61,10 +62,38 @@ async def test_worker_rejects_duplicate_task_names() -> None:
     assert "same" in worker.tasks
 
 
+def test_worker_task_rejects_empty_name() -> None:
+    worker = Worker(name="empty-task-name-worker")
+    with pytest.raises(ValueError, match="Task name must be a non-empty string"):
+
+        @worker.task(name="   ")
+        async def sample() -> int:  # pragma: no cover - registration path only
+            return 1
+
+
+def test_worker_cron_rejects_empty_name() -> None:
+    worker = Worker(name="empty-cron-name-worker")
+    with pytest.raises(ValueError, match="Cron name must be a non-empty string"):
+
+        @worker.cron("* * * * *", name="   ")
+        async def sample() -> None:  # pragma: no cover - registration path only
+            return None
+
+
 def test_worker_event_reuses_existing_handle_for_pattern() -> None:
     worker = Worker(name="event-dedupe-worker")
 
     first = worker.event("order.created")
+    second = worker.event("order.created")
+
+    assert first is second
+    assert worker.events["order.created"] is first
+
+
+def test_worker_event_normalizes_pattern_whitespace() -> None:
+    worker = Worker(name="event-normalize-worker")
+
+    first = worker.event(" order.created ")
     second = worker.event("order.created")
 
     assert first is second
@@ -134,7 +163,7 @@ async def test_status_publisher_records_required_job_fields(fake_redis) -> None:
         duration_ms=12.5,
     )
 
-    rows = await fake_redis.xrange("upnext:status:events", count=10)
+    rows = await fake_redis.xrange(EVENTS_STREAM, count=10)
     assert len(rows) == 2
 
     started_payload = rows[0][1]
@@ -206,7 +235,7 @@ async def test_status_publisher_writes_lineage_for_all_lifecycle_events(
         reason="cancelled",
     )
 
-    rows = await fake_redis.xrange("upnext:status:events", count=20)
+    rows = await fake_redis.xrange(EVENTS_STREAM, count=20)
     assert len(rows) == 6
 
     payloads = [row[1] for row in rows]
@@ -346,7 +375,7 @@ async def test_status_publisher_uses_durable_fallback_and_flushes_on_next_record
     await publisher.record("job.progress", "job-2", progress=0.2)
     assert await fake_redis.llen(durable_key) == 0
 
-    rows = await fake_redis.xrange("upnext:status:events", count=10)
+    rows = await fake_redis.xrange(EVENTS_STREAM, count=10)
     assert len(rows) == 2
     assert rows[0][1][b"job_id"] == b"job-1"
     assert rows[1][1][b"job_id"] == b"job-2"
@@ -386,6 +415,6 @@ async def test_status_publisher_close_flushes_durable_buffer(
     await publisher.close(timeout_seconds=1.0)
 
     assert await fake_redis.llen(durable_key) == 0
-    rows = await fake_redis.xrange("upnext:status:events", count=10)
+    rows = await fake_redis.xrange(EVENTS_STREAM, count=10)
     assert len(rows) == 1
     assert rows[0][1][b"job_id"] == b"job-close-1"

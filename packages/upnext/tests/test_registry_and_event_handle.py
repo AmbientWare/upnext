@@ -87,6 +87,42 @@ def test_registry_matches_event_patterns_and_clears_state() -> None:
     assert registry.apps == {}
 
 
+def test_registry_event_validation_rejects_empty_pattern_and_duplicate_key() -> None:
+    registry = Registry()
+
+    async def handler(**kwargs: Any) -> None:
+        return None
+
+    with pytest.raises(ValueError, match="non-empty pattern"):
+        registry.register_event(
+            key="evt-empty",
+            display_name="evt",
+            func=handler,
+            event="   ",
+        )
+    with pytest.raises(ValueError, match="display_name must be a non-empty string"):
+        registry.register_event(
+            key="evt-empty-name",
+            display_name="   ",
+            func=handler,
+            event="user.created",
+        )
+
+    registry.register_event(
+        key="evt-ok",
+        display_name="evt ok",
+        func=handler,
+        event="user.created",
+    )
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register_event(
+            key="evt-ok",
+            display_name="evt duplicate",
+            func=handler,
+            event="user.updated",
+        )
+
+
 def test_registry_cron_and_app_constraints() -> None:
     registry = Registry()
 

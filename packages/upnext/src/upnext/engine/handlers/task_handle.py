@@ -44,6 +44,7 @@ class TaskHandle(Generic[P, T]):
         self.definition = definition
         self._worker = _worker
         self._queue = _queue
+        self._signature = inspect.signature(func)
         # Copy function metadata for better IDE support
         self.__name__ = func.__name__
         self.__doc__ = func.__doc__
@@ -226,15 +227,9 @@ class TaskHandle(Generic[P, T]):
     def _merge_args_kwargs(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> dict[str, Any]:
-        """Merge positional args into kwargs based on function signature."""
-        sig = inspect.signature(self.func)
-        params = list(sig.parameters.keys())
-        # Convert positional args to kwargs
-        merged = dict(kwargs)
-        for i, arg in enumerate(args):
-            if i < len(params):
-                merged[params[i]] = arg
-        return merged
+        """Validate and normalize call arguments using Python call semantics."""
+        bound = self._signature.bind(*args, **kwargs)
+        return dict(bound.arguments)
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Any:
         """Direct call - execute inline (for testing/debugging).

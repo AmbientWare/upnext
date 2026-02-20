@@ -109,7 +109,10 @@ class WorkerRegistration:
         """Register a task. Returns a TaskHandle with typed .submit()/.wait()."""
 
         def decorator(fn: Callable[..., Any]) -> TaskHandle[Any, Any]:
-            task_name = name or fn.__name__
+            raw_task_name = name or fn.__name__
+            task_name = raw_task_name.strip()
+            if not task_name:
+                raise ValueError("Task name must be a non-empty string")
             function_key = build_function_key(
                 "task",
                 module=fn.__module__,
@@ -169,7 +172,10 @@ class WorkerRegistration:
         """Register a cron job."""
 
         def decorator(func: F) -> F:
-            cron_name = name or func.__name__
+            raw_cron_name = name or func.__name__
+            cron_name = raw_cron_name.strip()
+            if not cron_name:
+                raise ValueError("Cron name must be a non-empty string")
             function_key = build_function_key(
                 "cron",
                 module=func.__module__,
@@ -204,17 +210,18 @@ class WorkerRegistration:
         self, pattern: str, *, _worker: Any = None, _queue: Any = None
     ) -> EventHandle:
         """Create an event handle that handlers can subscribe to."""
-        if not pattern.strip():
+        normalized_pattern = pattern.strip()
+        if not normalized_pattern:
             raise ValueError("Event pattern must be a non-empty string")
 
-        existing = self._event_handles.get(pattern)
+        existing = self._event_handles.get(normalized_pattern)
         if existing is not None:
             return existing
 
-        handle = EventHandle(pattern=pattern, _worker=_worker)
+        handle = EventHandle(pattern=normalized_pattern, _worker=_worker)
         if _queue is not None:
             handle._queue = _queue
-        self._event_handles[pattern] = handle
+        self._event_handles[normalized_pattern] = handle
         return handle
 
     def build_catalog(self) -> FunctionCatalog:

@@ -1301,40 +1301,21 @@ class RedisQueue(BaseQueue):
         parsed_job_id: str | None = None
         job_id_raw = msg_data.get(b"job_id") or msg_data.get("job_id")
         function_raw = msg_data.get(b"function") or msg_data.get("function")
-        if job_id_raw and function_raw:
-            job_id = (
-                job_id_raw.decode() if isinstance(job_id_raw, bytes) else job_id_raw
+        if not job_id_raw or not function_raw:
+            logger.warning(
+                "Skipping malformed stream payload (missing job_id/function) stream=%s msg_id=%s",
+                stream_key,
+                msg_id_str,
             )
-            function = (
-                function_raw.decode()
-                if isinstance(function_raw, bytes)
-                else function_raw
-            )
-            parsed_job_id = job_id
-            job_key = shared_job_key(function, job_id, key_prefix=self._key_prefix)
-        else:
-            # Compatibility fallback for older payloads that only carry serialized data.
-            job_data_raw = msg_data.get(b"data") or msg_data.get("data")
-            if not job_data_raw:
-                await client.xack(stream_key, self._consumer_group, msg_id_str)
-                return None
-            payload = (
-                job_data_raw.decode()
-                if isinstance(job_data_raw, bytes)
-                else job_data_raw
-            )
-            try:
-                stream_job = Job.from_json(payload)
-            except Exception:
-                logger.warning(
-                    "Skipping invalid stream payload stream=%s msg_id=%s",
-                    stream_key,
-                    msg_id_str,
-                )
-                await client.xack(stream_key, self._consumer_group, msg_id_str)
-                return None
-            parsed_job_id = stream_job.id
-            job_key = self._job_key(stream_job)
+            await client.xack(stream_key, self._consumer_group, msg_id_str)
+            return None
+
+        job_id = job_id_raw.decode() if isinstance(job_id_raw, bytes) else job_id_raw
+        function = (
+            function_raw.decode() if isinstance(function_raw, bytes) else function_raw
+        )
+        parsed_job_id = job_id
+        job_key = shared_job_key(function, job_id, key_prefix=self._key_prefix)
 
         job_data = await client.get(job_key)
         if not job_data:
@@ -1723,7 +1704,7 @@ class RedisQueue(BaseQueue):
             )
             return Job.from_json(result_str)
 
-        # Lookup active job via ID index, fallback to SCAN for backward compatibility.
+        # Lookup active job via ID index; SCAN fallback is only for index recovery.
         job_key = await self._find_job_key_by_id(job_id)
         if job_key is None:
             return None
@@ -1849,7 +1830,7 @@ class RedisQueue(BaseQueue):
         await client.setex(job_key, self._job_ttl_seconds, job.to_json())
 
     async def _find_job_key_by_id(self, job_id: str) -> str | None:
-        """Find stored job key for a job ID using index first, SCAN as fallback."""
+        """Find stored job key for a job ID using index first, SCAN as recovery."""
         client = await self._ensure_connected()
         index_key = self._job_index_key(job_id)
 

@@ -128,6 +128,23 @@ async def test_missing_payload_without_result_stays_pending(fake_redis) -> None:
 
 
 @pytest.mark.asyncio
+async def test_malformed_stream_payload_missing_identifiers_is_acked(fake_redis) -> None:
+    queue = RedisQueue(client=fake_redis, key_prefix="upnext-malformed-payload")
+    client = await queue._ensure_connected()  # noqa: SLF001
+    stream_key = queue._stream_key("task_fn")  # noqa: SLF001
+    await queue._ensure_consumer_group(stream_key)  # noqa: SLF001
+
+    malformed = Job(function="task_fn", function_name="task", key="malformed-payload")
+    await client.xadd(stream_key, {"data": malformed.to_json()})
+
+    active = await queue.dequeue(["task_fn"], timeout=0.1)
+    assert active is None
+
+    pending = await client.xpending(stream_key, queue._consumer_group)  # noqa: SLF001
+    assert pending["pending"] == 0
+
+
+@pytest.mark.asyncio
 async def test_missing_payload_with_terminal_result_is_acked(fake_redis) -> None:
     queue = RedisQueue(client=fake_redis, key_prefix="upnext-missing-payload-acked")
     job = Job(function="task_fn", function_name="task", key="missing-payload-acked")

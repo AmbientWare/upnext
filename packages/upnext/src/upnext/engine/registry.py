@@ -281,10 +281,21 @@ class Registry:
         group_max_concurrency: int | None = None,
     ) -> EventDefinition:
         """Register an event."""
+        event_pattern = event.strip()
+        if not event_pattern:
+            raise ValueError("event must be a non-empty pattern string")
+
+        normalized_name = display_name.strip()
+        if not normalized_name:
+            raise ValueError("display_name must be a non-empty string")
+
+        if key in self._tasks:
+            raise ValueError(f"Task '{key}' is already registered")
+
         definition = EventDefinition(
-            event=event,
+            event=event_pattern,
             key=key,
-            display_name=display_name,
+            display_name=normalized_name,
             func=func,
             is_async=asyncio.iscoroutinefunction(func),
             retries=retries,
@@ -300,7 +311,7 @@ class Registry:
         # Register by key for worker lookup (with retry/timeout config)
         self._tasks[key] = TaskDefinition(
             name=key,
-            display_name=display_name,
+            display_name=normalized_name,
             func=func,
             is_async=asyncio.iscoroutinefunction(func),
             retries=retries,
@@ -314,9 +325,9 @@ class Registry:
         )
 
         # Register by event pattern for routing
-        if event not in self._events:
-            self._events[event] = []
-        self._events[event].append(definition)
+        if event_pattern not in self._events:
+            self._events[event_pattern] = []
+        self._events[event_pattern].append(definition)
 
         return definition
 

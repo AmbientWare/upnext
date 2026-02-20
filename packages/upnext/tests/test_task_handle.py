@@ -153,6 +153,36 @@ async def test_task_wait_bubbles_failed_child_status_as_exception() -> None:
         await process.wait(v=3)
 
 
+@pytest.mark.asyncio
+async def test_task_submit_rejects_too_many_positional_args() -> None:
+    worker = Worker(name="test-worker")
+
+    @worker.task
+    async def process(name: str) -> str:
+        return name
+
+    queue = RecordingQueue()
+    process._queue = queue  # type: ignore[assignment]
+
+    with pytest.raises(TypeError, match="too many positional arguments"):
+        await process.submit("a", "b")
+
+
+@pytest.mark.asyncio
+async def test_task_submit_rejects_duplicate_positional_and_keyword_arg() -> None:
+    worker = Worker(name="test-worker")
+
+    @worker.task
+    async def process(name: str) -> str:
+        return name
+
+    queue = RecordingQueue()
+    process._queue = queue  # type: ignore[assignment]
+
+    with pytest.raises(TypeError, match="multiple values for argument"):
+        await process.submit("a", name="b")
+
+
 def test_task_handle_does_not_expose_run_after_api() -> None:
     worker = Worker(name="test-worker")
 

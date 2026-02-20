@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from shared.keys import EVENTS_STREAM
 from shared.keys.workers import FUNCTION_KEY_PREFIX, WORKER_DEF_PREFIX
 from shared.contracts import MissedRunPolicy
 from upnext.sdk.worker import Worker
@@ -92,7 +93,7 @@ async def test_execute_helper_accepts_display_name_and_function_key(
     assert result_by_name == 3
     assert result_by_key == 9
 
-    events = await fake_redis.xrange("upnext:status:events", count=20)
+    events = await fake_redis.xrange(EVENTS_STREAM, count=20)
     event_types = [row[1][b"type"].decode() for row in events]
     assert event_types.count("job.started") == 2
     assert event_types.count("job.completed") == 2
