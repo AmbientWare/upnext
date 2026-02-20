@@ -16,6 +16,8 @@ Lua scripts for atomic operations:
 - sweep.lua: Atomic scheduled job promotion
 - retry.lua: Atomic job retry with re-enqueue
 - cancel.lua: Atomic job cancellation
+- cron_seed.lua: Atomic cron seed mutation
+- cron_reschedule.lua: Atomic cron reschedule mutation
 """
 
 import asyncio
@@ -35,6 +37,8 @@ from shared.contracts import DispatchReason, FunctionConfig, MissedRunPolicy
 from shared.keys import (
     QUEUE_CONSUMER_GROUP,
     QUEUE_KEY_PREFIX,
+    cron_registry_member_key,
+    cron_window_job_key,
     dispatch_events_stream_key as shared_dispatch_events_stream_key,
     dispatch_reasons_key as shared_dispatch_reasons_key,
     function_dedup_key as shared_function_dedup_key,
@@ -205,6 +209,8 @@ class RedisQueue(BaseQueue):
         self._retry_sha: str | None = None
         self._cancel_sha: str | None = None
         self._rate_limit_sha: str | None = None
+        self._cron_seed_sha: str | None = None
+        self._cron_reschedule_sha: str | None = None
 
         # Unified per-function state cache (short-lived to avoid frequent Redis GETs).
         self._fn_state: dict[str, _FunctionState] = {}
@@ -327,6 +333,12 @@ class RedisQueue(BaseQueue):
             )
             self._rate_limit_sha = await self._client.script_load(
                 (SCRIPTS_DIR / "rate_limit.lua").read_text()
+            )
+            self._cron_seed_sha = await self._client.script_load(
+                (SCRIPTS_DIR / "cron_seed.lua").read_text()
+            )
+            self._cron_reschedule_sha = await self._client.script_load(
+                (SCRIPTS_DIR / "cron_reschedule.lua").read_text()
             )
             self._scripts_loaded = True
             logger.debug("Loaded Lua scripts into Redis")
@@ -458,12 +470,11 @@ class RedisQueue(BaseQueue):
         if not owner:
             return (False, None)
 
-        owner_job_key = shared_job_key(function, owner, key_prefix=self._key_prefix)
-        scheduled_score = await client.zscore(self._scheduled_key(function), owner)
-        owner_exists = scheduled_score is not None or bool(
-            await client.exists(owner_job_key)
-        )
-        if owner_exists:
+        if await self._cron_owner_is_runnable(
+            client,
+            function=function,
+            owner_job_id=owner,
+        ):
             return (False, owner)
 
         # Reservation is stale (no owner job in scheduled or job storage); reclaim once.
@@ -2314,6 +2325,21 @@ class RedisQueue(BaseQueue):
     def _cron_cursor_key(self) -> str:
         return self._key("cron_cursor")
 
+    def _cron_cursor_payload(
+        self,
+        *,
+        function: str,
+        next_run_at: float,
+        last_completed_at: datetime | None = None,
+    ) -> str:
+        payload = _CronCursorRecord(
+            function=function,
+            next_run_at=datetime.fromtimestamp(next_run_at, UTC),
+            last_completed_at=last_completed_at,
+            updated_at=datetime.now(UTC),
+        )
+        return payload.model_dump_json()
+
     async def _write_cron_cursor(
         self,
         client: Any,
@@ -2322,13 +2348,15 @@ class RedisQueue(BaseQueue):
         next_run_at: float,
         last_completed_at: datetime | None = None,
     ) -> None:
-        payload = _CronCursorRecord(
-            function=function,
-            next_run_at=datetime.fromtimestamp(next_run_at, UTC),
-            last_completed_at=last_completed_at,
-            updated_at=datetime.now(UTC),
+        await client.hset(
+            self._cron_cursor_key(),
+            function,
+            self._cron_cursor_payload(
+                function=function,
+                next_run_at=next_run_at,
+                last_completed_at=last_completed_at,
+            ),
         )
-        await client.hset(self._cron_cursor_key(), function, payload.model_dump_json())
 
     async def _read_cron_cursor(
         self,
@@ -2343,6 +2371,36 @@ class RedisQueue(BaseQueue):
             return _CronCursorRecord.model_validate_json(self._decode_text(raw))
         except Exception:
             return None
+
+    @staticmethod
+    def _parse_cron_script_response(result: Any) -> tuple[str, str | None]:
+        text = result.decode() if isinstance(result, bytes) else str(result)
+        status, _, owner = text.partition(":")
+        if owner == "":
+            owner = None
+        return (status, owner)
+
+    async def _cron_owner_is_runnable(
+        self,
+        client: Any,
+        *,
+        function: str,
+        owner_job_id: str,
+    ) -> bool:
+        scheduled_score = await client.zscore(self._scheduled_key(function), owner_job_id)
+        if scheduled_score is not None:
+            return True
+
+        owner_job_key = shared_job_key(function, owner_job_id, key_prefix=self._key_prefix)
+        if not await client.exists(owner_job_key):
+            return False
+
+        indexed_job_key_raw = await client.get(self._job_index_key(owner_job_id))
+        if not indexed_job_key_raw:
+            return False
+
+        indexed_job_key = self._decode_text(indexed_job_key_raw)
+        return indexed_job_key == owner_job_key
 
     async def _cron_reconcile_policy(
         self,
@@ -2382,7 +2440,8 @@ class RedisQueue(BaseQueue):
         cursor_ts = next_run_at
 
         # Hard guard against pathological schedules with huge backlog.
-        for _ in range(10_000):
+        max_windows = 10_000
+        for _ in range(max_windows):
             if cursor_ts > now_ts:
                 break
             if cutoff is None or cursor_ts >= cutoff:
@@ -2396,6 +2455,12 @@ class RedisQueue(BaseQueue):
             if next_ts <= cursor_ts:
                 break
             cursor_ts = next_ts
+        else:
+            logger.warning(
+                "Cron missed-window scan hit cap (%s) for schedule '%s'",
+                max_windows,
+                schedule,
+            )
 
         return windows
 
@@ -2403,7 +2468,64 @@ class RedisQueue(BaseQueue):
         client = await self._ensure_connected()
 
         cron_registry = self._cron_registry_key()
-        cron_key = f"cron:{job.function}"
+        cron_key = cron_registry_member_key(job.function)
+        scheduled_key = self._scheduled_key(job.function)
+        window_key = self._cron_window_reservation_key(job.function, next_run_at)
+
+        job.key = cron_window_job_key(
+            job.function,
+            self._cron_window_token(next_run_at),
+        )
+        job.scheduled_at = datetime.fromtimestamp(next_run_at, UTC)
+        job.mark_queued("Cron job scheduled")
+        job.cron_window_at = next_run_at
+        job_key = self._job_key(job)
+        job_index_key = self._job_index_key(job.id)
+        job_data = job.to_json()
+        cursor_payload = self._cron_cursor_payload(
+            function=job.function,
+            next_run_at=next_run_at,
+            last_completed_at=None,
+        )
+
+        if self._cron_seed_sha:
+            result = await self._evalsha_with_reload(
+                "_cron_seed_sha",
+                6,
+                cron_registry,
+                window_key,
+                scheduled_key,
+                job_key,
+                job_index_key,
+                self._cron_cursor_key(),
+                cron_key,
+                job.function,
+                job.id,
+                str(next_run_at),
+                str(self._job_ttl_seconds),
+                str(self._job_ttl_seconds),
+                job_data,
+                cursor_payload,
+                self._key_prefix,
+            )
+            status, owner = self._parse_cron_script_response(result)
+            if status != "SEEDED":
+                if status not in {"ALREADY_REGISTERED", "WINDOW_OWNED"}:
+                    logger.warning(
+                        "Unexpected cron seed Lua response for %s: %s",
+                        job.function,
+                        result,
+                    )
+                if owner:
+                    logger.debug(
+                        "Cron seed skipped for %s, owned by %s",
+                        job.function,
+                        owner,
+                    )
+                return False
+
+            await self._update_function_next_run(client, job.function, next_run_at)
+            return True
 
         was_set = await client.hsetnx(cron_registry, cron_key, job.id)
         if not was_set:
@@ -2420,22 +2542,11 @@ class RedisQueue(BaseQueue):
                 await client.hset(cron_registry, cron_key, owner)
             return False
 
-        job.key = f"cron:{job.function}:{self._cron_window_token(next_run_at)}"
-        job.scheduled_at = datetime.fromtimestamp(next_run_at, UTC)
-        job.mark_queued("Cron job scheduled")
-        job.cron_window_at = next_run_at
-        job_key = self._job_key(job)
-        await client.setex(job_key, self._job_ttl_seconds, job.to_json().encode())
-
-        scheduled_key = self._scheduled_key(job.function)
+        await client.setex(job_key, self._job_ttl_seconds, job_data.encode())
+        await client.setex(job_index_key, self._job_ttl_seconds, job_key)
         await client.zadd(scheduled_key, {job.id: next_run_at})
 
-        await self._write_cron_cursor(
-            client,
-            function=job.function,
-            next_run_at=next_run_at,
-            last_completed_at=None,
-        )
+        await client.hset(self._cron_cursor_key(), job.function, cursor_payload)
         await self._update_function_next_run(client, job.function, next_run_at)
 
         return True
@@ -2495,16 +2606,21 @@ class RedisQueue(BaseQueue):
         # ---- End policy-aware skip-ahead ----
 
         cron_registry = self._cron_registry_key()
-        cron_key = f"cron:{job.function}"
+        cron_key = cron_registry_member_key(job.function)
         schedule = job.schedule
         if not schedule:
             raise ValueError(f"Cron job '{job.id}' is missing schedule")
+        scheduled_key = self._scheduled_key(job.function)
+        window_key = self._cron_window_reservation_key(job.function, next_run_at)
 
         new_job = Job(
             function=job.function,
             function_name=job.function_name,
             kwargs=job.kwargs,
-            key=f"cron:{job.function}:{self._cron_window_token(next_run_at)}",
+            key=cron_window_job_key(
+                job.function,
+                self._cron_window_token(next_run_at),
+            ),
             timeout=job.timeout,
             source=CronSource(
                 schedule=schedule,
@@ -2517,6 +2633,48 @@ class RedisQueue(BaseQueue):
         )
         new_job.scheduled_at = datetime.fromtimestamp(next_run_at, UTC)
         new_job.mark_queued("Cron job rescheduled")
+        job_key = self._job_key(new_job)
+        job_index_key = self._job_index_key(new_job.id)
+        job_data = new_job.to_json()
+        cursor_payload = self._cron_cursor_payload(
+            function=job.function,
+            next_run_at=next_run_at,
+            last_completed_at=job.completed_at,
+        )
+
+        if self._cron_reschedule_sha:
+            result = await self._evalsha_with_reload(
+                "_cron_reschedule_sha",
+                6,
+                cron_registry,
+                window_key,
+                scheduled_key,
+                job_key,
+                job_index_key,
+                self._cron_cursor_key(),
+                cron_key,
+                job.function,
+                new_job.id,
+                str(next_run_at),
+                str(self._job_ttl_seconds),
+                str(self._job_ttl_seconds),
+                job_data,
+                cursor_payload,
+                self._key_prefix,
+            )
+            status, owner = self._parse_cron_script_response(result)
+            if status == "RESCHEDULED":
+                await self._update_function_next_run(client, job.function, next_run_at)
+                return owner or new_job.id
+            if status in {"WINDOW_OWNED", "NOOP_EXISTING_OWNER"}:
+                return owner or new_job.id
+
+            logger.warning(
+                "Unexpected cron reschedule Lua response for %s: %s",
+                job.function,
+                result,
+            )
+            return owner or new_job.id
 
         reserved, owner = await self._reserve_cron_window(
             client,
@@ -2534,19 +2692,10 @@ class RedisQueue(BaseQueue):
             return new_job.id
 
         await client.hset(cron_registry, cron_key, new_job.id)
-
-        job_key = self._job_key(new_job)
-        await client.setex(job_key, self._job_ttl_seconds, new_job.to_json().encode())
-
-        scheduled_key = self._scheduled_key(new_job.function)
+        await client.setex(job_key, self._job_ttl_seconds, job_data.encode())
+        await client.setex(job_index_key, self._job_ttl_seconds, job_key)
         await client.zadd(scheduled_key, {new_job.id: next_run_at})
-
-        await self._write_cron_cursor(
-            client,
-            function=job.function,
-            next_run_at=next_run_at,
-            last_completed_at=job.completed_at,
-        )
+        await client.hset(self._cron_cursor_key(), job.function, cursor_payload)
         await self._update_function_next_run(client, job.function, next_run_at)
 
         return new_job.id
@@ -2560,29 +2709,6 @@ class RedisQueue(BaseQueue):
         client = await self._ensure_connected()
         current_ts = time.time() if now_ts is None else now_ts
 
-        cursor = await self._read_cron_cursor(client, function=job.function)
-        if not cursor:
-            return False
-
-        next_run_at = cursor.next_run_at.timestamp()
-
-        if next_run_at > current_ts:
-            return False
-
-        cron_registry = self._cron_registry_key()
-        cron_key = f"cron:{job.function}"
-        current_job_id = await client.hget(cron_registry, cron_key)
-        if isinstance(current_job_id, bytes):
-            current_job_id = current_job_id.decode()
-
-        if current_job_id:
-            scheduled_key = self._scheduled_key(job.function)
-            scheduled_score = await client.zscore(scheduled_key, current_job_id)
-            job_key = shared_job_key(job.function, current_job_id, key_prefix=self._key_prefix)
-            if scheduled_score is not None or await client.exists(job_key):
-                # A cron run is already present; no extra catch-up enqueue needed.
-                return False
-
         schedule = job.schedule
         if not schedule:
             logger.warning(
@@ -2590,6 +2716,62 @@ class RedisQueue(BaseQueue):
                 job.function,
             )
             return False
+
+        cron_registry = self._cron_registry_key()
+        cron_key = cron_registry_member_key(job.function)
+        current_job_id_raw = await client.hget(cron_registry, cron_key)
+        current_job_id = (
+            self._decode_text(current_job_id_raw) if current_job_id_raw else None
+        )
+
+        cursor = await self._read_cron_cursor(client, function=job.function)
+        if not cursor:
+            if current_job_id and await self._cron_owner_is_runnable(
+                client,
+                function=job.function,
+                owner_job_id=current_job_id,
+            ):
+                return False
+
+            if current_job_id:
+                await client.hdel(cron_registry, cron_key)
+                logger.warning(
+                    "Cleared stale cron registry owner during startup reconciliation "
+                    "function=%s owner=%s (missing cursor)",
+                    job.function,
+                    current_job_id,
+                )
+
+            seeded = await self.seed_cron(
+                job,
+                calculate_next_cron_run(
+                    schedule,
+                    datetime.fromtimestamp(current_ts, UTC),
+                ).timestamp(),
+            )
+            return seeded
+
+        next_run_at = cursor.next_run_at.timestamp()
+
+        if next_run_at > current_ts:
+            return False
+
+        if current_job_id:
+            if await self._cron_owner_is_runnable(
+                client,
+                function=job.function,
+                owner_job_id=current_job_id,
+            ):
+                # A cron run is already present; no extra catch-up enqueue needed.
+                return False
+            await client.hdel(cron_registry, cron_key)
+            logger.warning(
+                "Cleared stale cron registry owner during startup reconciliation "
+                "function=%s owner=%s (cursor present)",
+                job.function,
+                current_job_id,
+            )
+
         policy, max_window = await self._cron_reconcile_policy(job.function)
         missed_windows = self._cron_missed_windows(
             schedule=schedule,
@@ -2627,7 +2809,10 @@ class RedisQueue(BaseQueue):
             function=job.function,
             function_name=job.function_name,
             kwargs=job.kwargs,
-            key=f"cron:{job.function}:{self._cron_window_token(selected_window)}",
+            key=cron_window_job_key(
+                job.function,
+                self._cron_window_token(selected_window),
+            ),
             timeout=job.timeout,
             source=CronSource(
                 schedule=schedule,

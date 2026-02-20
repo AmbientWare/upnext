@@ -19,6 +19,7 @@ from shared.keys import (
     WORKER_EVENTS_STREAM,
     WORKER_HEARTBEAT_INTERVAL,
     WORKER_TTL,
+    cron_registry_member_key,
     function_definition_key,
     worker_definition_key,
     worker_instance_key,
@@ -37,18 +38,18 @@ async def seed_crons(
 ) -> None:
     """Seed cron jobs using Redis-based scheduling."""
     for cron_def in crons:
-        next_run = calculate_next_cron_run(cron_def.schedule)
-
-        job = Job(
-            function=cron_def.key,
-            function_name=cron_def.display_name,
-            kwargs={},
-            key=f"cron:{cron_def.key}",
-            timeout=cron_def.timeout,
-            source=CronSource(schedule=cron_def.schedule),
-        )
-
         try:
+            next_run = calculate_next_cron_run(cron_def.schedule)
+
+            job = Job(
+                function=cron_def.key,
+                function_name=cron_def.display_name,
+                kwargs={},
+                key=cron_registry_member_key(cron_def.key),
+                timeout=cron_def.timeout,
+                source=CronSource(schedule=cron_def.schedule),
+            )
+
             was_seeded = await queue.seed_cron(job, next_run.timestamp())
             if was_seeded:
                 logger.debug(
@@ -69,6 +70,10 @@ async def seed_crons(
                     logger.debug(
                         f"Cron '{cron_def.display_name}' ({cron_def.key}) already registered"
                     )
+
+        except ValueError:
+            raise
+
         except Exception as e:
             logger.error(
                 f"Failed to seed cron job '{cron_def.display_name}' ({cron_def.key}): {e}"

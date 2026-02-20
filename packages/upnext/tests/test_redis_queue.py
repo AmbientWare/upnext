@@ -13,6 +13,7 @@ from shared.contracts import (
     FunctionType,
     MissedRunPolicy,
 )
+from shared.keys import cron_registry_member_key
 from shared.keys.workers import FUNCTION_KEY_PREFIX
 from upnext.engine.queue.base import DuplicateJobError
 from upnext.engine.queue.redis.queue import RedisQueue
@@ -549,7 +550,7 @@ async def test_cron_cursor_persists_next_and_last_completion(queue: RedisQueue) 
     cron_job = Job(
         function="cron.fn",
         function_name="cron_fn",
-        key="cron:cron.fn",
+        key=cron_registry_member_key("cron.fn"),
         source=CronSource(schedule="* * * * *"),
     )
 
@@ -567,9 +568,11 @@ async def test_cron_cursor_persists_next_and_last_completion(queue: RedisQueue) 
     assert seeded_cursor["function"] == "cron.fn"
     assert seeded_cursor["next_run_at"] is not None
     assert seeded_cursor["last_completed_at"] is None
+    seeded_job_index = await client.get(queue._job_index_key(cron_job.id))  # noqa: SLF001
+    assert seeded_job_index is not None
 
     cron_job.completed_at = datetime.now(UTC)
-    await queue.reschedule_cron(cron_job, next_run_at=now + 120)
+    rescheduled_job_id = await queue.reschedule_cron(cron_job, next_run_at=now + 120)
 
     cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.fn")  # noqa: SLF001
     assert cursor_raw is not None
@@ -578,6 +581,8 @@ async def test_cron_cursor_persists_next_and_last_completion(queue: RedisQueue) 
     )
     assert cursor["next_run_at"] is not None
     assert cursor["last_completed_at"] is not None
+    rescheduled_job_index = await client.get(queue._job_index_key(rescheduled_job_id))  # noqa: SLF001
+    assert rescheduled_job_index is not None
 
 
 @pytest.mark.asyncio
@@ -589,7 +594,7 @@ async def test_reschedule_cron_same_window_reuses_existing_reservation(
     cron_job = Job(
         function="cron.resv",
         function_name="cron_resv",
-        key="cron:cron.resv",
+        key=cron_registry_member_key("cron.resv"),
         source=CronSource(schedule="* * * * *"),
     )
     cron_job.completed_at = datetime.now(UTC)
@@ -622,7 +627,7 @@ async def test_reschedule_cron_reclaims_stale_window_reservation(
     cron_job = Job(
         function="cron.stale",
         function_name="cron_stale",
-        key="cron:cron.stale",
+        key=cron_registry_member_key("cron.stale"),
         source=CronSource(schedule="* * * * *"),
     )
     cron_job.completed_at = datetime.now(UTC)
@@ -660,7 +665,7 @@ async def test_cron_startup_reconciliation_defaults_to_latest_only_when_cursor_i
     cron_job = Job(
         function="cron.reconcile",
         function_name="cron_reconcile",
-        key="cron:cron.reconcile",
+        key=cron_registry_member_key("cron.reconcile"),
         source=CronSource(schedule="* * * * *"),
     )
 
@@ -669,7 +674,7 @@ async def test_cron_startup_reconciliation_defaults_to_latest_only_when_cursor_i
 
     cron_job_id_raw = await client.hget(
         queue._cron_registry_key(),  # noqa: SLF001
-        "cron:cron.reconcile",
+        cron_registry_member_key("cron.reconcile"),
     )
     assert cron_job_id_raw is not None
     cron_job_id = (
@@ -699,6 +704,83 @@ async def test_cron_startup_reconciliation_defaults_to_latest_only_when_cursor_i
         cursor_raw.decode() if isinstance(cursor_raw, bytes) else cursor_raw
     )
     assert datetime.fromisoformat(cursor["next_run_at"]).timestamp() > reconciled_window
+
+
+@pytest.mark.asyncio
+async def test_cron_startup_reconciliation_reseeds_when_cursor_missing_and_registry_stale(
+    queue: RedisQueue,
+) -> None:
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+
+    await client.hset(
+        queue._cron_registry_key(),  # noqa: SLF001
+        cron_registry_member_key("cron.reseed"),
+        "stale-owner",
+    )
+
+    cron_job = Job(
+        function="cron.reseed",
+        function_name="cron_reseed",
+        key=cron_registry_member_key("cron.reseed"),
+        source=CronSource(schedule="* * * * *"),
+    )
+
+    reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
+    assert reconciled is True
+
+    owner_raw = await client.hget(
+        queue._cron_registry_key(),
+        cron_registry_member_key("cron.reseed"),
+    )  # noqa: SLF001
+    assert owner_raw is not None
+    owner = owner_raw.decode() if isinstance(owner_raw, bytes) else str(owner_raw)
+    assert owner != "stale-owner"
+
+    seeded_job_raw = await client.get(queue._key("job", "cron.reseed", owner))  # noqa: SLF001
+    assert seeded_job_raw is not None
+
+    scheduled_score = await client.zscore(queue._scheduled_key("cron.reseed"), owner)  # noqa: SLF001
+    assert scheduled_score is not None
+    assert scheduled_score >= now
+
+    cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.reseed")  # noqa: SLF001
+    assert cursor_raw is not None
+
+
+@pytest.mark.asyncio
+async def test_cron_startup_reconciliation_seeds_when_cursor_and_registry_missing(
+    queue: RedisQueue,
+) -> None:
+    now = time.time()
+    client = await queue._ensure_connected()  # noqa: SLF001
+
+    cron_job = Job(
+        function="cron.seed_missing",
+        function_name="cron_seed_missing",
+        key=cron_registry_member_key("cron.seed_missing"),
+        source=CronSource(schedule="* * * * *"),
+    )
+
+    reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
+    assert reconciled is True
+
+    owner_raw = await client.hget(
+        queue._cron_registry_key(),  # noqa: SLF001
+        cron_registry_member_key("cron.seed_missing"),
+    )
+    assert owner_raw is not None
+    owner = owner_raw.decode() if isinstance(owner_raw, bytes) else str(owner_raw)
+
+    seeded_job_raw = await client.get(queue._key("job", "cron.seed_missing", owner))  # noqa: SLF001
+    assert seeded_job_raw is not None
+
+    scheduled_score = await client.zscore(queue._scheduled_key("cron.seed_missing"), owner)  # noqa: SLF001
+    assert scheduled_score is not None
+    assert scheduled_score >= now
+
+    cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.seed_missing")  # noqa: SLF001
+    assert cursor_raw is not None
 
 
 @pytest.mark.asyncio
@@ -733,13 +815,16 @@ async def test_cron_startup_reconciliation_latest_only_uses_latest_window(
     cron_job = Job(
         function="cron.latest",
         function_name="cron_latest",
-        key="cron:cron.latest",
+        key=cron_registry_member_key("cron.latest"),
         source=CronSource(schedule="* * * * *"),
     )
     reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
     assert reconciled is True
 
-    cron_job_id_raw = await client.hget(queue._cron_registry_key(), "cron:cron.latest")  # noqa: SLF001
+    cron_job_id_raw = await client.hget(
+        queue._cron_registry_key(),
+        cron_registry_member_key("cron.latest"),
+    )  # noqa: SLF001
     assert cron_job_id_raw is not None
     cron_job_id = (
         cron_job_id_raw.decode()
@@ -788,14 +873,17 @@ async def test_cron_startup_reconciliation_skip_policy_advances_cursor_without_e
     cron_job = Job(
         function="cron.skip",
         function_name="cron_skip",
-        key="cron:cron.skip",
+        key=cron_registry_member_key("cron.skip"),
         source=CronSource(schedule="* * * * *"),
     )
 
     reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
     assert reconciled is False
 
-    cron_job_id = await client.hget(queue._cron_registry_key(), "cron:cron.skip")  # noqa: SLF001
+    cron_job_id = await client.hget(
+        queue._cron_registry_key(),
+        cron_registry_member_key("cron.skip"),
+    )  # noqa: SLF001
     assert cron_job_id is None
     cursor_raw = await client.hget(queue._cron_cursor_key(), "cron.skip")  # noqa: SLF001
     assert cursor_raw is not None
@@ -838,13 +926,16 @@ async def test_cron_startup_reconciliation_catch_up_window_respects_max_seconds(
     cron_job = Job(
         function="cron.windowed",
         function_name="cron_windowed",
-        key="cron:cron.windowed",
+        key=cron_registry_member_key("cron.windowed"),
         source=CronSource(schedule="* * * * *"),
     )
     reconciled = await queue.reconcile_cron_startup(cron_job, now_ts=now)
     assert reconciled is True
 
-    cron_job_id_raw = await client.hget(queue._cron_registry_key(), "cron:cron.windowed")  # noqa: SLF001
+    cron_job_id_raw = await client.hget(
+        queue._cron_registry_key(),
+        cron_registry_member_key("cron.windowed"),
+    )  # noqa: SLF001
     assert cron_job_id_raw is not None
     cron_job_id = (
         cron_job_id_raw.decode()
@@ -887,7 +978,7 @@ async def test_reschedule_cron_latest_only_skips_past_due(queue: RedisQueue) -> 
     cron_job = Job(
         function="cron.lo",
         function_name="cron_lo",
-        key="cron:cron.lo",
+        key=cron_registry_member_key("cron.lo"),
         source=CronSource(schedule="* * * * *"),
     )
     cron_job.completed_at = datetime.now(UTC)
@@ -918,7 +1009,7 @@ async def test_reschedule_cron_skip_policy_skips_past_due(queue: RedisQueue) -> 
     cron_job = Job(
         function="cron.sk",
         function_name="cron_sk",
-        key="cron:cron.sk",
+        key=cron_registry_member_key("cron.sk"),
         source=CronSource(schedule="* * * * *"),
     )
     cron_job.completed_at = datetime.now(UTC)
@@ -949,7 +1040,7 @@ async def test_reschedule_cron_catch_up_keeps_past_due(queue: RedisQueue) -> Non
     cron_job = Job(
         function="cron.cu",
         function_name="cron_cu",
-        key="cron:cron.cu",
+        key=cron_registry_member_key("cron.cu"),
         source=CronSource(schedule="* * * * *"),
     )
     cron_job.completed_at = datetime.now(UTC)
@@ -983,7 +1074,7 @@ async def test_reschedule_cron_catch_up_respects_max_seconds(
     cron_job = Job(
         function="cron.cuw",
         function_name="cron_cuw",
-        key="cron:cron.cuw",
+        key=cron_registry_member_key("cron.cuw"),
         source=CronSource(schedule="* * * * *"),
     )
     cron_job.completed_at = datetime.now(UTC)

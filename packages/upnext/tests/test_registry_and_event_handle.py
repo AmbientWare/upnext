@@ -116,6 +116,13 @@ def test_registry_cron_and_app_constraints() -> None:
             func=cron_job,
             max_catch_up_seconds=0,
         )
+    with pytest.raises(ValueError, match="Invalid cron schedule"):
+        registry.register_cron(
+            key="cron-bad-schedule",
+            display_name="bad-schedule",
+            schedule="not a cron",
+            func=cron_job,
+        )
 
     with pytest.raises(ValueError, match="port must be 0-65535"):
         registry.register_app("bad-port", cron_job, port=70_000)

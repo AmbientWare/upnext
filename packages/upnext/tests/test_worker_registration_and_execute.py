@@ -141,6 +141,47 @@ def test_worker_cron_default_policy_is_latest_only() -> None:
     assert worker.crons[0].missed_run_policy == MissedRunPolicy.LATEST_ONLY
 
 
+def test_worker_cron_invalid_schedule_raises() -> None:
+    worker = Worker(name="cron-invalid-schedule")
+
+    with pytest.raises(ValueError, match="Invalid cron schedule"):
+
+        @worker.cron("not a cron", name="invalid_tick")
+        async def invalid_tick() -> None:
+            return None
+
+
+@pytest.mark.asyncio
+async def test_worker_start_propagates_invalid_cron_seed(
+    fake_redis, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis
+    )
+    monkeypatch.setattr("upnext.sdk.worker.JobProcessor", _NoopJobProcessor)
+
+    worker = Worker(name="cron-seed-invalid")
+
+    @worker.cron("* * * * *", name="tick")
+    async def tick() -> None:
+        return None
+
+    def fail_next_run(schedule: str, *_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise ValueError(f"Invalid cron schedule '{schedule}': forced failure")
+
+    monkeypatch.setattr(
+        "upnext.sdk._worker_connection.calculate_next_cron_run",
+        fail_next_run,
+    )
+
+    worker.initialize(redis_url="redis://ignored")
+    try:
+        with pytest.raises(ValueError, match="Invalid cron schedule"):
+            await worker.start()
+    finally:
+        await worker.stop(timeout=0.1)
+
+
 def test_worker_uses_fixed_queue_tuning(fake_redis, monkeypatch) -> None:
     monkeypatch.setattr(
         "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis

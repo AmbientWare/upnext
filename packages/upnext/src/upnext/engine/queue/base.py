@@ -11,6 +11,7 @@ from typing import Any
 
 from shared.contracts import DispatchReason
 from shared.domain import CronSource, Job, JobStatus
+from shared.keys import cron_registry_member_key
 
 
 class BaseQueue(ABC):
@@ -414,7 +415,7 @@ class BaseQueue(ABC):
             function=job.function,
             function_name=job.function_name,
             kwargs=job.kwargs,
-            key=f"cron:{job.function}",
+            key=cron_registry_member_key(job.function),
             status=JobStatus.PENDING,
             timeout=job.timeout,
             source=CronSource(

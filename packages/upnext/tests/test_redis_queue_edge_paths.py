@@ -57,8 +57,8 @@ async def test_enqueue_recovers_from_noscript_by_reloading_scripts(
     assert active is not None
     assert active.id == job.id
     assert state["raised"] is True
-    # 6 scripts loaded initially + 6 reloaded after NOSCRIPT.
-    assert loads["count"] >= 12
+    # 8 scripts loaded initially + 8 reloaded after NOSCRIPT.
+    assert loads["count"] >= 16
 
 
 @pytest.mark.asyncio

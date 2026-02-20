@@ -119,3 +119,13 @@ def job_cancelled_key(job_id: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> str
 def job_status_channel(job_id: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> str:
     """Pub/Sub channel for job status updates."""
     return queue_key("job", job_id, key_prefix=key_prefix)
+
+
+def cron_registry_member_key(function: str) -> str:
+    """Canonical cron registry member key for a function."""
+    return f"cron:{function}"
+
+
+def cron_window_job_key(function: str, window_token: str) -> str:
+    """Canonical per-window cron job dedupe key."""
+    return f"{cron_registry_member_key(function)}:{window_token}"

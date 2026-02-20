@@ -8,6 +8,7 @@ from typing import Any
 from shared.contracts.common import MissedRunPolicy
 from shared.patterns import matches_event_pattern
 
+from upnext.engine.cron import calculate_next_cron_run
 from upnext.engine.queue.redis.rate_limit import parse_rate_limit
 
 
@@ -111,8 +112,20 @@ class CronDefinition:
         """Validate cron scheduling controls."""
         if self.timeout <= 0:
             raise ValueError(f"timeout must be > 0, got {self.timeout}")
+
         if self.max_catch_up_seconds is not None and self.max_catch_up_seconds <= 0:
             raise ValueError("max_catch_up_seconds must be > 0")
+
+        normalized_schedule = self.schedule.strip()
+        if not normalized_schedule:
+            raise ValueError("schedule must be a non-empty cron expression")
+
+        try:
+            calculate_next_cron_run(normalized_schedule)
+        except Exception as exc:
+            raise ValueError(f"Invalid cron schedule '{self.schedule}': {exc}") from exc
+
+        self.schedule = normalized_schedule
 
 
 @dataclass

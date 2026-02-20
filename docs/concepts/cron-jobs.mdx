@@ -67,14 +67,15 @@ Common patterns:
 If a worker was down and missed scheduled runs, the `missed_run_policy` controls what happens when it comes back:
 
 - **`LATEST_ONLY`** (default) — Run only the most recent missed execution, skip the rest.
-- **`RUN_ALL`** — Run every missed execution in order, bounded by `max_catch_up_seconds`.
+- **`CATCH_UP`** — Run missed executions in order, bounded by `max_catch_up_seconds`.
+- **`SKIP`** — Skip missed executions and move directly to the next future window.
 
 ```python
 from shared.contracts.common import MissedRunPolicy
 
 @worker.cron(
     "0 * * * *",
-    missed_run_policy=MissedRunPolicy.RUN_ALL,
+    missed_run_policy=MissedRunPolicy.CATCH_UP,
     max_catch_up_seconds=3600,  # Catch up at most 1 hour
 )
 async def hourly_sync():
