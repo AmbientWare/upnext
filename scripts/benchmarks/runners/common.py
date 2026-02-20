@@ -20,6 +20,10 @@ def effective_prefetch(cfg: BenchmarkConfig) -> int:
     return max(1, cfg.concurrency)
 
 
+def worker_readiness_key(done_key: str) -> str:
+    return f"{done_key}:ready"
+
+
 def ensure_redis(redis_url: str) -> None:
     client = Redis.from_url(redis_url, decode_responses=False)
     try:
@@ -59,6 +63,46 @@ async def wait_for_counter_async(
             return
         await asyncio.sleep(0.01)
     raise TimeoutError(f"Timed out waiting for {target} completions on key '{key}'")
+
+
+def await_worker_readiness_sync(
+    *,
+    client: Redis,
+    readiness_key: str,
+    timeout_seconds: float,
+    submit_probe: Callable[[], None],
+) -> None:
+    client.delete(readiness_key)
+    try:
+        submit_probe()
+        wait_for_counter_sync(
+            client,
+            readiness_key,
+            1,
+            timeout_seconds=timeout_seconds,
+        )
+    finally:
+        client.delete(readiness_key)
+
+
+async def await_worker_readiness_async(
+    *,
+    client: Any,  # redis.asyncio.Redis
+    readiness_key: str,
+    timeout_seconds: float,
+    submit_probe: Callable[[], Awaitable[None]],
+) -> None:
+    await client.delete(readiness_key)
+    try:
+        await submit_probe()
+        await wait_for_counter_async(
+            client,
+            readiness_key,
+            1,
+            timeout_seconds=timeout_seconds,
+        )
+    finally:
+        await client.delete(readiness_key)
 
 
 async def async_produce_jobs(

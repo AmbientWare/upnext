@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -18,6 +20,10 @@ from scripts.benchmarks.models import (  # noqa: E402
     BenchmarkConfig,
     BenchmarkResult,
     BenchmarkWorkload,
+)
+from scripts.benchmarks.runners.common import (  # noqa: E402
+    await_worker_readiness_async,
+    await_worker_readiness_sync,
 )
 
 
@@ -162,3 +168,104 @@ def test_matrix_engine_interleaves_runs_deterministically() -> None:
     assert set(fake.calls[:2]) == {"upnext-async", "celery"}
     assert set(fake.calls[2:4]) == {"upnext-async", "celery"}
     assert set(fake.calls[4:6]) == {"upnext-async", "celery"}
+
+
+class _SyncCounterClient:
+    def __init__(self) -> None:
+        self._values: dict[str, int] = {}
+        self.deleted: list[str] = []
+
+    def delete(self, key: str) -> None:
+        self.deleted.append(key)
+        self._values.pop(key, None)
+
+    def get(self, key: str) -> int:
+        return self._values.get(key, 0)
+
+    def incr(self, key: str) -> int:
+        self._values[key] = self._values.get(key, 0) + 1
+        return self._values[key]
+
+
+class _AsyncCounterClient:
+    def __init__(self) -> None:
+        self._values: dict[str, int] = {}
+        self.deleted: list[str] = []
+
+    async def delete(self, key: str) -> None:
+        self.deleted.append(key)
+        self._values.pop(key, None)
+
+    async def get(self, key: str) -> int:
+        return self._values.get(key, 0)
+
+    async def incr(self, key: str) -> int:
+        self._values[key] = self._values.get(key, 0) + 1
+        return self._values[key]
+
+
+def test_readiness_sync_cleans_key_on_success_and_failure() -> None:
+    key = "bench:ready"
+
+    client = _SyncCounterClient()
+
+    def submit_ok() -> None:
+        client.incr(key)
+
+    await_worker_readiness_sync(
+        client=client,
+        readiness_key=key,
+        timeout_seconds=0.5,
+        submit_probe=submit_ok,
+    )
+    assert client.get(key) == 0
+    assert client.deleted.count(key) == 2
+
+    failing_client = _SyncCounterClient()
+
+    def submit_fail() -> None:
+        raise RuntimeError("probe failure")
+
+    with pytest.raises(RuntimeError):
+        await_worker_readiness_sync(
+            client=failing_client,
+            readiness_key=key,
+            timeout_seconds=0.5,
+            submit_probe=submit_fail,
+        )
+    assert failing_client.get(key) == 0
+    assert failing_client.deleted.count(key) == 2
+
+
+@pytest.mark.asyncio
+async def test_readiness_async_cleans_key_on_success_and_failure() -> None:
+    key = "bench:ready"
+
+    client = _AsyncCounterClient()
+
+    async def submit_ok() -> None:
+        await client.incr(key)
+
+    await await_worker_readiness_async(
+        client=client,
+        readiness_key=key,
+        timeout_seconds=0.5,
+        submit_probe=submit_ok,
+    )
+    assert await client.get(key) == 0
+    assert client.deleted.count(key) == 2
+
+    failing_client = _AsyncCounterClient()
+
+    async def submit_fail() -> None:
+        raise RuntimeError("probe failure")
+
+    with pytest.raises(RuntimeError):
+        await await_worker_readiness_async(
+            client=failing_client,
+            readiness_key=key,
+            timeout_seconds=0.5,
+            submit_probe=submit_fail,
+        )
+    assert await failing_client.get(key) == 0
+    assert failing_client.deleted.count(key) == 2

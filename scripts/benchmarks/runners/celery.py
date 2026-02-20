@@ -9,6 +9,7 @@ from redis import Redis
 from ..models import BenchmarkConfig, BenchmarkResult, BenchmarkWorkload
 from .base import FrameworkRunner
 from .common import (
+    await_worker_readiness_sync,
     effective_prefetch,
     load_queue_wait_samples_sync,
     now,
@@ -16,6 +17,7 @@ from .common import (
     threaded_produce_jobs,
     threaded_produce_jobs_sustained,
     wait_for_counter_sync,
+    worker_readiness_key,
 )
 
 
@@ -73,6 +75,26 @@ class CeleryRunner(FrameworkRunner):
                 perform_ping_check=False,
                 loglevel="WARNING",
             ):
+                readiness_key = worker_readiness_key(cfg.done_key)
+
+                def submit_probe() -> None:
+                    getattr(bench_task, "delay")(
+                        {
+                            "payload": cfg.payload,
+                            "submitted_at_ns": 0,
+                            "sampled": False,
+                        },
+                        readiness_key,
+                        cfg.redis_url,
+                    )
+
+                await_worker_readiness_sync(
+                    client=done_client,
+                    readiness_key=readiness_key,
+                    timeout_seconds=min(30.0, cfg.timeout_seconds),
+                    submit_probe=submit_probe,
+                )
+
                 run_start = now()
 
                 def submit_one(idx: int) -> None:

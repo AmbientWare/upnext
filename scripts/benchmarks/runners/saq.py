@@ -8,12 +8,15 @@ from typing import Any
 from ..models import BenchmarkConfig, BenchmarkResult, BenchmarkWorkload
 from .base import FrameworkRunner
 from .common import (
+    await_worker_readiness_async,
     async_produce_jobs,
     async_produce_jobs_sustained,
+    effective_prefetch,
     load_queue_wait_samples_async,
     now,
     record_queue_wait_async,
     wait_for_counter_async,
+    worker_readiness_key,
 )
 
 
@@ -30,6 +33,8 @@ class SaqRunner(FrameworkRunner):
         done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
         await done_client.delete(cfg.done_key, cfg.queue_wait_key)
         task_done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
+        target_prefetch = effective_prefetch(cfg)
+        effective_prefetch_depth = max(1, cfg.concurrency)
 
         queue_name = f"bench_saq_{cfg.run_id}"
         task_name = f"bench_task_{cfg.run_id}"
@@ -75,8 +80,29 @@ class SaqRunner(FrameworkRunner):
         try:
             await producer_queue.connect()
             worker_task = asyncio.create_task(run_worker())
-            # Allow the worker loop to initialize consumers before enqueue starts.
-            await asyncio.sleep(0.2)
+
+            readiness_key = worker_readiness_key(cfg.done_key)
+
+            async def submit_probe() -> None:
+                probe = await producer_queue.enqueue(
+                    task_name,
+                    payload={
+                        "payload": cfg.payload,
+                        "submitted_at_ns": 0,
+                        "sampled": False,
+                    },
+                    done_key=readiness_key,
+                    redis_url=cfg.redis_url,
+                )
+                if probe is None:
+                    raise RuntimeError("SAQ readiness probe enqueue returned no job")
+
+            await await_worker_readiness_async(
+                client=done_client,
+                readiness_key=readiness_key,
+                timeout_seconds=min(30.0, cfg.timeout_seconds),
+                submit_probe=submit_probe,
+            )
 
             run_start = now()
 
@@ -129,12 +155,16 @@ class SaqRunner(FrameworkRunner):
                 notes=(
                     f"producer_concurrency={cfg.producer_concurrency}; "
                     f"worker_concurrency={cfg.concurrency}; "
+                    f"consumer_prefetch_requested={target_prefetch}; "
+                    f"consumer_prefetch_effective={effective_prefetch_depth}; "
                     f"workload={cfg.workload.value}; "
                     f"arrival_rate={cfg.arrival_rate}"
                 ),
                 framework_version=self._framework_version("saq"),
                 diagnostics={
                     "worker_concurrency": cfg.concurrency,
+                    "consumer_prefetch_requested": target_prefetch,
+                    "consumer_prefetch_effective": effective_prefetch_depth,
                     "workload": cfg.workload.value,
                     "arrival_rate": cfg.arrival_rate,
                     "duration_seconds": cfg.duration_seconds,
