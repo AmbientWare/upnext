@@ -18,9 +18,9 @@ from .engine import MatrixEngine
 from .io import emit_marked_json, load_matrix_payloads, write_json_file
 from .models import (
     SCHEMA_VERSION,
+    SUPPORTED_WORKLOADS,
     BenchmarkConfig,
     BenchmarkWorkload,
-    SUPPORTED_WORKLOADS,
 )
 from .report_json import matrix_json_payload
 from .report_markdown import build_markdown_report
@@ -53,11 +53,15 @@ def _build_parser() -> argparse.ArgumentParser:
     matrix.add_argument("--repeats", type=int, default=3)
     matrix.add_argument("--warmups", type=int, default=1)
     matrix.add_argument("--seed", type=int, default=42)
-    matrix.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    matrix.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
     matrix.add_argument("--output-json", default="", help="Write JSON payload to file")
     matrix.add_argument("--show-runs", action="store_true")
     matrix.add_argument("--fail-on-non-ok", action="store_true")
-    matrix.add_argument("--ci", action="store_true", help="Set --json and --fail-on-non-ok")
+    matrix.add_argument(
+        "--ci", action="store_true", help="Set --json and --fail-on-non-ok"
+    )
 
     summarize = subparsers.add_parser(
         "summarize",

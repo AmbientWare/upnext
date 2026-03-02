@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from server.db.repositories import ArtifactRepository, JobRepository
-from server.db.tables import Artifact, JobHistory, PendingArtifact
+from server.backends.sql.shared.repositories import ArtifactRepository, JobRepository
+from server.backends.sql.shared.tables import ArtifactTable, JobHistoryTable, PendingArtifactTable
 from server.services.operations.cleanup import CleanupService
 from sqlalchemy import select
 
@@ -49,7 +49,7 @@ async def test_cleanup_service_promotes_pending_and_deletes_old_rows(sqlite_db) 
 
     service = CleanupService(
         redis_client=None,
-        retention_days=30,
+        retention_hours=30 * 24,
         interval_hours=1,
         pending_retention_hours=24,
         pending_promote_batch=100,
@@ -59,12 +59,12 @@ async def test_cleanup_service_promotes_pending_and_deletes_old_rows(sqlite_db) 
     await service._run_cleanup()  # noqa: SLF001
 
     async with sqlite_db.session() as session:
-        old = await session.get(JobHistory, "old-job")
-        fresh = await session.get(JobHistory, "fresh-job")
+        old = await session.get(JobHistoryTable, "old-job")
+        fresh = await session.get(JobHistoryTable, "fresh-job")
         pending_rows = (
             (
                 await session.execute(
-                    select(PendingArtifact).where(PendingArtifact.job_id == "fresh-job")
+                    select(PendingArtifactTable).where(PendingArtifactTable.job_id == "fresh-job")
                 )
             )
             .scalars()
@@ -73,7 +73,7 @@ async def test_cleanup_service_promotes_pending_and_deletes_old_rows(sqlite_db) 
         artifacts = (
             (
                 await session.execute(
-                    select(Artifact).where(Artifact.job_id == "fresh-job")
+                    select(ArtifactTable).where(ArtifactTable.job_id == "fresh-job")
                 )
             )
             .scalars()

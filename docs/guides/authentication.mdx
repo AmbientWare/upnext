@@ -10,9 +10,14 @@ UpNext uses API key authentication to secure the dashboard, REST API, and servic
 
 Set two environment variables when starting the server:
 
+<Note>
+Backend-first: choose `UPNEXT_BACKEND` before startup. This example uses `sqlite`.
+</Note>
+
 ```bash
 UPNEXT_AUTH_ENABLED=true \
 UPNEXT_API_KEY=your-secret-key \
+UPNEXT_BACKEND=sqlite \
 UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
 UPNEXT_REDIS_URL=redis://localhost:6379 \
 upnext server start --port 8080
@@ -25,7 +30,7 @@ On first startup, this creates a seed **admin** user with an API key matching th
 When authentication is enabled:
 
 1. Every request to `/api/v1/*` must include an `Authorization: Bearer <key>` header
-2. The server hashes the key and looks it up in the database
+2. The server hashes the key and looks it up in the configured persistence backend
 3. If the key is valid and active, the request proceeds
 4. If the key is missing, invalid, or disabled, the server returns `401` or `403`
 

@@ -19,8 +19,8 @@ import server.services.apis.tracking as api_tracking_module
 import server.services.operations.alerts as alerts_module
 from fastapi import FastAPI, HTTPException, Response
 from httpx import ASGITransport, AsyncClient
-from server.db.repositories import JobRepository
-from server.db.tables import PendingArtifact
+from server.backends.sql.shared.repositories import JobRepository
+from server.backends.sql.shared.tables import PendingArtifactTable
 from server.routes import v1_router
 from server.services.jobs.metrics import FunctionQueueDepthStats
 from shared.contracts import (
@@ -97,7 +97,7 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
         "artifact-job-1",
         CreateArtifactRequest(name="summary", type=ArtifactType.TEXT, data="hello"),
         create_response,
-        db=sqlite_db,
+        backend=sqlite_db,
     )
     assert isinstance(created, ArtifactResponse)
     assert create_response.status_code == 200
@@ -106,29 +106,29 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
     assert created.type == ArtifactType.TEXT
     assert created.size_bytes == 5
 
-    listed = await artifacts_root_route.list_artifacts("artifact-job-1", db=sqlite_db)
+    listed = await artifacts_root_route.list_artifacts("artifact-job-1", backend=sqlite_db)
     assert listed.total == 1
     assert listed.artifacts[0].id == created.id
     assert listed.artifacts[0].storage_backend == "local"
     assert listed.artifacts[0].storage_key
 
-    fetched = await artifacts_root_route.get_artifact(created.id, db=sqlite_db)
+    fetched = await artifacts_root_route.get_artifact(created.id, backend=sqlite_db)
     assert fetched.id == created.id
     assert fetched.job_id == "artifact-job-1"
 
-    content = await artifacts_root_route.get_artifact_content(created.id, db=sqlite_db)
+    content = await artifacts_root_route.get_artifact_content(created.id, backend=sqlite_db)
     assert content.body == b"hello"
 
-    deleted = await artifacts_root_route.delete_artifact(created.id, db=sqlite_db)
+    deleted = await artifacts_root_route.delete_artifact(created.id, backend=sqlite_db)
     assert deleted.status == "deleted"
     assert deleted.id == created.id
 
     with pytest.raises(HTTPException, match="Artifact not found") as get_missing_exc:
-        await artifacts_root_route.get_artifact(created.id, db=sqlite_db)
+        await artifacts_root_route.get_artifact(created.id, backend=sqlite_db)
     assert get_missing_exc.value.status_code == 404
 
     with pytest.raises(HTTPException, match="Artifact not found") as delete_missing_exc:
-        await artifacts_root_route.delete_artifact(created.id, db=sqlite_db)
+        await artifacts_root_route.delete_artifact(created.id, backend=sqlite_db)
     assert delete_missing_exc.value.status_code == 404
 
 
@@ -150,11 +150,11 @@ async def test_job_scoped_artifact_routes_are_available(
             }
         )
 
-    from server.routes.depends import require_database
+    from server.routes.depends import require_backend
 
     app = FastAPI()
     app.include_router(v1_router)
-    app.dependency_overrides[require_database] = lambda: sqlite_db
+    app.dependency_overrides[require_backend] = lambda: sqlite_db
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -188,7 +188,7 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
             name="payload", type=ArtifactType.JSON, data={"ok": True}
         ),
         response,
-        db=sqlite_db,
+        backend=sqlite_db,
     )
     assert isinstance(queued, ArtifactQueuedResponse)
     assert response.status_code == 202
@@ -199,8 +199,8 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
         rows = (
             (
                 await session.execute(
-                    select(PendingArtifact).where(
-                        PendingArtifact.job_id == "missing-job"
+                    select(PendingArtifactTable).where(
+                        PendingArtifactTable.job_id == "missing-job"
                     )
                 )
             )
@@ -212,7 +212,7 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
     assert rows[0].name == "payload"
     assert rows[0].size_bytes == len(json.dumps({"ok": True}).encode("utf-8"))
 
-    listed = await artifacts_root_route.list_artifacts("missing-job", db=sqlite_db)
+    listed = await artifacts_root_route.list_artifacts("missing-job", backend=sqlite_db)
     assert listed.total == 0
     assert listed.artifacts == []
 
@@ -220,30 +220,15 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
 @pytest.mark.asyncio
 async def test_artifact_routes_handle_database_unavailable(monkeypatch) -> None:
     import server.routes.depends as depends_module
-    from server.routes.depends import require_database
+    from server.routes.depends import require_backend
 
     def _no_db():
         raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr(depends_module, "get_database", _no_db)
+    monkeypatch.setattr(depends_module, "get_backend", _no_db)
 
-    with pytest.raises(HTTPException, match="Database not available") as exc:
-        require_database()
-    assert exc.value.status_code == 503
-
-
-@pytest.mark.asyncio
-async def test_list_functions_returns_503_when_database_unavailable(monkeypatch) -> None:
-    import server.routes.depends as depends_module
-    from server.routes.depends import require_database
-
-    def _no_db():
-        raise RuntimeError("db unavailable")
-
-    monkeypatch.setattr(depends_module, "get_database", _no_db)
-
-    with pytest.raises(HTTPException) as exc:
-        require_database()
+    with pytest.raises(HTTPException, match="Backend not available") as exc:
+        require_backend()
     assert exc.value.status_code == 503
 
 
@@ -352,7 +337,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
-    all_functions = await functions_route.list_functions(type=None, db=sqlite_db)
+    all_functions = await functions_route.list_functions(type=None, backend=sqlite_db)
     assert all_functions.total == 2
 
     by_key = {item.key: item for item in all_functions.functions}
@@ -378,7 +363,7 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
     assert set(event.workers) == {"host-1", "workerid"}
     assert event.active is True
 
-    event_only = await functions_route.list_functions(type=FunctionType.EVENT, db=sqlite_db)
+    event_only = await functions_route.list_functions(type=FunctionType.EVENT, backend=sqlite_db)
     assert event_only.total == 1
     assert event_only.functions[0].key == "fn.event"
 
@@ -418,7 +403,7 @@ async def test_list_functions_has_no_alert_delivery_side_effect(
     )
     monkeypatch.setattr(alerts_module, "emit_function_alerts", _emit_raises)
 
-    out = await functions_route.list_functions(type=None, db=sqlite_db)
+    out = await functions_route.list_functions(type=None, backend=sqlite_db)
     assert out.total == 1
     assert out.functions[0].key == "fn.task"
 
@@ -522,7 +507,7 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
-    detail = await functions_route.get_function("fn.detail", db=sqlite_db)
+    detail = await functions_route.get_function("fn.detail", backend=sqlite_db)
     assert detail.type == FunctionType.CRON
     assert detail.runs_24h == 3
     assert detail.success_rate == 33.3
@@ -543,21 +528,6 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
     ]
     assert detail.recent_runs[0].duration_ms is None
     assert detail.recent_runs[1].duration_ms == 3000.0
-
-
-@pytest.mark.asyncio
-async def test_get_function_returns_503_when_database_unavailable(monkeypatch) -> None:
-    import server.routes.depends as depends_module
-    from server.routes.depends import require_database
-
-    def _no_db():
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr(depends_module, "get_database", _no_db)
-
-    with pytest.raises(HTTPException) as exc:
-        require_database()
-    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio

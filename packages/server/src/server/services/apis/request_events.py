@@ -2,7 +2,8 @@
 
 from collections.abc import AsyncGenerator, Mapping
 from datetime import UTC, datetime
-from typing import Any
+
+from redis.asyncio import Redis
 
 from shared.keys import API_REQUESTS_STREAM
 
@@ -20,7 +21,7 @@ def stream_id_ceil(value: datetime) -> str:
 
 
 async def _xrevrange_compat(
-    redis_client: Any,
+    redis_client: Redis,
     *,
     max_id: str,
     min_id: str,
@@ -45,7 +46,7 @@ async def _xrevrange_compat(
 
 
 async def iter_api_request_rows(
-    redis_client: Any,
+    redis_client: Redis,
     *,
     max_id: str,
     min_id: str,

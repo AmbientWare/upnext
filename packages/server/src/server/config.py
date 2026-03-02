@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Literal
 
 from cryptography.fernet import Fernet
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared._version import __version__
+
+from server.backends.types import PersistenceBackends
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,7 @@ class Settings(BaseSettings):
 
     redis_url: str | None = None
     database_url: str | None = None
+    backend: PersistenceBackends = PersistenceBackends.REDIS
     env: Environments = Environments.DEV
     host: str = "0.0.0.0"
     port: int = 8080
@@ -100,7 +103,8 @@ class Settings(BaseSettings):
     event_subscriber_invalid_stream_maxlen: int = 10_000
 
     # Cleanup service tuning.
-    cleanup_retention_days: int = 30
+    # Redis defaults to shorter 6 hour, 7 days for SQL backends
+    cleanup_retention_hours: int | None = Field(default=None, ge=1)
     cleanup_interval_hours: int = 1
     cleanup_pending_retention_hours: int = 24
     cleanup_pending_promote_batch: int = 500
@@ -151,6 +155,13 @@ class Settings(BaseSettings):
             return aliases.get(normalized, normalized)
         return value
 
+    @field_validator("backend", mode="before")
+    @classmethod
+    def _normalize_backend(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
     @property
     def is_production(self) -> bool:
         return self.env.is_production()
@@ -160,16 +171,20 @@ class Settings(BaseSettings):
         return self.env.is_development()
 
     @property
-    def effective_database_url(self) -> str:
-        """Get database URL, defaulting to SQLite if not configured."""
-        if self.database_url:
+    def effective_database_url(self) -> str | None:
+        """Get effective SQL database URL for SQL backends."""
+        if self.backend == PersistenceBackends.SQLITE:
+            return self.database_url or "sqlite+aiosqlite:///upnext.db"
+        if self.backend == PersistenceBackends.POSTGRES:
             return self.database_url
-        return "sqlite+aiosqlite:///upnext.db"
+        return None
 
     @property
-    def is_sqlite(self) -> bool:
-        """Check if using SQLite database."""
-        return self.effective_database_url.startswith("sqlite")
+    def is_sql_backend(self) -> bool:
+        return self.backend in {
+            PersistenceBackends.POSTGRES,
+            PersistenceBackends.SQLITE,
+        }
 
     @property
     def cors_allow_origins_list(self) -> list[str]:
@@ -183,9 +198,14 @@ class Settings(BaseSettings):
         """Resolve secret read policy from explicit configuration."""
         return self.secrets_require_admin_reads
 
-    def model_post_init(self, __context: object) -> None:
+    def model_post_init(self, _context: object) -> None:
         if not self.secret_key:
             self.secret_key = _get_or_create_secret_key()
+        if self.cleanup_retention_hours is None:
+            # Redis defaults to shorter 6 hour, 7 days for SQL backends
+            self.cleanup_retention_hours = (
+                6 if self.backend == PersistenceBackends.REDIS else 7 * 24
+            )
 
 
 @lru_cache

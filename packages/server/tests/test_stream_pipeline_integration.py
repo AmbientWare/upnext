@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from server.db.tables import JobHistory
+from server.backends.sql.shared.tables import JobHistoryTable
 from server.services.events import StreamSubscriber, StreamSubscriberConfig
 from shared.keys import EVENTS_STREAM
 from upnext.engine.status import StatusPublisher
@@ -49,7 +49,7 @@ async def test_worker_events_round_trip_to_database_via_stream_subscriber(
     assert pending["pending"] == 0
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, job_id)
+        row = await session.get(JobHistoryTable, job_id)
         assert row is not None
         assert row.status == "complete"
         assert row.function == "task_key"
@@ -104,7 +104,7 @@ async def test_stale_pending_worker_event_is_reclaimed_and_persisted_once(
     assert pending["pending"] == 0
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, job_id)
+        row = await session.get(JobHistoryTable, job_id)
         assert row is not None
         assert row.status == "active"
         assert row.attempts == 1

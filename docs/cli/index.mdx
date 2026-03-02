@@ -80,8 +80,12 @@ Displays a table showing function names, types, and configuration.
 Start the UpNext API server and web dashboard.
 
 ```bash
-upnext server start [--host HOST] [--port PORT]
+upnext server start [--host HOST] [--port PORT] [--backend BACKEND] [--database-url URL] [--redis-url URL] [--reload] [--verbose]
 ```
+
+<Note>
+Backend-first: persistence backend is selected by `--backend` or `UPNEXT_BACKEND`. Passing `--database-url` does not select `sqlite` or `postgres` by itself.
+</Note>
 
 **Options:**
 
@@ -89,24 +93,39 @@ upnext server start [--host HOST] [--port PORT]
 | --- | --- | --- |
 | `--host` | `0.0.0.0` | Host to bind to |
 | `--port` | `8080` | Port to listen on |
+| `--backend` | `UPNEXT_BACKEND` or `redis` | Persistence backend: `redis`, `sqlite`, or `postgres` |
+| `--database-url` | `UPNEXT_DATABASE_URL` or unset | SQL database URL for server startup checks and migrations |
+| `--redis-url` | `UPNEXT_REDIS_URL` or unset | Redis URL for runtime streams and queue integration |
+| `--reload` | `false` | Enable auto-reload |
+| `--verbose`, `-v` | `false` | Enable verbose logging |
 
 **Examples:**
 
 ```bash
-# Start with PostgreSQL
-UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
+# Start with Redis persistence backend (default)
+UPNEXT_BACKEND=redis \
 UPNEXT_REDIS_URL=redis://localhost:6379 \
 upnext server start --port 8080
 
-# Start with SQLite
+# Start with SQLite persistence backend via CLI flag
 UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
 UPNEXT_REDIS_URL=redis://localhost:6379 \
-upnext server start
+upnext server start --backend sqlite
+
+# Start with PostgreSQL persistence backend (run migrations first)
+UPNEXT_BACKEND=postgres \
+UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
+upnext server db upgrade head
+
+UPNEXT_BACKEND=postgres \
+UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext server start --port 8080
 ```
 
 ## `upnext server db`
 
-Database migration commands powered by Alembic.
+SQL migration commands powered by Alembic.
 
 ### `upnext server db upgrade`
 

@@ -9,9 +9,10 @@ from contextlib import ExitStack, contextmanager
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Annotated
 
 import typer
+from server.backends.types import PersistenceBackends
 
 from upnext.cli._console import dim, error_panel, setup_logging, success, warning
 
@@ -55,7 +56,11 @@ def _find_packaged_alembic_paths() -> tuple[Traversable, Traversable] | None:
     return alembic_ini, alembic_dir
 
 
-def _set_server_env(database_url: str | None, redis_url: str | None) -> None:
+def _set_server_env(
+    database_url: str | None,
+    redis_url: str | None,
+    backend: PersistenceBackends | str | None = None,
+) -> None:
     """Set server-related env vars for child imports/commands."""
     if database_url:
         os.environ["UPNEXT_DATABASE_URL"] = database_url
@@ -63,6 +68,10 @@ def _set_server_env(database_url: str | None, redis_url: str | None) -> None:
         os.environ["DATABASE_URL"] = database_url
     if redis_url:
         os.environ["UPNEXT_REDIS_URL"] = redis_url
+    if backend is not None:
+        os.environ["UPNEXT_BACKEND"] = (
+            backend.value if isinstance(backend, PersistenceBackends) else backend
+        )
 
 
 def _build_alembic_config(
@@ -201,7 +210,7 @@ def _run_alembic_command(
         raise typer.Exit(1) from e
 
 
-def _resolve_effective_database_url(database_url: str | None) -> str:
+def _resolve_effective_database_url(database_url: str | None) -> str | None:
     """Resolve effective database URL from CLI override or server settings."""
     if database_url:
         return database_url
@@ -218,19 +227,22 @@ def _resolve_effective_database_url(database_url: str | None) -> str:
         )
         raise typer.Exit(1) from e
 
-    return get_settings().effective_database_url
+    settings = get_settings()
+    if settings.backend == PersistenceBackends.REDIS:
+        return None
+    return settings.effective_database_url
 
 
 async def _get_missing_required_tables(database_url: str) -> list[str]:
     """Check required schema tables for a database URL."""
-    from server.db.session import Database
+    from server.backends.sql.base import BaseSqlBackend
 
-    db = Database(database_url)
-    await db.connect()
+    backend = BaseSqlBackend(database_url)
+    await backend.connect()
     try:
-        return await db.get_missing_tables(_REQUIRED_TABLES)
+        return await backend.get_missing_tables(_REQUIRED_TABLES)
     finally:
-        await db.disconnect()
+        await backend.disconnect()
 
 
 def _ensure_database_schema_ready(database_url: str | None, *, verbose: bool) -> None:
@@ -240,6 +252,8 @@ def _ensure_database_schema_ready(database_url: str | None, *, verbose: bool) ->
     SQLite is skipped because tables are auto-created in server startup.
     """
     effective_database_url = _resolve_effective_database_url(database_url)
+    if not effective_database_url:
+        return
     if effective_database_url.startswith("sqlite"):
         return
 
@@ -284,6 +298,15 @@ def start(
     host: str = typer.Option("0.0.0.0", "--host", help="Bind host"),
     port: int = typer.Option(8080, "--port", help="Bind port"),
     reload: bool = typer.Option(False, "--reload", help="Enable auto-reload"),
+    backend: Annotated[
+        PersistenceBackends | None,
+        typer.Option(
+            "--backend",
+            envvar="UPNEXT_BACKEND",
+            case_sensitive=False,
+            help="Persistence backend for hosted server: redis, sqlite, or postgres",
+        ),
+    ] = None,
     database_url: str | None = typer.Option(
         None,
         "--database-url",
@@ -308,7 +331,7 @@ def start(
     """
     setup_logging(verbose=verbose)
 
-    _set_server_env(database_url, redis_url)
+    _set_server_env(database_url, redis_url, backend)
 
     server_pkg_dir = _import_server_main()
     _ensure_database_schema_ready(database_url, verbose=verbose)

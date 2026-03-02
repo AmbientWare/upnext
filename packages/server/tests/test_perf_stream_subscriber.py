@@ -85,4 +85,5 @@ async def test_perf_stream_subscriber_ingestion_throughput(
     )
 
     assert processed_total == total_events
-    assert events_per_second > 0
+    assert len(latencies_ms) == total_events
+    assert not publish_started

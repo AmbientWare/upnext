@@ -1,0 +1,61 @@
+---
+title: Persistence Backends
+description: Choose and configure the server persistence backend.
+icon: database
+---
+
+UpNext server persistence is selected with `UPNEXT_BACKEND` or `upnext server start --backend`. Valid values are `redis`, `sqlite`, and `postgres`.
+
+## Backend comparison
+
+| Backend | Set `UPNEXT_BACKEND` | Persistent store | `UPNEXT_DATABASE_URL` | Migrations |
+| --- | --- | --- | --- | --- |
+| Redis | `redis` | Redis keys | Ignored for persistence | Not used |
+| SQLite | `sqlite` | SQLite file | Optional (defaults to `sqlite+aiosqlite:///upnext.db`) | Auto-creates tables at startup |
+| PostgreSQL | `postgres` | PostgreSQL | Required | Required before startup |
+
+## Startup and migration matrix
+
+| Backend | Required env | Startup behavior |
+| --- | --- | --- |
+| Redis | `UPNEXT_BACKEND=redis`, `UPNEXT_REDIS_URL` | Server starts without SQL migrations |
+| SQLite | `UPNEXT_BACKEND=sqlite` (optional `UPNEXT_DATABASE_URL`) | Tables are auto-created on startup |
+| PostgreSQL | `UPNEXT_BACKEND=postgres`, `UPNEXT_DATABASE_URL` | Fails fast if required tables are missing; run migrations first |
+
+## Redis has two roles
+
+Redis can be used in two separate ways:
+
+1. As the **persistence backend** when `UPNEXT_BACKEND=redis`.
+2. As the **runtime stream/queue dependency** through `UPNEXT_REDIS_URL` for workers and real-time server features.
+
+These are related but separate settings. You can run SQL persistence (`sqlite` or `postgres`) while still using `UPNEXT_REDIS_URL` for stream processing and real-time updates.
+
+## Example startup commands
+
+```bash
+# Redis persistence backend (default behavior if UPNEXT_BACKEND is omitted)
+UPNEXT_BACKEND=redis \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext server start --port 8080
+```
+
+```bash
+# SQLite persistence backend
+UPNEXT_BACKEND=sqlite \
+UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext server start --port 8080
+```
+
+```bash
+# PostgreSQL persistence backend
+UPNEXT_BACKEND=postgres \
+UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
+upnext server db upgrade head
+
+UPNEXT_BACKEND=postgres \
+UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext server start --port 8080
+```

@@ -3,25 +3,32 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.db.repositories.models import ArtifactRecord, PendingArtifactRecord
-from server.db.repositories.utils import infer_artifact_metadata
-from server.db.tables import Artifact, JobHistory, PendingArtifact
+from server.backends.base.repositories import BaseArtifactRepository
+from server.backends.base.repository_models import (
+    ArtifactRecord,
+    PendingArtifactRecord,
+)
+from server.backends.base.utils import infer_artifact_metadata
+from server.backends.sql.shared.tables import (
+    ArtifactTable,
+    JobHistoryTable,
+    PendingArtifactTable,
+)
 
 
-class ArtifactRepository:
+class PostgresArtifactRepository(BaseArtifactRepository):
     """Repository for artifact operations."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     @staticmethod
-    def _to_artifact_record(artifact: Artifact) -> ArtifactRecord:
-        """Convert ORM Artifact rows into typed repository records."""
+    def _to_artifact_record(artifact: ArtifactTable) -> ArtifactRecord:
+        """Convert ORM ArtifactTable rows into typed repository records."""
         return ArtifactRecord(
             id=artifact.id,
             job_id=artifact.job_id,
@@ -38,8 +45,8 @@ class ArtifactRepository:
         )
 
     @staticmethod
-    def _to_pending_record(pending: PendingArtifact) -> PendingArtifactRecord:
-        """Convert ORM PendingArtifact rows into typed repository records."""
+    def _to_pending_record(pending: PendingArtifactTable) -> PendingArtifactRecord:
+        """Convert ORM PendingArtifactTable rows into typed repository records."""
         return PendingArtifactRecord(
             id=pending.id,
             job_id=pending.job_id,
@@ -60,7 +67,7 @@ class ArtifactRepository:
         job_id: str,
         name: str,
         artifact_type: str,
-        data: Any | None = None,
+        data: object | None = None,
         size_bytes: int | None = None,
         path: str | None = None,
         content_type: str | None = None,
@@ -78,7 +85,7 @@ class ArtifactRepository:
             content_type=content_type,
         )
 
-        artifact = Artifact(
+        artifact = ArtifactTable(
             job_id=job_id,
             name=name,
             type=artifact_type,
@@ -99,7 +106,7 @@ class ArtifactRepository:
         job_id: str,
         name: str,
         artifact_type: str,
-        data: Any | None = None,
+        data: object | None = None,
         size_bytes: int | None = None,
         path: str | None = None,
         content_type: str | None = None,
@@ -117,7 +124,7 @@ class ArtifactRepository:
             content_type=content_type,
         )
 
-        pending = PendingArtifact(
+        pending = PendingArtifactTable(
             job_id=job_id,
             name=name,
             type=artifact_type,
@@ -141,9 +148,11 @@ class ArtifactRepository:
         Returns number of promoted rows.
         """
         pending_query = (
-            select(PendingArtifact)
-            .where(PendingArtifact.job_id == job_id)
-            .order_by(PendingArtifact.created_at.asc(), PendingArtifact.id.asc())
+            select(PendingArtifactTable)
+            .where(PendingArtifactTable.job_id == job_id)
+            .order_by(
+                PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
+            )
             .with_for_update(skip_locked=True)
         )
         pending_result = await self._session.execute(pending_query)
@@ -155,9 +164,11 @@ class ArtifactRepository:
     ) -> list[ArtifactRecord]:
         """Promote pending artifacts for one job and return promoted rows."""
         pending_query = (
-            select(PendingArtifact)
-            .where(PendingArtifact.job_id == job_id)
-            .order_by(PendingArtifact.created_at.asc(), PendingArtifact.id.asc())
+            select(PendingArtifactTable)
+            .where(PendingArtifactTable.job_id == job_id)
+            .order_by(
+                PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
+            )
             .with_for_update(skip_locked=True)
         )
         pending_result = await self._session.execute(pending_query)
@@ -175,13 +186,15 @@ class ArtifactRepository:
             return 0
 
         ready_ids_query = (
-            select(PendingArtifact.id)
+            select(PendingArtifactTable.id)
             .where(
-                select(JobHistory.id)
-                .where(JobHistory.id == PendingArtifact.job_id)
+                select(JobHistoryTable.id)
+                .where(JobHistoryTable.id == PendingArtifactTable.job_id)
                 .exists()
             )
-            .order_by(PendingArtifact.created_at.asc(), PendingArtifact.id.asc())
+            .order_by(
+                PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
+            )
             .limit(limit)
             .with_for_update(skip_locked=True)
         )
@@ -191,9 +204,11 @@ class ArtifactRepository:
             return 0
 
         ready_rows_query = (
-            select(PendingArtifact)
-            .where(PendingArtifact.id.in_(ready_ids))
-            .order_by(PendingArtifact.created_at.asc(), PendingArtifact.id.asc())
+            select(PendingArtifactTable)
+            .where(PendingArtifactTable.id.in_(ready_ids))
+            .order_by(
+                PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
+            )
         )
         ready_rows_result = await self._session.execute(ready_rows_query)
         ready_rows = list(ready_rows_result.scalars().all())
@@ -205,9 +220,11 @@ class ArtifactRepository:
         """Delete stale pending artifacts and return deleted rows."""
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
         query = (
-            select(PendingArtifact)
-            .where(PendingArtifact.created_at < cutoff)
-            .order_by(PendingArtifact.created_at.asc(), PendingArtifact.id.asc())
+            select(PendingArtifactTable)
+            .where(PendingArtifactTable.created_at < cutoff)
+            .order_by(
+                PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
+            )
             .with_for_update(skip_locked=True)
         )
         result = await self._session.execute(query)
@@ -217,25 +234,27 @@ class ArtifactRepository:
 
         row_ids = [row.id for row in rows]
         await self._session.execute(
-            delete(PendingArtifact).where(PendingArtifact.id.in_(row_ids))
+            delete(PendingArtifactTable).where(PendingArtifactTable.id.in_(row_ids))
         )
         return [self._to_pending_record(row) for row in rows]
 
-    async def _promote_pending_rows(self, pending_rows: list[PendingArtifact]) -> int:
+    async def _promote_pending_rows(
+        self, pending_rows: list[PendingArtifactTable]
+    ) -> int:
         """Promote rows into artifacts and remove source pending rows atomically."""
         return len(await self._promote_pending_rows_with_artifacts(pending_rows))
 
     async def _promote_pending_rows_with_artifacts(
-        self, pending_rows: list[PendingArtifact]
+        self, pending_rows: list[PendingArtifactTable]
     ) -> list[ArtifactRecord]:
         """Promote rows into artifacts and return created artifact models."""
         if not pending_rows:
             return []
 
         pending_ids = [row.id for row in pending_rows]
-        created: list[Artifact] = []
+        created: list[ArtifactTable] = []
         for row in pending_rows:
-            artifact = Artifact(
+            artifact = ArtifactTable(
                 job_id=row.job_id,
                 name=row.name,
                 type=row.type,
@@ -253,13 +272,13 @@ class ArtifactRepository:
 
         await self._session.flush()
         await self._session.execute(
-            delete(PendingArtifact).where(PendingArtifact.id.in_(pending_ids))
+            delete(PendingArtifactTable).where(PendingArtifactTable.id.in_(pending_ids))
         )
         return [self._to_artifact_record(artifact) for artifact in created]
 
     async def get_by_id(self, artifact_id: str) -> ArtifactRecord | None:
         """Get an artifact by ID."""
-        query = select(Artifact).where(Artifact.id == artifact_id)
+        query = select(ArtifactTable).where(ArtifactTable.id == artifact_id)
         result = await self._session.execute(query)
         artifact = result.scalar_one_or_none()
         if artifact is None:
@@ -269,9 +288,9 @@ class ArtifactRepository:
     async def list_by_job(self, job_id: str) -> list[ArtifactRecord]:
         """List all artifacts for a job."""
         query = (
-            select(Artifact)
-            .where(Artifact.job_id == job_id)
-            .order_by(Artifact.created_at.desc())
+            select(ArtifactTable)
+            .where(ArtifactTable.job_id == job_id)
+            .order_by(ArtifactTable.created_at.desc())
         )
         result = await self._session.execute(query)
         return [
@@ -283,9 +302,9 @@ class ArtifactRepository:
         if not job_ids:
             return []
         query = (
-            select(Artifact)
-            .where(Artifact.job_id.in_(job_ids))
-            .order_by(Artifact.created_at.desc())
+            select(ArtifactTable)
+            .where(ArtifactTable.job_id.in_(job_ids))
+            .order_by(ArtifactTable.created_at.desc())
         )
         result = await self._session.execute(query)
         return [
@@ -294,6 +313,6 @@ class ArtifactRepository:
 
     async def delete(self, artifact_id: str) -> bool:
         """Delete an artifact by ID."""
-        query = delete(Artifact).where(Artifact.id == artifact_id)
+        query = delete(ArtifactTable).where(ArtifactTable.id == artifact_id)
         result = await self._session.execute(query)
         return int(result.rowcount or 0) > 0  # type: ignore

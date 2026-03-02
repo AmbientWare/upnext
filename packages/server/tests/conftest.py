@@ -2,23 +2,26 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any, Generator
 
 import pytest
 import pytest_asyncio
 from fakeredis.aioredis import FakeRedis
-
-from server.db.session import Database
-from server.db.session import init_database as _init_database
-import server.db.session as session_module
+from server.backends import reset_backend_runtime, reset_backend_service
+from server.backends.sql.base import BaseSqlBackend
 from server.routes.jobs.jobs_stream import clear_trends_cache
 
 
 @pytest.fixture(autouse=True)
-def _clear_trends_cache() -> None:
+def _clear_trends_cache() -> Generator[Any, Any, Any]:
     """Clear the module-level trends snapshot cache between tests."""
     clear_trends_cache()
+    reset_backend_service()
+    reset_backend_runtime()
     yield  # type: ignore[misc]
     clear_trends_cache()
+    reset_backend_service()
+    reset_backend_runtime()
 
 
 @pytest_asyncio.fixture
@@ -31,13 +34,26 @@ async def fake_redis() -> AsyncIterator[FakeRedis]:
 
 
 @pytest_asyncio.fixture
-async def sqlite_db(tmp_path: Path) -> AsyncIterator[Database]:
+async def sqlite_db(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[BaseSqlBackend]:
     db_path = tmp_path / "server-test.db"
-    db = _init_database(f"sqlite+aiosqlite:///{db_path}")
+    db = BaseSqlBackend(f"sqlite+aiosqlite:///{db_path}")
     await db.connect()
     await db.create_tables()
+    import server.auth as auth_module
+    import server.routes.jobs.jobs_stream as jobs_stream_module
+    import server.services.events.processing as event_processing_module
+    import server.services.events.subscriber as event_subscriber_module
+    import server.services.operations.cleanup as cleanup_module
+
+    monkeypatch.setattr(event_processing_module, "get_backend", lambda: db)
+    monkeypatch.setattr(event_subscriber_module, "get_backend", lambda: db)
+    monkeypatch.setattr(jobs_stream_module, "get_backend", lambda: db)
+    monkeypatch.setattr(cleanup_module, "get_backend", lambda: db)
+    monkeypatch.setattr(auth_module, "get_backend", lambda: db)
     try:
         yield db
     finally:
         await db.disconnect()
-        session_module._database = None  # type: ignore[attr-defined]

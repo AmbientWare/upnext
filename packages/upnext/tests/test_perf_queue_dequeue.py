@@ -97,5 +97,4 @@ async def test_perf_queue_mixed_load_dequeue_throughput(perf_redis) -> None:
     )
 
     assert dequeued == total_jobs
-    assert jobs_per_second > 0
     await queue.close()

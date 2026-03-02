@@ -2,7 +2,6 @@
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
 from shared.contracts import (
     CronJobSource,
@@ -44,7 +43,7 @@ class Base(DeclarativeBase):
     )
 
 
-class User(Base):
+class UserTable(Base):
     """System users for authentication."""
 
     __tablename__ = "users"
@@ -53,15 +52,15 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Relationships
-    api_keys: Mapped[list["ApiKey"]] = relationship(
-        "ApiKey", back_populates="user", cascade="all, delete-orphan"
+    api_keys: Mapped[list["ApiKeyTable"]] = relationship(
+        "ApiKeyTable", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
-        return f"<User(id={self.id!r}, username={self.username!r})>"
+        return f"<UserTable(id={self.id!r}, username={self.username!r})>"
 
 
-class ApiKey(Base):
+class ApiKeyTable(Base):
     """API keys for authenticating requests."""
 
     __tablename__ = "api_keys"
@@ -78,7 +77,7 @@ class ApiKey(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="api_keys")
+    user: Mapped["UserTable"] = relationship("UserTable", back_populates="api_keys")
 
     # Indexes
     __table_args__ = (
@@ -87,10 +86,13 @@ class ApiKey(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<ApiKey(id={self.id!r}, prefix={self.key_prefix!r}, user_id={self.user_id!r})>"
+        return (
+            f"<ApiKeyTable(id={self.id!r}, prefix={self.key_prefix!r}, "
+            f"user_id={self.user_id!r})>"
+        )
 
 
-class Secret(Base):
+class SecretTable(Base):
     """Named secrets containing encrypted key-value pairs."""
 
     __tablename__ = "secrets"
@@ -101,10 +103,10 @@ class Secret(Base):
     __table_args__ = (Index("ix_secrets_name", "name"),)
 
     def __repr__(self) -> str:
-        return f"<Secret(id={self.id!r}, name={self.name!r})>"
+        return f"<SecretTable(id={self.id!r}, name={self.name!r})>"
 
 
-class JobHistory(Base):
+class JobHistoryTable(Base):
     """
     Job history stored in database.
 
@@ -150,23 +152,23 @@ class JobHistory(Base):
     progress: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Data (stored as JSON)
-    kwargs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    kwargs: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     schedule: Mapped[str | None] = mapped_column(String(120), nullable=True)
     cron_window_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     startup_reconciled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
     startup_policy: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    checkpoint: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     checkpoint_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     event_pattern: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_handler_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    result: Mapped[Any] = mapped_column(JSON, nullable=True)
+    result: Mapped[object | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
-    artifacts: Mapped[list["Artifact"]] = relationship(
-        "Artifact", back_populates="job", cascade="all, delete-orphan"
+    artifacts: Mapped[list["ArtifactTable"]] = relationship(
+        "ArtifactTable", back_populates="job", cascade="all, delete-orphan"
     )
 
     # Indexes for common queries
@@ -191,7 +193,10 @@ class JobHistory(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<JobHistory(id={self.id!r}, function={self.function!r}, status={self.status!r})>"
+        return (
+            f"<JobHistoryTable(id={self.id!r}, function={self.function!r}, "
+            f"status={self.status!r})>"
+        )
 
     @property
     def duration_ms(self) -> float | None:
@@ -225,7 +230,7 @@ class JobHistory(Base):
         return TaskJobSource()
 
 
-class Artifact(Base):
+class ArtifactTable(Base):
     """
     Job artifacts (files, images, data) stored during execution.
 
@@ -256,7 +261,9 @@ class Artifact(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
-    job: Mapped["JobHistory"] = relationship("JobHistory", back_populates="artifacts")
+    job: Mapped["JobHistoryTable"] = relationship(
+        "JobHistoryTable", back_populates="artifacts"
+    )
 
     # Indexes
     __table_args__ = (
@@ -266,10 +273,13 @@ class Artifact(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Artifact(id={self.id!r}, job_id={self.job_id!r}, name={self.name!r})>"
+        return (
+            f"<ArtifactTable(id={self.id!r}, job_id={self.job_id!r}, "
+            f"name={self.name!r})>"
+        )
 
 
-class PendingArtifact(Base):
+class PendingArtifactTable(Base):
     """
     Staging table for artifacts received before job_history exists.
 
@@ -302,6 +312,6 @@ class PendingArtifact(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<PendingArtifact(id={self.id!r}, job_id={self.job_id!r}, "
+            f"<PendingArtifactTable(id={self.id!r}, job_id={self.job_id!r}, "
             f"name={self.name!r})>"
         )

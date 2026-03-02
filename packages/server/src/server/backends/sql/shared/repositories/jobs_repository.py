@@ -4,29 +4,26 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypeVar
+from typing import cast
 
 from sqlalchemy import and_, case, delete, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
-from server.db.repositories.models import (
+from server.backends.base.exceptions import InvalidCursorError
+from server.backends.base.models import Job
+from server.backends.base.repositories import BaseJobRepository
+from server.backends.base.repository_models import (
     FunctionJobStats,
     FunctionWaitStats,
     JobHourlyTrendRow,
     JobRecordCreate,
     JobStatsSummary,
 )
-from server.db.tables import JobHistory
-
-SelectT = TypeVar("SelectT", bound=Select[Any])
+from server.backends.sql.shared.tables import JobHistoryTable
 
 
-class InvalidCursorError(ValueError):
-    """Raised when a pagination cursor references a non-existent job."""
-
-
-class JobRepository:
+class PostgresJobRepository(BaseJobRepository):
     """
     Repository for job history operations.
 
@@ -35,6 +32,78 @@ class JobRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    @staticmethod
+    def _to_model(payload: object) -> Job:
+        if not isinstance(payload, JobHistoryTable):
+            return BaseJobRepository._to_model(payload)
+        row = payload
+        return Job(
+            id=row.id,
+            function=row.function,
+            function_name=row.function_name,
+            job_key=row.job_key,
+            job_type=row.job_type,
+            status=row.status,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            scheduled_at=row.scheduled_at,
+            started_at=row.started_at,
+            completed_at=row.completed_at,
+            queue_wait_ms=row.queue_wait_ms,
+            attempts=row.attempts,
+            max_retries=row.max_retries,
+            timeout=row.timeout,
+            worker_id=row.worker_id,
+            parent_id=row.parent_id,
+            root_id=row.root_id,
+            progress=row.progress,
+            kwargs=dict(row.kwargs or {}),
+            schedule=row.schedule,
+            cron_window_at=row.cron_window_at,
+            startup_reconciled=row.startup_reconciled,
+            startup_policy=row.startup_policy,
+            checkpoint=row.checkpoint,
+            checkpoint_at=row.checkpoint_at,
+            event_pattern=row.event_pattern,
+            event_handler_name=row.event_handler_name,
+            result=row.result,
+            error=row.error,
+        )
+
+    @staticmethod
+    def _apply_job_to_row(row: JobHistoryTable, job: Job) -> None:
+        row.id = job.id
+        row.function = job.function
+        row.function_name = job.function_name
+        row.job_key = job.job_key
+        row.job_type = job.job_type
+        row.status = job.status
+        now = datetime.now(UTC)
+        row.created_at = job.created_at or now
+        row.updated_at = job.updated_at or now
+        row.scheduled_at = job.scheduled_at
+        row.started_at = job.started_at
+        row.completed_at = job.completed_at
+        row.queue_wait_ms = job.queue_wait_ms
+        row.attempts = job.attempts
+        row.max_retries = job.max_retries
+        row.timeout = job.timeout
+        row.worker_id = job.worker_id
+        row.parent_id = job.parent_id
+        row.root_id = job.root_id
+        row.progress = job.progress
+        row.kwargs = dict(job.kwargs)
+        row.schedule = job.schedule
+        row.cron_window_at = job.cron_window_at
+        row.startup_reconciled = job.startup_reconciled
+        row.startup_policy = job.startup_policy
+        row.checkpoint = job.checkpoint
+        row.checkpoint_at = job.checkpoint_at
+        row.event_pattern = job.event_pattern
+        row.event_handler_name = job.event_handler_name
+        row.result = job.result
+        row.error = job.error
 
     def _duration_ms_expr(self):
         """SQL expression for job duration in milliseconds (dialect-aware)."""
@@ -46,17 +115,18 @@ class JobRepository:
 
         if dialect == "postgresql":
             return (
-                extract("epoch", JobHistory.completed_at - JobHistory.started_at) * 1000
+                extract(
+                    "epoch", JobHistoryTable.completed_at - JobHistoryTable.started_at
+                )
+                * 1000
             )
 
         return (
-            func.julianday(JobHistory.completed_at)
-            - func.julianday(JobHistory.started_at)
+            func.julianday(JobHistoryTable.completed_at)
+            - func.julianday(JobHistoryTable.started_at)
         ) * 86400000
 
-    async def record_job(
-        self, data: JobRecordCreate | Mapping[str, object]
-    ) -> JobHistory:
+    async def record_job(self, data: JobRecordCreate | Mapping[str, object]) -> Job:
         """
         Record a job to history.
 
@@ -64,28 +134,31 @@ class JobRepository:
             data: Typed payload or mapping accepted by JobRecordCreate
 
         Returns:
-            Created JobHistory record
+            Created JobHistoryTable record
         """
         payload = (
             data
             if isinstance(data, JobRecordCreate)
             else JobRecordCreate.model_validate(data)
         )
-        history = JobHistory(**payload.model_dump(mode="python"))
+        history = JobHistoryTable(**payload.model_dump(mode="python"))
         self._session.add(history)
-        return history
+        return self._to_model(history)
 
     async def get_by_id(
         self,
         id: str,
-    ) -> JobHistory | None:
+    ) -> Job | None:
         """Get a job by ID."""
-        query = select(JobHistory).where(JobHistory.id == id)
+        query = select(JobHistoryTable).where(JobHistoryTable.id == id)
 
         result = await self._session.execute(query)
-        return result.scalar_one_or_none()
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return self._to_model(row)
 
-    async def list_job_subtree(self, id: str) -> list[JobHistory]:
+    async def list_job_subtree(self, id: str) -> list[Job]:
         """
         List a job and all recursive descendants by parent_id lineage.
 
@@ -96,12 +169,12 @@ class JobRepository:
         if root is None:
             return []
 
-        parent_id_expr = JobHistory.parent_id
-        jobs_by_id: dict[str, JobHistory] = {root.id: root}
+        parent_id_expr = JobHistoryTable.parent_id
+        jobs_by_id: dict[str, Job] = {root.id: root}
         frontier: set[str] = {root.id}
 
         while frontier:
-            query = select(JobHistory).where(parent_id_expr.in_(list(frontier)))
+            query = select(JobHistoryTable).where(parent_id_expr.in_(list(frontier)))
             result = await self._session.execute(query)
             children = list(result.scalars().all())
 
@@ -109,12 +182,12 @@ class JobRepository:
             for child in children:
                 if child.id in jobs_by_id:
                     continue
-                jobs_by_id[child.id] = child
+                jobs_by_id[child.id] = self._to_model(child)
                 next_frontier.add(child.id)
 
             frontier = next_frontier
 
-        def timeline_sort_key(job: JobHistory) -> tuple[datetime, str]:
+        def timeline_sort_key(job: Job) -> tuple[datetime, str]:
             return (
                 job.started_at
                 or job.created_at
@@ -128,27 +201,27 @@ class JobRepository:
 
     @staticmethod
     def _apply_job_list_filters(
-        query: SelectT,
+        query: Select[tuple[object]],
         *,
         function: str | None = None,
         status: str | list[str] | None = None,
         worker_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> SelectT:
+    ) -> Select[tuple[object]]:
         """Apply common filters for job list/count queries."""
         if function:
-            query = query.where(JobHistory.function == function)
+            query = query.where(JobHistoryTable.function == function)
         if isinstance(status, str) and status:
-            query = query.where(JobHistory.status == status)
+            query = query.where(JobHistoryTable.status == status)
         elif isinstance(status, list) and status:
-            query = query.where(JobHistory.status.in_(status))
+            query = query.where(JobHistoryTable.status.in_(status))
         if worker_id:
-            query = query.where(JobHistory.worker_id == worker_id)
+            query = query.where(JobHistoryTable.worker_id == worker_id)
         if start_date:
-            query = query.where(JobHistory.created_at >= start_date)
+            query = query.where(JobHistoryTable.created_at >= start_date)
         if end_date:
-            query = query.where(JobHistory.created_at <= end_date)
+            query = query.where(JobHistoryTable.created_at <= end_date)
         return query
 
     async def list_jobs(
@@ -161,7 +234,7 @@ class JobRepository:
         end_date: datetime | None = None,
         limit: int = 100,
         cursor: str | None = None,
-    ) -> list[JobHistory]:
+    ) -> list[Job]:
         """
         List jobs with optional filtering using cursor-based pagination.
 
@@ -177,12 +250,12 @@ class JobRepository:
         Returns:
             List of matching jobs
         """
-        query = select(JobHistory).order_by(
-            JobHistory.created_at.desc(),
-            JobHistory.id.desc(),
+        query = select(JobHistoryTable).order_by(
+            JobHistoryTable.created_at.desc(),
+            JobHistoryTable.id.desc(),
         )
         query = self._apply_job_list_filters(
-            query,
+            cast(Select[tuple[object]], query),
             function=function,
             status=status,
             worker_id=worker_id,
@@ -199,17 +272,21 @@ class JobRepository:
                 )
             if cursor_job.created_at:
                 query = query.where(
-                    (JobHistory.created_at < cursor_job.created_at)
+                    (JobHistoryTable.created_at < cursor_job.created_at)
                     | (
-                        (JobHistory.created_at == cursor_job.created_at)
-                        & (JobHistory.id < cursor)
+                        (JobHistoryTable.created_at == cursor_job.created_at)
+                        & (JobHistoryTable.id < cursor)
                     )
                 )
 
         query = query.limit(limit)
 
         result = await self._session.execute(query)
-        return list(result.scalars().all())
+        jobs: list[Job] = []
+        for row in result.scalars().all():
+            if isinstance(row, JobHistoryTable):
+                jobs.append(self._to_model(row))
+        return jobs
 
     async def count_jobs(
         self,
@@ -221,9 +298,9 @@ class JobRepository:
         end_date: datetime | None = None,
     ) -> int:
         """Count jobs with the same filters used by list_jobs."""
-        query = select(func.count(JobHistory.id))
+        query = select(func.count(JobHistoryTable.id))
         query = self._apply_job_list_filters(
-            query,
+            cast(Select[tuple[object]], query),
             function=function,
             status=status,
             worker_id=worker_id,
@@ -231,7 +308,16 @@ class JobRepository:
             end_date=end_date,
         )
         result = await self._session.execute(query)
-        return int(result.scalar() or 0)
+        raw_count = result.scalar()
+        if raw_count is None:
+            return 0
+        if isinstance(raw_count, bool):
+            return int(raw_count)
+        if isinstance(raw_count, int):
+            return raw_count
+        if isinstance(raw_count, (float, str, bytes)):
+            return int(raw_count)
+        return 0
 
     async def get_stats(
         self,
@@ -247,22 +333,22 @@ class JobRepository:
         """
         duration_expr = self._duration_ms_expr()
         query = select(
-            func.count(JobHistory.id).label("total"),
-            func.sum(case((JobHistory.status == "complete", 1), else_=0)).label(
+            func.count(JobHistoryTable.id).label("total"),
+            func.sum(case((JobHistoryTable.status == "complete", 1), else_=0)).label(
                 "success_count"
             ),
-            func.sum(case((JobHistory.status == "failed", 1), else_=0)).label(
+            func.sum(case((JobHistoryTable.status == "failed", 1), else_=0)).label(
                 "failure_count"
             ),
-            func.sum(case((JobHistory.status == "cancelled", 1), else_=0)).label(
+            func.sum(case((JobHistoryTable.status == "cancelled", 1), else_=0)).label(
                 "cancelled_count"
             ),
             func.avg(
                 case(
                     (
                         and_(
-                            JobHistory.started_at.is_not(None),
-                            JobHistory.completed_at.is_not(None),
+                            JobHistoryTable.started_at.is_not(None),
+                            JobHistoryTable.completed_at.is_not(None),
                         ),
                         duration_expr,
                     ),
@@ -272,11 +358,11 @@ class JobRepository:
         )
 
         if function:
-            query = query.where(JobHistory.function == function)
+            query = query.where(JobHistoryTable.function == function)
         if start_date:
-            query = query.where(JobHistory.created_at >= start_date)
+            query = query.where(JobHistoryTable.created_at >= start_date)
         if end_date:
-            query = query.where(JobHistory.created_at <= end_date)
+            query = query.where(JobHistoryTable.created_at <= end_date)
 
         result = await self._session.execute(query)
         row = result.one()
@@ -313,10 +399,10 @@ class JobRepository:
         query = (
             select(duration_expr.label("duration_ms"))
             .where(
-                JobHistory.function == function,
-                JobHistory.created_at >= start_date,
-                JobHistory.started_at.isnot(None),
-                JobHistory.completed_at.isnot(None),
+                JobHistoryTable.function == function,
+                JobHistoryTable.created_at >= start_date,
+                JobHistoryTable.started_at.isnot(None),
+                JobHistoryTable.completed_at.isnot(None),
             )
             .order_by(duration_expr)
         )
@@ -341,10 +427,10 @@ class JobRepository:
         """
         Get job counts grouped by hour and status using SQL aggregation.
         """
-        year_col = extract("year", JobHistory.created_at)
-        month_col = extract("month", JobHistory.created_at)
-        day_col = extract("day", JobHistory.created_at)
-        hour_col = extract("hour", JobHistory.created_at)
+        year_col = extract("year", JobHistoryTable.created_at)
+        month_col = extract("month", JobHistoryTable.created_at)
+        day_col = extract("day", JobHistoryTable.created_at)
+        hour_col = extract("hour", JobHistoryTable.created_at)
 
         query = (
             select(
@@ -352,23 +438,23 @@ class JobRepository:
                 month_col.label("mo"),
                 day_col.label("dy"),
                 hour_col.label("hr"),
-                JobHistory.status,
-                func.count(JobHistory.id).label("cnt"),
+                JobHistoryTable.status,
+                func.count(JobHistoryTable.id).label("cnt"),
             )
             .where(
-                JobHistory.created_at >= start_date,
-                JobHistory.created_at <= end_date,
+                JobHistoryTable.created_at >= start_date,
+                JobHistoryTable.created_at <= end_date,
             )
-            .group_by(year_col, month_col, day_col, hour_col, JobHistory.status)
+            .group_by(year_col, month_col, day_col, hour_col, JobHistoryTable.status)
             .order_by(year_col, month_col, day_col, hour_col)
         )
 
         if function:
-            query = query.where(JobHistory.function == function)
+            query = query.where(JobHistoryTable.function == function)
         elif functions is not None:
             if not functions:
                 return []
-            query = query.where(JobHistory.function.in_(functions))
+            query = query.where(JobHistoryTable.function.in_(functions))
 
         result = await self._session.execute(query)
         return [
@@ -400,28 +486,32 @@ class JobRepository:
         duration_expr = self._duration_ms_expr()
 
         run_time_col = func.coalesce(
-            JobHistory.completed_at, JobHistory.started_at, JobHistory.created_at
+            JobHistoryTable.completed_at,
+            JobHistoryTable.started_at,
+            JobHistoryTable.created_at,
         )
-        partition = JobHistory.function
+        partition = JobHistoryTable.function
 
         # Single subquery: window aggregates + ROW_NUMBER in one table scan
         subq = (
             select(
-                JobHistory.function,
-                JobHistory.status,
+                JobHistoryTable.function,
+                JobHistoryTable.status,
                 run_time_col.label("run_time"),
-                func.count(JobHistory.id).over(partition_by=partition).label("runs"),
-                func.sum(case((JobHistory.status == "complete", 1), else_=0))
+                func.count(JobHistoryTable.id)
+                .over(partition_by=partition)
+                .label("runs"),
+                func.sum(case((JobHistoryTable.status == "complete", 1), else_=0))
                 .over(partition_by=partition)
                 .label("successes"),
-                func.sum(case((JobHistory.status == "failed", 1), else_=0))
+                func.sum(case((JobHistoryTable.status == "failed", 1), else_=0))
                 .over(partition_by=partition)
                 .label("failures"),
                 func.avg(
                     case(
                         (
-                            JobHistory.started_at.isnot(None)
-                            & JobHistory.completed_at.isnot(None),
+                            JobHistoryTable.started_at.isnot(None)
+                            & JobHistoryTable.completed_at.isnot(None),
                             duration_expr,
                         ),
                         else_=None,
@@ -436,7 +526,7 @@ class JobRepository:
                 )
                 .label("rn"),
             )
-            .where(JobHistory.created_at >= start_date)
+            .where(JobHistoryTable.created_at >= start_date)
             .subquery()
         )
 
@@ -484,13 +574,13 @@ class JobRepository:
         """
         Compute per-function queue wait metrics from persisted job columns.
         """
-        query = select(JobHistory.function, JobHistory.queue_wait_ms).where(
-            JobHistory.created_at >= start_date,
-            JobHistory.started_at.isnot(None),
-            JobHistory.queue_wait_ms.isnot(None),
+        query = select(JobHistoryTable.function, JobHistoryTable.queue_wait_ms).where(
+            JobHistoryTable.created_at >= start_date,
+            JobHistoryTable.started_at.isnot(None),
+            JobHistoryTable.queue_wait_ms.isnot(None),
         )
         if function:
-            query = query.where(JobHistory.function == function)
+            query = query.where(JobHistoryTable.function == function)
 
         result = await self._session.execute(query)
         waits_by_function: dict[str, list[float]] = {}
@@ -521,25 +611,25 @@ class JobRepository:
         *,
         started_before: datetime,
         limit: int = 10,
-    ) -> list[JobHistory]:
+    ) -> list[Job]:
         """List active jobs that have been running since before `started_before`."""
         query = (
-            select(JobHistory)
+            select(JobHistoryTable)
             .where(
-                JobHistory.status == "active",
-                JobHistory.started_at.isnot(None),
-                JobHistory.started_at <= started_before,
+                JobHistoryTable.status == "active",
+                JobHistoryTable.started_at.isnot(None),
+                JobHistoryTable.started_at <= started_before,
             )
-            .order_by(JobHistory.started_at.asc())
+            .order_by(JobHistoryTable.started_at.asc())
             .limit(limit)
         )
         result = await self._session.execute(query)
-        return list(result.scalars().all())
+        return [self._to_model(row) for row in result.scalars().all()]
 
-    async def list_old_ids(self, retention_days: int = 30) -> list[str]:
+    async def list_old_ids(self, retention_hours: int = 24) -> list[str]:
         """Return job IDs older than retention cutoff."""
-        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        query = select(JobHistory.id).where(JobHistory.created_at < cutoff)
+        cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
+        query = select(JobHistoryTable.id).where(JobHistoryTable.created_at < cutoff)
         result = await self._session.execute(query)
         return list(result.scalars().all())
 
@@ -547,6 +637,14 @@ class JobRepository:
         """Delete jobs by explicit ID set."""
         if not ids:
             return 0
-        query = delete(JobHistory).where(JobHistory.id.in_(ids))
+        query = delete(JobHistoryTable).where(JobHistoryTable.id.in_(ids))
         result = await self._session.execute(query)
         return int(result.rowcount or 0)  # type: ignore
+
+    async def save_job(self, job: Job) -> None:
+        existing_row = await self._session.get(JobHistoryTable, job.id)
+        if existing_row is None:
+            existing_row = JobHistoryTable(id=job.id)
+            self._session.add(existing_row)
+        self._apply_job_to_row(existing_row, job)
+        await self._session.flush()

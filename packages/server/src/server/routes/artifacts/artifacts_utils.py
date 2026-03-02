@@ -4,7 +4,6 @@ import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Any
 
 from pydantic import ValidationError
 from shared.artifacts import ArtifactType
@@ -52,7 +51,7 @@ def infer_artifact_content_type(artifact_type: ArtifactType) -> str:
 def encode_artifact_payload(
     *,
     artifact_type: ArtifactType,
-    data: Any,
+    data: object,
 ) -> tuple[bytes, str]:
     """Encode request payload into bytes and return bytes + content type."""
     content_type = infer_artifact_content_type(artifact_type)

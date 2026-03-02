@@ -30,7 +30,7 @@ class _RedisPendingRangeClient(Protocol):
     async def xpending_range(
         self,
         stream_key: str | bytes,
-        group_name: str,
+        _group_name: str,
         min_id: str,
         max_id: str,
         count: int,

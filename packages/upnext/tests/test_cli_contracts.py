@@ -15,7 +15,7 @@ import pytest
 import typer
 from rich.panel import Panel
 from typer.testing import CliRunner
-from upnext.cli.__init__ import _version_callback, app
+from upnext.cli.__init__ import app
 from upnext.cli._console import (
     dim,
     error,
@@ -65,10 +65,6 @@ def test_cli_app_help_and_version() -> None:
     version_result = runner.invoke(app, ["--version"])
     assert version_result.exit_code == 0
     assert "upnext" in version_result.stdout
-
-
-def test_version_callback_noop_when_false() -> None:
-    assert _version_callback(False) is None
 
 
 def test_console_helpers_emit_output(monkeypatch) -> None:
@@ -340,12 +336,14 @@ def test_server_helpers(monkeypatch, tmp_path: Path) -> None:
         "UPNEXT_DATABASE_URL": os.environ.get("UPNEXT_DATABASE_URL"),
         "DATABASE_URL": os.environ.get("DATABASE_URL"),
         "UPNEXT_REDIS_URL": os.environ.get("UPNEXT_REDIS_URL"),
+        "UPNEXT_BACKEND": os.environ.get("UPNEXT_BACKEND"),
     }
     try:
-        _set_server_env("sqlite:///tmp.db", "redis://localhost:6379")
+        _set_server_env("sqlite:///tmp.db", "redis://localhost:6379", "postgres")
         assert os.environ["UPNEXT_DATABASE_URL"] == "sqlite:///tmp.db"
         assert os.environ["DATABASE_URL"] == "sqlite:///tmp.db"
         assert os.environ["UPNEXT_REDIS_URL"] == "redis://localhost:6379"
+        assert os.environ["UPNEXT_BACKEND"] == "postgres"
     finally:
         for key, value in original_env.items():
             if value is None:
@@ -447,7 +445,7 @@ def test_server_start_passes_reload_dir_for_monorepo_fallback(
     monkeypatch, tmp_path: Path
 ) -> None:
     captured: dict[str, Any] = {}
-    env_calls: list[tuple[str | None, str | None]] = []
+    env_calls: list[tuple[str | None, str | None, object | None]] = []
     server_src = tmp_path / "server-src"
     server_src.mkdir()
 
@@ -455,7 +453,9 @@ def test_server_start_passes_reload_dir_for_monorepo_fallback(
     monkeypatch.setattr(
         server_module,
         "_set_server_env",
-        lambda database_url, redis_url: env_calls.append((database_url, redis_url)),
+        lambda database_url, redis_url, backend=None: env_calls.append(
+            (database_url, redis_url, backend)
+        ),
     )
     monkeypatch.setattr(
         server_module,
@@ -481,13 +481,51 @@ def test_server_start_passes_reload_dir_for_monorepo_fallback(
         verbose=True,
     )
 
-    assert env_calls == [("sqlite:///test.db", "redis://localhost:6379")]
+    assert env_calls == [("sqlite:///test.db", "redis://localhost:6379", None)]
     assert captured["app"] == "server.main:app"
     run_kwargs = cast(dict[str, Any], captured["kwargs"])
     assert run_kwargs["host"] == "127.0.0.1"
     assert run_kwargs["port"] == 9090
     assert run_kwargs["reload"] is True
     assert run_kwargs["reload_dirs"] == [str(server_src)]
+
+
+def test_server_start_passes_backend_selection_to_env(monkeypatch) -> None:
+    env_calls: list[tuple[str | None, str | None, object | None]] = []
+
+    monkeypatch.setattr(server_module, "setup_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        server_module,
+        "_set_server_env",
+        lambda database_url, redis_url, backend=None: env_calls.append(
+            (database_url, redis_url, backend)
+        ),
+    )
+    monkeypatch.setattr(
+        server_module,
+        "_ensure_database_schema_ready",
+        lambda database_url, verbose: None,
+    )
+    monkeypatch.setattr(server_module, "_import_server_main", lambda: None)
+
+    def fake_uvicorn_run(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setitem(
+        sys.modules, "uvicorn", types.SimpleNamespace(run=fake_uvicorn_run)
+    )
+
+    server_module.start(
+        host="127.0.0.1",
+        port=9090,
+        reload=False,
+        backend="sqlite",
+        database_url="sqlite:///test.db",
+        redis_url="redis://localhost:6379",
+        verbose=False,
+    )
+
+    assert env_calls == [("sqlite:///test.db", "redis://localhost:6379", "sqlite")]
 
 
 def test_server_start_wraps_uvicorn_runtime_errors(monkeypatch) -> None:

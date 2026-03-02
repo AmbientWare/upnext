@@ -17,9 +17,8 @@ from shared.contracts.admin import (
 )
 
 from server.auth import require_admin
-from server.db.repositories import AuthRepository
-from server.db.session import Database
-from server.routes.depends import require_database
+from server.backends.service import BackendService
+from server.routes.depends import require_backend
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +31,10 @@ router = APIRouter(
 
 
 @router.get("/users", response_model=AdminUsersListResponse)
-async def list_users(db: Database = Depends(require_database)):
+async def list_users(backend: BackendService = Depends(require_backend)):
     """List all users with their API key counts."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        users_with_counts = await repo.list_users()
+    async with backend.session() as tx:
+        users_with_counts = await tx.auth.list_users()
 
     users = [
         AdminUserResponse(
@@ -54,16 +52,15 @@ async def list_users(db: Database = Depends(require_database)):
 @router.post("/users", response_model=AdminUserCreatedResponse, status_code=201)
 async def create_user(
     body: CreateUserRequest,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ):
     """Create a new user with an initial API key (atomic)."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
+    async with backend.session() as tx:
         try:
-            user = await repo.create_user(body.username, body.is_admin)
+            user = await tx.auth.create_user(body.username, body.is_admin)
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e))
-        api_key, raw_key = await repo.create_api_key(user.id, "default")
+        api_key, raw_key = await tx.auth.create_api_key(user.id, "default")
 
     return AdminUserCreatedResponse(
         id=user.id,
@@ -83,11 +80,10 @@ async def create_user(
 
 
 @router.delete("/users/{user_id}", status_code=204)
-async def delete_user(user_id: str, db: Database = Depends(require_database)):
+async def delete_user(user_id: str, backend: BackendService = Depends(require_backend)):
     """Delete a user and all their API keys."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        deleted = await repo.delete_user(user_id)
+    async with backend.session() as tx:
+        deleted = await tx.auth.delete_user(user_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -96,15 +92,14 @@ async def delete_user(user_id: str, db: Database = Depends(require_database)):
 async def update_user(
     user_id: str,
     body: UpdateUserRequest,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ):
     """Update user properties (e.g., toggle admin)."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        user = await repo.update_user(user_id, is_admin=body.is_admin)
+    async with backend.session() as tx:
+        user = await tx.auth.update_user(user_id, is_admin=body.is_admin)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        keys = await repo.list_api_keys_for_user(user_id)
+        keys = await tx.auth.list_api_keys_for_user(user_id)
 
     return AdminUserResponse(
         id=user.id,
@@ -119,14 +114,15 @@ async def update_user(
 
 
 @router.get("/users/{user_id}/api-keys", response_model=AdminApiKeysListResponse)
-async def list_api_keys(user_id: str, db: Database = Depends(require_database)):
+async def list_api_keys(
+    user_id: str, backend: BackendService = Depends(require_backend)
+):
     """List all API keys for a user."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        user = await repo.get_user_by_id(user_id)
+    async with backend.session() as tx:
+        user = await tx.auth.get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        keys = await repo.list_api_keys_for_user(user_id)
+        keys = await tx.auth.list_api_keys_for_user(user_id)
 
     api_keys = [
         AdminApiKeyResponse(
@@ -151,15 +147,14 @@ async def list_api_keys(user_id: str, db: Database = Depends(require_database)):
 async def create_api_key(
     user_id: str,
     body: CreateApiKeyRequest,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ):
     """Create a new API key for a user. Returns the raw key once."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        user = await repo.get_user_by_id(user_id)
+    async with backend.session() as tx:
+        user = await tx.auth.get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        api_key, raw_key = await repo.create_api_key(user_id, body.name)
+        api_key, raw_key = await tx.auth.create_api_key(user_id, body.name)
 
     return AdminApiKeyCreatedResponse(
         id=api_key.id,
@@ -177,15 +172,14 @@ async def create_api_key(
 )
 async def rotate_api_key(
     user_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ):
     """Rotate a user's API key: delete all existing keys and create a new one."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        user = await repo.get_user_by_id(user_id)
+    async with backend.session() as tx:
+        user = await tx.auth.get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        api_key, raw_key = await repo.rotate_api_key(user_id)
+        api_key, raw_key = await tx.auth.rotate_api_key(user_id)
 
     return AdminApiKeyCreatedResponse(
         id=api_key.id,
@@ -201,12 +195,17 @@ async def rotate_api_key(
 async def delete_api_key(
     user_id: str,
     key_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ):
     """Delete/revoke an API key."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        deleted = await repo.delete_api_key(key_id)
+    async with backend.session() as tx:
+        user = await tx.auth.get_user_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        keys = await tx.auth.list_api_keys_for_user(user_id)
+        if not any(key.id == key_id for key in keys):
+            raise HTTPException(status_code=404, detail="API key not found")
+        deleted = await tx.auth.delete_api_key(key_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="API key not found")
 
@@ -216,12 +215,17 @@ async def toggle_api_key(
     user_id: str,
     key_id: str,
     body: ToggleApiKeyRequest,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ):
     """Toggle an API key's active state."""
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        api_key = await repo.toggle_api_key(key_id, body.is_active)
+    async with backend.session() as tx:
+        user = await tx.auth.get_user_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        keys = await tx.auth.list_api_keys_for_user(user_id)
+        if not any(key.id == key_id for key in keys):
+            raise HTTPException(status_code=404, detail="API key not found")
+        api_key = await tx.auth.toggle_api_key(key_id, body.is_active)
         if api_key is None:
             raise HTTPException(status_code=404, detail="API key not found")
 

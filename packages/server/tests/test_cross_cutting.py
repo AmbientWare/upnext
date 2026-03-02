@@ -8,8 +8,8 @@ import pytest
 import server.routes.jobs.jobs_root as jobs_root_route
 import server.services.events.processing as event_processing_module
 from pydantic import ValidationError
-from server.db.repositories import ArtifactRepository, JobRepository
-from server.db.tables import Artifact, JobHistory, PendingArtifact
+from server.backends.sql.shared.repositories import ArtifactRepository, JobRepository
+from server.backends.sql.shared.tables import ArtifactTable, JobHistoryTable, PendingArtifactTable
 from server.services.events import process_event
 from shared.contracts import (
     JobCompletedEvent,
@@ -157,7 +157,7 @@ async def test_event_replay_invariant_same_final_state_for_permuted_sequences(
                 raise AssertionError(f"Unexpected event type in test: {event_type}")
 
         async with sqlite_db.session() as session:
-            row = await session.get(JobHistory, job_id)
+            row = await session.get(JobHistoryTable, job_id)
             assert row is not None
             fingerprints.add((row.status, row.progress, row.attempts))
 
@@ -188,7 +188,7 @@ async def test_outage_then_replay_recovers_without_duplicates(
             raise RuntimeError("db down")
         return sqlite_db
 
-    monkeypatch.setattr(event_processing_module, "get_database", flaky_get_database)
+    monkeypatch.setattr(event_processing_module, "get_backend", flaky_get_database)
 
     # First processing during outage fails and should be retried later.
     with pytest.raises(RuntimeError, match="db down"):
@@ -205,7 +205,7 @@ async def test_outage_then_replay_recovers_without_duplicates(
     )
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "outage-job")
+        row = await session.get(JobHistoryTable, "outage-job")
         assert row is not None
         assert row.status == "active"
 
@@ -230,7 +230,7 @@ async def test_job_trends_route_zero_fills_missing_hours(
         )
 
     out = await jobs_root_route.get_job_trends(
-        hours=4, function="fn.trend", type=None, db=sqlite_db
+        hours=4, function="fn.trend", type=None, backend=sqlite_db
     )
 
     assert len(out.hourly) == 4
@@ -336,7 +336,7 @@ async def test_started_event_time_comparison_handles_naive_and_aware_datetimes(
     assert duplicate is False
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-time-1")
+        row = await session.get(JobHistoryTable, "job-time-1")
         assert row is not None
         assert row.attempts == 1
 
@@ -377,8 +377,8 @@ async def test_pending_artifact_promotion_preserves_all_rows_without_orphans(
     )
 
     async with sqlite_db.session() as session:
-        artifact_rows = (await session.execute(Artifact.__table__.select())).all()
-        pending_rows = (await session.execute(PendingArtifact.__table__.select())).all()
+        artifact_rows = (await session.execute(ArtifactTable.__table__.select())).all()
+        pending_rows = (await session.execute(PendingArtifactTable.__table__.select())).all()
 
     assert len(artifact_rows) == 2
     assert len(pending_rows) == 0

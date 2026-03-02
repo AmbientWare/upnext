@@ -171,7 +171,7 @@ async def test_finisher_retries_flush_without_dropping_batch(fake_redis) -> None
             )
         )
 
-        client = await queue._ensure_connected()  # noqa: SLF001
+        await queue._ensure_connected()  # noqa: SLF001
 
         async def terminal_written() -> bool:
             stored = await queue.get_job(job.id)

@@ -41,8 +41,15 @@ UpNext works in two modes. Start with **SDK + Redis** to get the core runtime, t
     | Authentication | API key auth with user and key management |
     | Admin tools | Create users, rotate keys, manage access |
 
+    <Note>
+    Backend-first: set `UPNEXT_BACKEND` explicitly. The example below uses `sqlite`.
+    </Note>
+
     ```bash
     pip install upnext
+    UPNEXT_BACKEND=sqlite \
+    UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+    UPNEXT_REDIS_URL=redis://localhost:6379 \
     upnext server start --port 8080     # Start the server
     UPNEXT_REDIS_URL=redis://localhost:6379 \
     UPNEXT_URL=http://localhost:8080 \   # Connect to the server

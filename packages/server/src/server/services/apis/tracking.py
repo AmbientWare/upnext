@@ -17,8 +17,8 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
+from redis.asyncio import Redis
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from shared.keys import (
     api_endpoints_key,
@@ -72,7 +72,7 @@ class _HourlyTotals:
 class ApiMetricsReader:
     """Reads API metrics from Redis hash buckets."""
 
-    def __init__(self, redis_client: Any) -> None:
+    def __init__(self, redis_client: Redis) -> None:
         self._redis = redis_client
 
     @staticmethod

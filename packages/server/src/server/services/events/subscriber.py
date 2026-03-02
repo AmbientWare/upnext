@@ -15,9 +15,10 @@ import json
 import logging
 import os
 import socket
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
@@ -37,7 +38,7 @@ from shared.contracts import (
 )
 from shared.keys import EVENTS_PUBSUB_CHANNEL, EVENTS_STREAM
 
-from server.db.session import get_database
+from server.backends import get_backend
 from server.services.events.processing import process_event
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ class _ParsedEvent:
 class _InvalidEventRecord:
     event_id: str
     reason: str
-    raw: dict[str, Any]
+    raw: dict[str, object]
     error: str
     worker_id: str | None = None
     event_type: str | None = None
@@ -139,7 +140,6 @@ class StreamSubscriber:
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._group_created = False
-        self._last_batch_event_count = 0
         self._invalid_envelope_total = 0
         self._invalid_payload_total = 0
         self._unsupported_type_total = 0
@@ -260,7 +260,7 @@ class StreamSubscriber:
         if not await self._ensure_consumer_group():
             return 0
 
-        events: list[tuple[str, dict[str, Any]]] = []
+        events: list[tuple[str, dict[str, object]]] = []
         event_ids: list[str] = []
         ack_ids: list[str] = []
         seen_event_ids: set[str] = set()
@@ -318,13 +318,11 @@ class StreamSubscriber:
                         logger.debug(f"Claimed {len(claimed_events)} stale events")
 
         if not events:
-            self._last_batch_event_count = 0
             return 0
 
         # Keep processing order stable even when mixing fresh and reclaimed events.
         # Reclaimed events can be older than newly-read events.
         events.sort(key=lambda item: self._event_id_sort_key(item[0]))
-        self._last_batch_event_count = len(event_ids)
 
         parsed_events, discard_summary = self._parse_events(events)
         ack_ids.extend(await self._archive_invalid_events(discard_summary))
@@ -339,14 +337,31 @@ class StreamSubscriber:
         processed = 0
         errors = 0
         events_for_publish: list[_ParsedEvent] = []
-        db = None
-        try:
-            db = get_database()
-        except RuntimeError as exc:
-            if "Database not initialized" not in str(exc):
-                raise
 
-        if db is None:
+        try:
+            backend = get_backend()
+        except RuntimeError:
+            backend = None
+
+        if backend is not None:
+            async with backend.session() as session:
+                for parsed_event in coalesced_events:
+                    event_id = parsed_event.event_id
+                    try:
+                        async with self._nested_transaction(session):
+                            applied = await process_event(
+                                event=parsed_event.event,
+                                session=session,
+                            )
+                        processed += 1
+                        ack_ids.append(event_id)
+                        ack_ids.extend(coalesced_ack_ids_by_latest.get(event_id, ()))
+                        if applied:
+                            events_for_publish.append(parsed_event)
+                    except Exception as e:
+                        errors += 1
+                        logger.warning(f"Error processing event {event_id}: {e}")
+        else:
             for parsed_event in coalesced_events:
                 event_id = parsed_event.event_id
                 try:
@@ -359,31 +374,6 @@ class StreamSubscriber:
                 except Exception as e:
                     errors += 1
                     logger.warning(f"Error processing event {event_id}: {e}")
-        else:
-            async with db.session() as session:
-                for parsed_event in coalesced_events:
-                    event_id = parsed_event.event_id
-                    try:
-                        async with session.begin_nested():
-                            try:
-                                applied = await process_event(
-                                    event=parsed_event.event,
-                                    session=session,
-                                )
-                            except TypeError as exc:
-                                if "session" not in str(exc):
-                                    raise
-                                # Backward compatibility for tests/patches that inject a
-                                # simpler coroutine signature: fake_process_event(event).
-                                applied = await process_event(event=parsed_event.event)
-                        processed += 1
-                        ack_ids.append(event_id)
-                        ack_ids.extend(coalesced_ack_ids_by_latest.get(event_id, ()))
-                        if applied:
-                            events_for_publish.append(parsed_event)
-                    except Exception as e:
-                        errors += 1
-                        logger.warning(f"Error processing event {event_id}: {e}")
 
         # ACK only successfully processed events.
         # Failed events stay pending and can be retried/reclaimed later.
@@ -420,8 +410,17 @@ class StreamSubscriber:
 
         return processed
 
+    @asynccontextmanager
+    async def _nested_transaction(self, session: object):
+        begin_nested = getattr(session, "begin_nested", None)
+        if begin_nested is None:
+            yield
+            return
+        async with begin_nested():
+            yield
+
     def _parse_events(
-        self, events: list[tuple[str, dict[str, Any]]]
+        self, events: list[tuple[str, dict[str, object]]]
     ) -> tuple[list[_ParsedEvent], _ParseDiscardSummary]:
         parsed_events: list[_ParsedEvent] = []
         invalid_events: list[_InvalidEventRecord] = []
@@ -447,7 +446,7 @@ class StreamSubscriber:
                 invalid_envelope += 1
                 continue
 
-            payload_data: dict[str, Any] = dict(stream_event.data)
+            payload_data: dict[str, object] = dict(stream_event.data)
             payload_data["job_id"] = stream_event.job_id
             payload_data.pop("type", None)
             if (
@@ -576,7 +575,7 @@ class StreamSubscriber:
 
     @staticmethod
     def _parse_event_model(
-        event_type: EventType, payload_data: dict[str, Any]
+        event_type: EventType, payload_data: dict[str, object]
     ) -> JobLifecycleEvent:
         if event_type == EventType.JOB_STARTED:
             return JobStartedEvent.model_validate(payload_data)
@@ -647,12 +646,6 @@ class StreamSubscriber:
             max_id = 2**63 - 1
             return (max_id, max_id)
 
-    async def _handle_event(self, parsed_event: _ParsedEvent) -> None:
-        """Process a single event by writing to database and publishing to SSE."""
-        applied = await process_event(event=parsed_event.event)
-        if applied:
-            await self._publish_parsed_event(parsed_event)
-
     async def _publish_parsed_event(self, parsed_event: _ParsedEvent) -> None:
         """Publish a parsed event for SSE consumers."""
         event_data = parsed_event.event.model_dump(mode="python")
@@ -665,7 +658,7 @@ class StreamSubscriber:
     async def _publish_event(
         self,
         event_type: str,
-        data: dict[str, Any],
+        data: dict[str, object],
         worker_id: str,
     ) -> None:
         """Publish event data for SSE consumers.
@@ -674,11 +667,12 @@ class StreamSubscriber:
         traceback, and checkpoint state are excluded automatically.
         """
         try:
-            event = SSEJobEvent(
-                type=event_type,
-                worker_id=worker_id,
+            payload: dict[str, object] = {
+                "type": event_type,
+                "worker_id": worker_id,
                 **data,
-            )
+            }
+            event = SSEJobEvent.model_validate(payload)
             await self._redis.publish(
                 EVENTS_PUBSUB_CHANNEL,
                 event.model_dump_json(exclude_none=True),
@@ -712,7 +706,7 @@ class StreamSubscriber:
 
     def _decode_event_data(
         self,
-        data: dict[Any, Any],
+        data: dict[object, object],
     ) -> dict[str, object]:
         """Decode bytes keys/values while preserving non-bytes value types."""
         result: dict[str, object] = {}
@@ -724,11 +718,11 @@ class StreamSubscriber:
 
     def _add_stream_events(
         self,
-        stream_events: list[tuple[Any, dict[Any, Any]]],
+        stream_events: list[tuple[object, dict[object, object]]],
         *,
         seen_event_ids: set[str],
         event_ids: list[str],
-        events: list[tuple[str, dict[str, Any]]],
+        events: list[tuple[str, dict[str, object]]],
     ) -> None:
         """Decode and append unique stream events while preserving input order."""
         for raw_event_id, raw_event_data in stream_events:

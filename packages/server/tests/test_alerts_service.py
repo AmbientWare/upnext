@@ -116,17 +116,19 @@ async def test_emit_function_alerts_respects_redis_cooldown(monkeypatch) -> None
 async def test_alert_emitter_loop_collects_snapshot_with_database(
     monkeypatch,
 ) -> None:
-    import server.db.session as session_module
+    import server.backends as backends_module
     import server.routes.functions as functions_route
 
     service = alerts_module.AlertEmitterService(interval_seconds=5.0)
     fake_db = object()
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(session_module, "get_database", lambda: fake_db)
+    monkeypatch.setattr(backends_module, "get_backend", lambda: fake_db)
 
-    async def _collect_functions_snapshot(*, db, type=None):  # type: ignore[no-untyped-def]
-        captured["db"] = db
+    async def _collect_functions_snapshot(  # type: ignore[no-untyped-def]
+        *, backend, type=None
+    ):
+        captured["backend"] = backend
         captured["type"] = type
         service._stop_event.set()  # noqa: SLF001
         return [_function()]
@@ -148,7 +150,7 @@ async def test_alert_emitter_loop_collects_snapshot_with_database(
 
     await asyncio.wait_for(service._loop(), timeout=1.0)  # noqa: SLF001
 
-    assert captured["db"] is fake_db
+    assert captured["backend"] is fake_db
     assert captured["type"] is None
     assert captured["checked"] is True
     assert isinstance(captured["functions"], list)

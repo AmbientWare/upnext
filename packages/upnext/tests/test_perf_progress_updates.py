@@ -96,5 +96,5 @@ async def test_perf_queue_progress_workload_reports_write_amplification(
     )
 
     assert get_result_key == 0
-    assert updates_per_second > 0
+    assert setex_total == total_updates
     await queue.close()

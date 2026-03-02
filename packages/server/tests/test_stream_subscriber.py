@@ -31,7 +31,8 @@ async def test_process_batch_acks_only_successful_events(
 
     call_log: list[str] = []
 
-    async def fake_process_event(event: object) -> bool:
+    async def fake_process_event(event: object, *, session=None) -> bool:
+        _ = session
         call_log.append(type(event).__name__)
         if isinstance(event, JobFailedEvent):
             raise RuntimeError("boom")
@@ -104,7 +105,8 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
 
     processed_ids: list[str] = []
 
-    async def fake_process_event(event: object) -> bool:
+    async def fake_process_event(event: object, *, session=None) -> bool:
+        _ = session
         processed_ids.append(str(getattr(event, "job_id")))
         return True
 
@@ -380,7 +382,8 @@ async def test_reclaim_of_stale_pending_event_processes_once_and_acks(
 
     call_count = 0
 
-    async def fake_process_event(event: object) -> bool:  # noqa: ARG001
+    async def fake_process_event(event: object, *, session=None) -> bool:  # noqa: ARG001
+        _ = session
         nonlocal call_count
         call_count += 1
         return True
@@ -555,7 +558,8 @@ async def test_process_batch_returns_processed_when_ack_fails(
     subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
     assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
 
-    async def fake_process_event(event: object) -> bool:  # noqa: ARG001
+    async def fake_process_event(event: object, *, session=None) -> bool:  # noqa: ARG001
+        _ = session
         return True
 
     monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)
@@ -608,7 +612,8 @@ async def test_process_batch_coalesces_duplicate_progress_events(
 
     seen_progress: list[float] = []
 
-    async def fake_process_event(event: object) -> bool:  # noqa: ARG001
+    async def fake_process_event(event: object, *, session=None) -> bool:  # noqa: ARG001
+        _ = session
         if isinstance(event, JobProgressEvent):
             seen_progress.append(float(getattr(event, "progress", 0)))
         return True
@@ -655,7 +660,8 @@ async def test_coalesced_progress_events_are_not_acked_when_latest_fails(
     subscriber = StreamSubscriber(redis_client=fake_redis, config=config)
     assert await subscriber._ensure_consumer_group() is True  # noqa: SLF001
 
-    async def fake_process_event(event: object) -> bool:  # noqa: ARG001
+    async def fake_process_event(event: object, *, session=None) -> bool:  # noqa: ARG001
+        _ = session
         raise RuntimeError("boom")
 
     monkeypatch.setattr(stream_subscriber_module, "process_event", fake_process_event)

@@ -15,7 +15,7 @@ class SubmittableTask[T](Protocol):
 
 @overload
 async def gather[T1](
-    a1: Awaitable[T1] | Future[T1],
+    _a1: Awaitable[T1] | Future[T1],
     /,
     *,
     return_exceptions: bool = ...,
@@ -24,8 +24,8 @@ async def gather[T1](
 
 @overload
 async def gather[T1, T2](
-    a1: Awaitable[T1] | Future[T1],
-    a2: Awaitable[T2] | Future[T2],
+    _a1: Awaitable[T1] | Future[T1],
+    _a2: Awaitable[T2] | Future[T2],
     /,
     *,
     return_exceptions: bool = ...,
@@ -34,9 +34,9 @@ async def gather[T1, T2](
 
 @overload
 async def gather[T1, T2, T3](
-    a1: Awaitable[T1] | Future[T1],
-    a2: Awaitable[T2] | Future[T2],
-    a3: Awaitable[T3] | Future[T3],
+    _a1: Awaitable[T1] | Future[T1],
+    _a2: Awaitable[T2] | Future[T2],
+    _a3: Awaitable[T3] | Future[T3],
     /,
     *,
     return_exceptions: bool = ...,
@@ -45,10 +45,10 @@ async def gather[T1, T2, T3](
 
 @overload
 async def gather[T1, T2, T3, T4](
-    a1: Awaitable[T1] | Future[T1],
-    a2: Awaitable[T2] | Future[T2],
-    a3: Awaitable[T3] | Future[T3],
-    a4: Awaitable[T4] | Future[T4],
+    _a1: Awaitable[T1] | Future[T1],
+    _a2: Awaitable[T2] | Future[T2],
+    _a3: Awaitable[T3] | Future[T3],
+    _a4: Awaitable[T4] | Future[T4],
     /,
     *,
     return_exceptions: bool = ...,
@@ -57,11 +57,11 @@ async def gather[T1, T2, T3, T4](
 
 @overload
 async def gather[T1, T2, T3, T4, T5](
-    a1: Awaitable[T1] | Future[T1],
-    a2: Awaitable[T2] | Future[T2],
-    a3: Awaitable[T3] | Future[T3],
-    a4: Awaitable[T4] | Future[T4],
-    a5: Awaitable[T5] | Future[T5],
+    _a1: Awaitable[T1] | Future[T1],
+    _a2: Awaitable[T2] | Future[T2],
+    _a3: Awaitable[T3] | Future[T3],
+    _a4: Awaitable[T4] | Future[T4],
+    _a5: Awaitable[T5] | Future[T5],
     /,
     *,
     return_exceptions: bool = ...,

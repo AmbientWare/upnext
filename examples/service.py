@@ -153,6 +153,8 @@ async def generate_report(report_type: str, date_range: dict | None = None) -> d
         "generated_at": datetime.now().isoformat(),
         "rows": random.randint(100, 1000),
     }
+    if date_range is not None:
+        report_data["date_range"] = date_range
 
     await upnext.create_artifact(
         name=f"report_{report_type}",

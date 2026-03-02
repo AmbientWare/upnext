@@ -43,9 +43,9 @@ class BackendAPI:
 
     async def __aexit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: Any,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: Any,
     ) -> None:
         # Keep pooled connection(s) alive across calls.
         return None

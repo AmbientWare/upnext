@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from server.db.tables import Base
+from server.backends.sql.shared.tables import Base
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -25,7 +25,7 @@ class Database:
         await db.connect()
 
         async with db.session() as session:
-            result = await session.execute(select(JobHistory))
+            result = await session.execute(select(JobHistoryTable))
             jobs = result.scalars().all()
 
         await db.disconnect()
@@ -135,33 +135,3 @@ class Database:
             raise
         finally:
             await session.close()
-
-
-# Global database instance
-_database: Database | None = None
-
-
-def get_database() -> Database:
-    """Get the global database instance."""
-    if _database is None:
-        raise RuntimeError("Database not initialized. Call init_database() first.")
-    return _database
-
-
-def init_database(
-    url: str,
-    **kwargs: Any,
-) -> Database:
-    """
-    Initialize the global database instance.
-
-    Args:
-        url: Database URL
-        **kwargs: Additional arguments for Database
-
-    Returns:
-        Database instance
-    """
-    global _database
-    _database = Database(url, **kwargs)
-    return _database

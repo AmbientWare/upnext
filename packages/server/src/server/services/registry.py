@@ -6,7 +6,6 @@ This module reads those keys for the dashboard.
 
 import json
 import logging
-from typing import Any
 
 from shared.contracts import FunctionConfig, WorkerInstance, WorkerStats
 from shared.keys import (
@@ -82,10 +81,10 @@ async def list_worker_instances() -> list[WorkerInstance]:
     return instances
 
 
-async def get_worker_definitions() -> dict[str, dict[str, Any]]:
+async def get_worker_definitions() -> dict[str, dict[str, object]]:
     """Get all persistent worker definitions from Redis."""
     r = await get_redis()
-    defs: dict[str, dict[str, Any]] = {}
+    defs: dict[str, dict[str, object]] = {}
 
     async for key in r.scan_iter(match=worker_definition_pattern(), count=100):
         data = await r.get(key)

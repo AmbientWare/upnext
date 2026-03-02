@@ -9,30 +9,46 @@ The dashboard is served by the UpNext server included with the `upnext` package.
 
 ## Prerequisites
 
-- **Redis 7+** — shared queue backend (same instance your workers use)
-- **PostgreSQL** or **SQLite** — for job history and metadata
+- **Redis 7+** for worker runtime and real-time server streams.
+- **Optional SQL database** if you choose `UPNEXT_BACKEND=sqlite` or `UPNEXT_BACKEND=postgres`.
 
 ## Start the server
 
+<Note>
+Backend-first: choose persistence with `UPNEXT_BACKEND` (`redis`, `sqlite`, or `postgres`) before starting the server.
+</Note>
+
 <Tabs>
-  <Tab title="SQLite (quickest)">
-    SQLite requires no additional setup — just start the server:
+  <Tab title="Redis backend (default)">
+    Redis-backed persistence with no SQL migrations:
 
     ```bash
+    UPNEXT_BACKEND=redis \
+    UPNEXT_REDIS_URL=redis://localhost:6379 \
+    upnext server start --port 8080
+    ```
+  </Tab>
+  <Tab title="SQLite backend">
+    SQLite-backed persistence (tables auto-create at startup):
+
+    ```bash
+    UPNEXT_BACKEND=sqlite \
     UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
     UPNEXT_REDIS_URL=redis://localhost:6379 \
     upnext server start --port 8080
     ```
   </Tab>
-  <Tab title="PostgreSQL">
-    If you're using PostgreSQL, run database migrations first, then start the server:
+  <Tab title="PostgreSQL backend">
+    If you're using PostgreSQL, run migrations first, then start the server:
 
     ```bash
     # Run migrations
+    UPNEXT_BACKEND=postgres \
     UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
     upnext server db upgrade head
 
     # Start the server
+    UPNEXT_BACKEND=postgres \
     UPNEXT_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/upnext \
     UPNEXT_REDIS_URL=redis://localhost:6379 \
     upnext server start --port 8080

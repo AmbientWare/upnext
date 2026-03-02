@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from server.db.tables import JobHistory
+from server.backends.sql.shared.tables import JobHistoryTable
 from sqlalchemy import create_engine, inspect
 
 
@@ -36,8 +36,8 @@ def test_migrations_create_expected_job_history_schema(
     finally:
         engine.dispose()
 
-    expected_columns = {col.name for col in JobHistory.__table__.columns}
-    expected_indexes = {idx.name for idx in JobHistory.__table__.indexes}
+    expected_columns = {col.name for col in JobHistoryTable.__table__.columns}
+    expected_indexes = {idx.name for idx in JobHistoryTable.__table__.indexes}
 
     assert expected_columns == actual_columns
     assert expected_indexes == actual_indexes

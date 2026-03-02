@@ -16,10 +16,9 @@ from shared.contracts import (
     TopFailingFunction,
 )
 
+from server.backends.service import BackendService
 from server.config import get_settings
-from server.db.repositories import JobRepository
-from server.db.session import Database
-from server.routes.depends import require_database
+from server.routes.depends import require_backend
 from server.services.apis import ApiMetricsSummary, get_metrics_reader
 from server.services.jobs import get_oldest_queued_jobs, get_queue_depth_stats
 from server.services.registry import get_function_definitions, get_worker_stats
@@ -35,7 +34,7 @@ SUPPORTED_DASHBOARD_WINDOWS: tuple[int, ...] = (1, 5, 15, 60, 1440)
 async def get_dashboard_stats(
     window_minutes: Annotated[int, Query(ge=1, le=24 * 60)] = 24 * 60,
     failing_min_rate: Annotated[float, Query(ge=0.0, le=100.0)] = 0.0,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> DashboardStats:
     """
     Get aggregated dashboard statistics.
@@ -89,8 +88,8 @@ async def get_dashboard_stats(
     except RuntimeError:
         function_name_map = {}
 
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
 
         stats_window = await repo.get_stats(start_date=window_ago)
 

@@ -3,9 +3,9 @@
 import json
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from redis.asyncio import Redis
 from shared.contracts import (
     FunctionType,
     JobCancelResponse,
@@ -19,10 +19,15 @@ from shared.contracts import (
 from shared.domain import CronSource, EventSource, Job, JobStatus, TaskSource
 from shared.keys import EVENTS_STREAM
 
-from server.db.repositories import JobHourlyTrendRow, JobRepository
-from server.db.repositories.jobs_repository import InvalidCursorError
-from server.db.session import Database
-from server.routes.depends import require_database
+from server.backends.base import (
+    InvalidCursorError,
+    JobHourlyTrendRow,
+)
+from server.backends.base import (
+    Job as StoredJob,
+)
+from server.backends.service import BackendService
+from server.routes.depends import require_backend
 from server.routes.jobs.jobs_utils import (
     job_history_to_response,
 )
@@ -41,7 +46,7 @@ VALID_STATUSES = {s.value for s in JobStatus}
 STATUS_STREAM_MAXLEN = 50_000
 
 
-def _history_row_to_runtime_job(row: Any) -> Job:
+def _history_row_to_runtime_job(row: StoredJob) -> Job:
     source_data = row.source
     source: TaskSource | CronSource | EventSource
     source_type = str(getattr(source_data, "type", "task"))
@@ -49,9 +54,7 @@ def _history_row_to_runtime_job(row: Any) -> Job:
         source = CronSource(
             schedule=getattr(source_data, "schedule"),
             cron_window_at=getattr(source_data, "cron_window_at", None),
-            startup_reconciled=bool(
-                getattr(source_data, "startup_reconciled", False)
-            ),
+            startup_reconciled=bool(getattr(source_data, "startup_reconciled", False)),
             startup_policy=getattr(source_data, "startup_policy", None),
         )
     elif source_type == "event":
@@ -96,7 +99,7 @@ async def list_jobs(
     before: datetime | None = Query(None, description="Filter by created before"),
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
     cursor: str | None = Query(None, description="Job ID cursor for pagination"),
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> JobListResponse:
     """
     List job history with optional filtering.
@@ -112,8 +115,8 @@ async def list_jobs(
                 detail=f"Invalid status values: {invalid}. Valid: {sorted(VALID_STATUSES)}",
             )
 
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
 
         try:
             jobs = await repo.list_jobs(
@@ -156,11 +159,11 @@ async def get_job_stats(
     function: str | None = Query(None, description="Filter by function key"),
     after: datetime | None = Query(None, description="Filter by start date"),
     before: datetime | None = Query(None, description="Filter by end date"),
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> JobStatsResponse:
     """Get aggregate job statistics."""
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
 
         stats = await repo.get_stats(
             function=function,
@@ -183,7 +186,7 @@ async def get_job_trends(
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     function: str | None = Query(None, description="Filter by function key"),
     type: FunctionType | None = Query(None, description="Filter by function type"),
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> JobTrendsResponse:
     """
     Get hourly job trends for charts.
@@ -203,8 +206,8 @@ async def get_job_trends(
         if function is None:
             allowed_functions = allowed
 
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
 
         # Calculate time range
         now = datetime.now(UTC)
@@ -266,8 +269,8 @@ def _empty_trends(hours: int) -> JobTrendsResponse:
 
 
 async def _publish_cancelled_status_event(
-    redis_client: Any,
-    job: Any,
+    redis_client: Redis,
+    job: Job,
     *,
     reason: str | None = None,
 ) -> None:
@@ -294,14 +297,14 @@ async def _publish_cancelled_status_event(
     try:
         await redis_client.xadd(
             EVENTS_STREAM,
-            payload,
+            payload,  # type: ignore[arg-type]
             maxlen=STATUS_STREAM_MAXLEN,
             approximate=True,
         )
     except TypeError:
         await redis_client.xadd(
             EVENTS_STREAM,
-            payload,
+            payload,  # type: ignore[arg-type]
             maxlen=STATUS_STREAM_MAXLEN,
         )
     except Exception:
@@ -312,15 +315,15 @@ async def _publish_cancelled_status_event(
 @router.get("/{job_id}/timeline", response_model=JobListResponse)
 async def get_job_timeline(
     job_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> JobListResponse:
     """
     Get one job's full execution timeline (root job + descendant jobs).
 
     Descendants are identified recursively via parent_id.
     """
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
         jobs = await repo.list_job_subtree(job_id)
         if not jobs:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -335,11 +338,11 @@ async def get_job_timeline(
 @router.get("/{job_id}", response_model=JobHistoryResponse)
 async def get_job(
     job_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> JobHistoryResponse:
     """Get a specific job by ID."""
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
         job = await repo.get_by_id(job_id)
 
         if not job:
@@ -398,7 +401,7 @@ async def cancel_job_route(job_id: str) -> JobCancelResponse:
 @router.post("/{job_id}/retry", response_model=JobRetryResponse)
 async def retry_job(
     job_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> JobRetryResponse:
     """Retry a failed job."""
     try:
@@ -406,8 +409,8 @@ async def retry_job(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
         row = await repo.get_by_id(job_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")

@@ -1,11 +1,20 @@
+"""Shared helper functions used across persistence backends."""
+
+from __future__ import annotations
+
+import hashlib
 import json
 import mimetypes
-from typing import Any
+
+
+def hash_api_key(raw_key: str) -> str:
+    """SHA-256 hash of a raw API key."""
+    return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
 def infer_artifact_metadata(
     *,
-    data: Any | None,
+    data: object | None,
     path: str | None,
     size_bytes: int | None,
     content_type: str | None,
@@ -26,12 +35,10 @@ def infer_artifact_metadata(
                 resolved_size = len(str(data).encode())
 
     if resolved_type is None and path:
-        # try to guess the type
         guessed, _encoding = mimetypes.guess_type(path)
         resolved_type = guessed
 
     if resolved_type is None and data is not None:
-        # try to guess the type from the data
         if isinstance(data, (dict, list)):
             resolved_type = "application/json"
         elif isinstance(data, str):

@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends
 
 from server.auth import require_api_key
+from server.backends.base.models import User
 from server.config import get_settings
-from server.db.tables import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

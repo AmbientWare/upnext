@@ -53,34 +53,50 @@ docker compose up -d
 ```
 
 <Tip>
-If you only need Redis (using SQLite for the dashboard database), you can skip the `postgres` service entirely and just run Redis.
+If you use `UPNEXT_BACKEND=redis` (default) or `UPNEXT_BACKEND=sqlite`, you can skip the `postgres` service.
 </Tip>
 
 ## Start UpNext
 
+<Note>
+Backend-first: set `UPNEXT_BACKEND` before `upnext server start`.
+</Note>
+
 With infrastructure running, start the server and your services using the CLI:
 
 <Steps>
-  <Step title="Run database migrations (PostgreSQL only)">
+  <Step title="Run database migrations (PostgreSQL backend only)">
     ```bash
+    UPNEXT_BACKEND=postgres \
     UPNEXT_DATABASE_URL=postgresql+asyncpg://upnext:upnext@localhost:5432/upnext \
     upnext server db upgrade head
     ```
   </Step>
   <Step title="Start the dashboard server">
     <Tabs>
-      <Tab title="PostgreSQL">
+      <Tab title="Redis backend (default)">
         ```bash
-        UPNEXT_DATABASE_URL=postgresql+asyncpg://upnext:upnext@localhost:5432/upnext \
+        UPNEXT_BACKEND=redis \
         UPNEXT_REDIS_URL=redis://localhost:6379 \
         UPNEXT_AUTH_ENABLED=true \
         UPNEXT_API_KEY=changeme \
         upnext server start --port 8080
         ```
       </Tab>
-      <Tab title="SQLite">
+      <Tab title="SQLite backend">
         ```bash
+        UPNEXT_BACKEND=sqlite \
         UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+        UPNEXT_REDIS_URL=redis://localhost:6379 \
+        UPNEXT_AUTH_ENABLED=true \
+        UPNEXT_API_KEY=changeme \
+        upnext server start --port 8080
+        ```
+      </Tab>
+      <Tab title="PostgreSQL backend">
+        ```bash
+        UPNEXT_BACKEND=postgres \
+        UPNEXT_DATABASE_URL=postgresql+asyncpg://upnext:upnext@localhost:5432/upnext \
         UPNEXT_REDIS_URL=redis://localhost:6379 \
         UPNEXT_AUTH_ENABLED=true \
         UPNEXT_API_KEY=changeme \
@@ -105,7 +121,8 @@ The dashboard is available at **http://localhost:8080** and your service connect
 
 | Variable | Description |
 | --- | --- |
-| `UPNEXT_DATABASE_URL` | PostgreSQL or SQLite connection string |
+| `UPNEXT_BACKEND` | Server persistence backend: `redis`, `sqlite`, or `postgres` |
+| `UPNEXT_DATABASE_URL` | SQL connection URL used when `UPNEXT_BACKEND=sqlite` or `postgres` |
 | `UPNEXT_REDIS_URL` | Redis connection URL |
 | `UPNEXT_AUTH_ENABLED` | Enable API key authentication (`"true"` / `"false"`) |
 | `UPNEXT_API_KEY` | API key for authentication |
@@ -133,7 +150,7 @@ services:
 docker compose up -d --scale worker=3
 ```
 
-Each replica joins the same Redis Streams consumer group. Jobs are distributed automatically across all instances — no additional configuration required.
+Each replica joins the same Redis Streams consumer group. Jobs are distributed automatically across all instances - no additional configuration required.
 
 ## Volumes
 

@@ -22,11 +22,11 @@ from shared.contracts import (
 )
 from shared.domain import JobType
 from shared.keys import ARTIFACT_EVENTS_STREAM
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.backends.base import JobRecordCreate
+from server.backends.session_context import RepositorySession
 from server.config import get_settings
-from server.db.repositories import ArtifactRepository, JobRecordCreate, JobRepository
-from server.db.session import get_database
+from server.backends import get_backend
 from server.services.redis import get_redis
 from server.shared_utils import as_utc_aware
 
@@ -132,7 +132,7 @@ def _source_columns(source: JobSource) -> _SourceColumns:
 async def process_event(
     event: JobLifecycleEvent,
     *,
-    session: AsyncSession | None = None,
+    session: RepositorySession | None = None,
 ) -> bool:
     """Dispatch one typed lifecycle event and return whether it changed persisted state."""
     if isinstance(event, JobStartedEvent):
@@ -153,9 +153,12 @@ async def process_event(
     return False
 
 
-async def _promote_pending_artifacts(session: AsyncSession, job_id: str) -> None:
+async def _promote_pending_artifacts(
+    session: RepositorySession,
+    job_id: str,
+) -> None:
     """Promote queued artifacts once the job row exists."""
-    artifact_repo = ArtifactRepository(session)
+    artifact_repo = session.artifacts
     promoted = await artifact_repo.promote_pending_for_job_with_artifacts(job_id)
     if promoted:
         logger.debug(
@@ -194,7 +197,7 @@ async def _publish_artifact_event(event: ArtifactStreamEvent) -> None:
 async def _handle_job_started(
     event: JobStartedEvent,
     *,
-    session: AsyncSession | None = None,
+    session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.started event - create or refresh job record."""
     logger.debug(
@@ -206,11 +209,11 @@ async def _handle_job_started(
     )
 
     if session is None:
-        db = get_database()
+        db = get_backend()
         async with db.session() as managed_session:
             return await _handle_job_started(event, session=managed_session)
 
-    repo = JobRepository(session)
+    repo = session.jobs
     existing = await repo.get_by_id(event.job_id)
     parent_id = event.parent_id
     root_id = event.root_id
@@ -296,6 +299,8 @@ async def _handle_job_started(
             )
         )
 
+    if existing:
+        await repo.save_job(existing)
     await session.flush()
     await _promote_pending_artifacts(session, event.job_id)
     _record_progress_write(event.job_id, 0.0)
@@ -305,7 +310,7 @@ async def _handle_job_started(
 async def _handle_job_completed(
     event: JobCompletedEvent,
     *,
-    session: AsyncSession | None = None,
+    session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.completed event - update job with success."""
     logger.debug(
@@ -316,11 +321,11 @@ async def _handle_job_completed(
     )
 
     if session is None:
-        db = get_database()
+        db = get_backend()
         async with db.session() as managed_session:
             return await _handle_job_completed(event, session=managed_session)
 
-    repo = JobRepository(session)
+    repo = session.jobs
     existing = await repo.get_by_id(event.job_id)
     if existing:
         existing_attempts = existing.attempts or 0
@@ -363,6 +368,8 @@ async def _handle_job_completed(
             )
         )
 
+    if existing:
+        await repo.save_job(existing)
     await session.flush()
     await _promote_pending_artifacts(session, event.job_id)
     _progress_write_state.pop(event.job_id, None)
@@ -372,7 +379,7 @@ async def _handle_job_completed(
 async def _handle_job_failed(
     event: JobFailedEvent,
     *,
-    session: AsyncSession | None = None,
+    session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.failed event - update job with failure."""
     logger.debug(
@@ -386,11 +393,11 @@ async def _handle_job_failed(
     applied_terminal_state = False
     try:
         if session is None:
-            db = get_database()
+            db = get_backend()
             async with db.session() as managed_session:
                 return await _handle_job_failed(event, session=managed_session)
 
-        repo = JobRepository(session)
+        repo = session.jobs
         existing = await repo.get_by_id(event.job_id)
         if existing:
             existing_attempts = existing.attempts or 0
@@ -435,6 +442,8 @@ async def _handle_job_failed(
             )
             applied_terminal_state = True
 
+        if existing:
+            await repo.save_job(existing)
         await session.flush()
         await _promote_pending_artifacts(session, event.job_id)
         return True
@@ -446,7 +455,7 @@ async def _handle_job_failed(
 async def _handle_job_cancelled(
     event: JobCancelledEvent,
     *,
-    session: AsyncSession | None = None,
+    session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.cancelled event - update job with cancellation."""
     logger.debug(
@@ -459,11 +468,11 @@ async def _handle_job_cancelled(
     applied_terminal_state = False
     try:
         if session is None:
-            db = get_database()
+            db = get_backend()
             async with db.session() as managed_session:
                 return await _handle_job_cancelled(event, session=managed_session)
 
-        repo = JobRepository(session)
+        repo = session.jobs
         existing = await repo.get_by_id(event.job_id)
         if existing:
             existing_attempts = existing.attempts or 0
@@ -506,6 +515,8 @@ async def _handle_job_cancelled(
             )
             applied_terminal_state = True
 
+        if existing:
+            await repo.save_job(existing)
         await session.flush()
         await _promote_pending_artifacts(session, event.job_id)
         return True
@@ -517,7 +528,7 @@ async def _handle_job_cancelled(
 async def _handle_job_retrying(
     event: JobRetryingEvent,
     *,
-    session: AsyncSession | None = None,
+    session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.retrying event - update job with retry status."""
     logger.debug(
@@ -530,11 +541,11 @@ async def _handle_job_retrying(
     )
 
     if session is None:
-        db = get_database()
+        db = get_backend()
         async with db.session() as managed_session:
             return await _handle_job_retrying(event, session=managed_session)
 
-    repo = JobRepository(session)
+    repo = session.jobs
     existing = await repo.get_by_id(event.job_id)
     if existing:
         existing_attempts = existing.attempts or 0
@@ -560,6 +571,7 @@ async def _handle_job_retrying(
         existing.root_id = event.root_id
         if existing.created_at is None:
             existing.created_at = existing.started_at or event.retry_at
+        await repo.save_job(existing)
         await session.flush()
         return True
     return False
@@ -568,7 +580,7 @@ async def _handle_job_retrying(
 async def _handle_job_progress(
     event: JobProgressEvent,
     *,
-    session: AsyncSession | None = None,
+    session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.progress event - update progress."""
     logger.debug(
@@ -588,11 +600,11 @@ async def _handle_job_progress(
 
     updated = False
     if session is None:
-        db = get_database()
+        db = get_backend()
         async with db.session() as managed_session:
             return await _handle_job_progress(event, session=managed_session)
 
-    repo = JobRepository(session)
+    repo = session.jobs
     existing = await repo.get_by_id(event.job_id)
     if existing:
         if existing.status in TERMINAL_STATUSES:
@@ -606,6 +618,7 @@ async def _handle_job_progress(
         existing.progress = event.progress
         existing.parent_id = event.parent_id
         existing.root_id = event.root_id
+        await repo.save_job(existing)
         updated = True
     else:
         logger.debug(
@@ -621,7 +634,7 @@ async def _handle_job_progress(
 async def _handle_job_checkpoint(
     event: JobCheckpointEvent,
     *,
-    session: AsyncSession | None = None,
+    session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.checkpoint event - store checkpoint state."""
     logger.debug(
@@ -629,17 +642,18 @@ async def _handle_job_checkpoint(
     )
 
     if session is None:
-        db = get_database()
+        db = get_backend()
         async with db.session() as managed_session:
             return await _handle_job_checkpoint(event, session=managed_session)
 
-    repo = JobRepository(session)
+    repo = session.jobs
     existing = await repo.get_by_id(event.job_id)
     if existing:
         existing.checkpoint = event.state
         existing.checkpoint_at = event.checkpointed_at.isoformat()
         existing.parent_id = event.parent_id
         existing.root_id = event.root_id
+        await repo.save_job(existing)
         await session.flush()
         return True
     return False

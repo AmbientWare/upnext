@@ -17,15 +17,14 @@ from shared.contracts import (
 )
 from sqlalchemy.exc import IntegrityError
 
+from server.backends.service import BackendService
 from server.config import get_settings
-from server.db.repositories import ArtifactRepository, JobRepository
-from server.db.session import Database
 from server.routes.artifacts.artifacts_utils import (
     artifact_sha256,
     encode_artifact_payload,
     publish_artifact_event,
 )
-from server.routes.depends import require_database
+from server.routes.depends import require_backend
 from server.services.storage import get_artifact_storage
 
 logger = logging.getLogger(__name__)
@@ -41,14 +40,14 @@ artifact_root_router = APIRouter(tags=["artifacts"])
             "model": ArtifactQueuedResponse,
             "description": "Artifact queued until the job row is available.",
         },
-        503: {"model": ErrorResponse, "description": "Database not available."},
+        503: {"model": ErrorResponse, "description": "Backend not available."},
     },
 )
 async def create_artifact(
     job_id: str,
     request: CreateArtifactRequest,
     response: Response,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> ArtifactCreateResponse:
     """Create an artifact for a specific job."""
     try:
@@ -78,9 +77,9 @@ async def create_artifact(
             status_code=503, detail=f"Artifact storage unavailable: {exc}"
         ) from exc
 
-    async with db.session() as session:
-        job_repo = JobRepository(session)
-        repo = ArtifactRepository(session)
+    async with backend.session() as tx:
+        job_repo = tx.jobs
+        repo = tx.artifacts
 
         try:
             if await job_repo.get_by_id(job_id):
@@ -113,7 +112,7 @@ async def create_artifact(
                     )
                     return response_artifact
                 except IntegrityError:
-                    await session.rollback()
+                    await tx.rollback()
                     pending = await repo.create_pending(
                         job_id=job_id,
                         name=request.name,
@@ -192,16 +191,16 @@ async def create_artifact(
     "",
     response_model=ArtifactListResponse,
     responses={
-        503: {"model": ErrorResponse, "description": "Database not available."},
+        503: {"model": ErrorResponse, "description": "Backend not available."},
     },
 )
 async def list_artifacts(
     job_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> ArtifactListResponse:
     """List all artifacts for a job."""
-    async with db.session() as session:
-        repo = ArtifactRepository(session)
+    async with backend.session() as tx:
+        repo = tx.artifacts
         artifacts = await repo.list_by_job(job_id)
 
         return ArtifactListResponse(
@@ -215,16 +214,16 @@ async def list_artifacts(
     response_model=ArtifactResponse,
     responses={
         404: {"model": ErrorResponse, "description": "Artifact not found."},
-        503: {"model": ErrorResponse, "description": "Database not available."},
+        503: {"model": ErrorResponse, "description": "Backend not available."},
     },
 )
 async def get_artifact(
     artifact_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> ArtifactResponse:
     """Get an artifact by ID."""
-    async with db.session() as session:
-        repo = ArtifactRepository(session)
+    async with backend.session() as tx:
+        repo = tx.artifacts
         artifact = await repo.get_by_id(artifact_id)
 
         if not artifact:
@@ -246,11 +245,11 @@ async def get_artifact(
 async def get_artifact_content(
     artifact_id: str,
     download: bool = Query(False, description="Force download as attachment"),
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> Response:
     """Get raw artifact content bytes."""
-    async with db.session() as session:
-        repo = ArtifactRepository(session)
+    async with backend.session() as tx:
+        repo = tx.artifacts
         artifact = await repo.get_by_id(artifact_id)
 
         if not artifact:
@@ -281,16 +280,16 @@ async def get_artifact_content(
     response_model=ArtifactDeleteResponse,
     responses={
         404: {"model": ErrorResponse, "description": "Artifact not found."},
-        503: {"model": ErrorResponse, "description": "Database not available."},
+        503: {"model": ErrorResponse, "description": "Backend not available."},
     },
 )
 async def delete_artifact(
     artifact_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> ArtifactDeleteResponse:
     """Delete an artifact."""
-    async with db.session() as session:
-        repo = ArtifactRepository(session)
+    async with backend.session() as tx:
+        repo = tx.artifacts
         artifact = await repo.get_by_id(artifact_id)
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")

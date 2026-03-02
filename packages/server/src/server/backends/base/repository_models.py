@@ -1,10 +1,9 @@
-"""Typed repository-layer request/response models."""
+"""Typed repository-layer request/response models shared across backends."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from shared.domain import JobType
@@ -12,8 +11,6 @@ from shared.domain import JobType
 
 @dataclass(frozen=True)
 class FunctionJobStats:
-    """Aggregated execution stats for a single function."""
-
     function: str
     runs: int
     successes: int
@@ -25,8 +22,6 @@ class FunctionJobStats:
 
 @dataclass(frozen=True)
 class FunctionWaitStats:
-    """Aggregated queue wait-time stats for a single function."""
-
     function: str
     avg_wait_ms: float
     p95_wait_ms: float
@@ -34,8 +29,6 @@ class FunctionWaitStats:
 
 @dataclass(frozen=True)
 class JobStatsSummary:
-    """Aggregate job stats returned by repository queries."""
-
     total: int
     success_count: int
     failure_count: int
@@ -46,8 +39,6 @@ class JobStatsSummary:
 
 @dataclass(frozen=True)
 class JobHourlyTrendRow:
-    """Per-hour status count row returned by jobs trend aggregation."""
-
     yr: int
     mo: int
     dy: int
@@ -58,8 +49,6 @@ class JobHourlyTrendRow:
 
 @dataclass(frozen=True)
 class ArtifactRecord:
-    """Artifact row returned by repository read/write methods."""
-
     id: str
     job_id: str
     name: str
@@ -76,8 +65,6 @@ class ArtifactRecord:
 
 @dataclass(frozen=True)
 class PendingArtifactRecord:
-    """Pending artifact row returned by repository read/write methods."""
-
     id: str
     job_id: str
     name: str
@@ -93,8 +80,6 @@ class PendingArtifactRecord:
 
 
 class JobRecordCreate(BaseModel):
-    """Validated payload for inserting a job_history row."""
-
     model_config = ConfigDict(
         extra="ignore", populate_by_name=True, use_enum_values=True
     )
@@ -116,17 +101,17 @@ class JobRecordCreate(BaseModel):
     parent_id: str | None = None
     root_id: str | None = None
     progress: float = Field(default=0.0, ge=0, le=1)
-    kwargs: dict[str, Any] = Field(default_factory=dict)
+    kwargs: dict[str, object] = Field(default_factory=dict)
     schedule: str | None = None
     cron_window_at: float | None = Field(default=None, ge=0)
     startup_reconciled: bool = False
     startup_policy: str | None = None
-    checkpoint: dict[str, Any] | None = None
+    checkpoint: dict[str, object] | None = None
     checkpoint_at: str | None = None
     event_pattern: str | None = None
     event_handler_name: str | None = None
     queue_wait_ms: float | None = Field(default=None, ge=0)
-    result: Any = None
+    result: object | None = None
     error: str | None = None
 
     @model_validator(mode="after")

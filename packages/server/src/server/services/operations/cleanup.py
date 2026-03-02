@@ -7,16 +7,12 @@ so only one server instance performs cleanup at a time.
 import asyncio
 import logging
 import random
-from typing import Any
 from uuid import uuid4
 
-from server.db.repositories import (
-    ArtifactRecord,
-    ArtifactRepository,
-    JobRepository,
-    PendingArtifactRecord,
-)
-from server.db.session import get_database
+from redis.asyncio import Redis
+
+from server.backends.base import ArtifactRecord, PendingArtifactRecord
+from server.backends import get_backend
 from server.services.storage import get_artifact_storage
 
 logger = logging.getLogger(__name__)
@@ -37,8 +33,8 @@ class CleanupService:
 
     def __init__(
         self,
-        redis_client: Any | None = None,
-        retention_days: int = 30,
+        redis_client: Redis | None = None,
+        retention_hours: int = 24,
         interval_hours: int = 1,
         pending_retention_hours: int = 24,
         pending_promote_batch: int = 500,
@@ -46,7 +42,7 @@ class CleanupService:
         startup_jitter_seconds: float = 30.0,
     ) -> None:
         self._redis = redis_client
-        self._retention_days = retention_days
+        self._retention_hours = retention_hours
         self._interval_seconds = interval_hours * 3600
         self._pending_retention_hours = pending_retention_hours
         self._pending_promote_batch = pending_promote_batch
@@ -83,7 +79,7 @@ class CleanupService:
         self._task = asyncio.create_task(self._loop())
         logger.info(
             f"Cleanup service started "
-            f"(retention={self._retention_days}d, "
+            f"(retention={self._retention_hours}h, "
             f"interval={self._interval_seconds // 3600}h, "
             f"pending_retention={self._pending_retention_hours}h, "
             f"startup_jitter={self._startup_jitter_seconds:.0f}s)"
@@ -134,15 +130,15 @@ class CleanupService:
             return
 
         try:
-            db = get_database()
+            backend = get_backend()
             stale_pending_rows: list[PendingArtifactRecord] = []
             old_artifact_rows: list[ArtifactRecord] = []
             deleted = 0
             promoted = 0
             expired_pending = 0
-            async with db.session() as session:
-                job_repo = JobRepository(session)
-                artifact_repo = ArtifactRepository(session)
+            async with backend.session() as tx:
+                job_repo = tx.jobs
+                artifact_repo = tx.artifacts
 
                 # Reconcile pending artifacts in bounded batches.
                 for _ in range(self._pending_promote_max_loops):
@@ -161,7 +157,7 @@ class CleanupService:
                 expired_pending = len(stale_pending_rows)
 
                 old_job_ids = await job_repo.list_old_ids(
-                    retention_days=self._retention_days
+                    retention_hours=self._retention_hours
                 )
                 old_artifact_rows = await artifact_repo.list_by_job_ids(old_job_ids)
                 deleted = await job_repo.delete_by_ids(old_job_ids)
@@ -176,7 +172,7 @@ class CleanupService:
                 if deleted > 0:
                     logger.info(
                         f"Cleanup: deleted {deleted} job records "
-                        f"older than {self._retention_days} days"
+                        f"older than {self._retention_hours} hours"
                     )
 
             storage_refs = {

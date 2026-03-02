@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 
 from fastapi import Depends, HTTPException, Request
 
+from server.backends import get_backend
+from server.backends.base.models import User
+from server.backends.base.utils import hash_api_key
 from server.config import get_settings
-from server.db.repositories import AuthRepository, hash_api_key
-from server.db.session import get_database
-from server.db.tables import User
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +43,9 @@ async def require_api_key(
 
     key_hash = hash_api_key(raw_key)
 
-    # Lazy DB access
-    db = get_database()
-
-    async with db.session() as session:
-        repo = AuthRepository(session)
-        api_key = await repo.get_api_key_by_hash(key_hash)
+    backend = get_backend()
+    async with backend.session() as tx:
+        api_key = await tx.auth.get_api_key_by_hash(key_hash)
 
         if api_key is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
@@ -56,10 +53,12 @@ async def require_api_key(
         if not api_key.is_active:
             raise HTTPException(status_code=403, detail="API key is disabled")
 
-        # Update last_used_at
-        api_key.last_used_at = datetime.now(UTC)
+        now = datetime.now(UTC)
+        api_key.last_used_at = now
+        api_key.updated_at = now
+        await tx.auth.save_api_key(api_key)
 
-        user = await repo.get_user_by_id(api_key.user_id)
+        user = await tx.auth.get_user_by_id(api_key.user_id)
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
 

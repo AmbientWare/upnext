@@ -15,9 +15,8 @@ from shared.contracts import (
     Run,
 )
 
-from server.db.repositories import JobRepository
-from server.db.session import Database
-from server.routes.depends import require_database
+from server.backends.service import BackendService
+from server.routes.depends import require_backend
 from server.routes.functions_utils import PauseStatePayload, set_function_pause_state
 from server.services.jobs import (
     get_function_dispatch_reason_stats,
@@ -83,19 +82,19 @@ def _build_function_info(
 @router.get("", response_model=FunctionsListResponse)
 async def list_functions(
     type: FunctionType | None = Query(None, description="Filter by function type"),
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> FunctionsListResponse:
     """
     List all functions with stats aggregated from jobs table.
 
     Stats are computed from job history for the last 24 hours.
     """
-    functions = await collect_functions_snapshot(db=db, type=type)
+    functions = await collect_functions_snapshot(backend=backend, type=type)
     return FunctionsListResponse(functions=functions, total=len(functions))
 
 
 async def collect_functions_snapshot(
-    *, db: Database, type: FunctionType | None = None
+    *, backend: BackendService, type: FunctionType | None = None
 ) -> list[FunctionInfo]:
     """Collect function snapshot rows for API responses/background alerting."""
     functions: list[FunctionInfo] = []
@@ -137,8 +136,8 @@ async def collect_functions_snapshot(
     def is_func_active(function_key: str) -> bool:
         return function_key in active_function_keys
 
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
         func_stats = await repo.get_function_job_stats(start_date=day_ago)
         wait_stats = await repo.get_function_wait_stats(start_date=day_ago)
 
@@ -202,7 +201,7 @@ async def collect_functions_snapshot(
 @router.get("/{name}", response_model=FunctionDetailResponse)
 async def get_function(
     name: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> FunctionDetailResponse:
     """Get detailed info for a specific function key."""
     now = datetime.now(UTC)
@@ -252,8 +251,8 @@ async def get_function(
     last_run_status: str | None = None
     recent_runs: list[Run] = []
 
-    async with db.session() as session:
-        repo = JobRepository(session)
+    async with backend.session() as tx:
+        repo = tx.jobs
 
         stats = await repo.get_stats(function=function_key, start_date=day_ago)
         runs_24h = stats.total

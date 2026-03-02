@@ -3,11 +3,10 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from shared.contracts import WorkersSnapshotEvent
+from shared.contracts import WorkersListResponse, WorkersSnapshotEvent
 from shared.keys import WORKER_EVENTS_STREAM
 
 from server.routes.workers.workers_root import list_workers_route
@@ -22,10 +21,12 @@ logger = logging.getLogger(__name__)
 
 worker_stream_router = APIRouter(tags=["workers"])
 _WORKERS_CACHE_LOCK = asyncio.Lock()
-_workers_snapshot_cache: tuple[float, str | None, Any] | None = None
+_workers_snapshot_cache: tuple[float, str | None, WorkersListResponse] | None = None
 
 
-async def _get_cached_workers_snapshot(*, event_token: str | None = None) -> Any:
+async def _get_cached_workers_snapshot(
+    *, event_token: str | None = None
+) -> WorkersListResponse:
     global _workers_snapshot_cache
     now = time.monotonic()
     cached = _workers_snapshot_cache

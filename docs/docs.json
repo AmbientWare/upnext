@@ -67,6 +67,7 @@
           {
             "group": "Server",
             "pages": [
+              "concepts/backends",
               "concepts/artifacts"
             ]
           }

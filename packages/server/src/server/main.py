@@ -10,9 +10,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from server.backends import get_backend
 from server.config import get_settings
-from server.db.repositories import AuthRepository
-from server.db.session import get_database, init_database
 from server.logging import configure_logging
 from server.middleware import CorrelationIDMiddleware
 from server.routes import health_router, v1_public_router, v1_router
@@ -35,6 +34,15 @@ _boot_settings = get_settings()
 configure_logging(log_format=_boot_settings.log_format, debug=_boot_settings.debug)
 logger = logging.getLogger(__name__)
 
+_REQUIRED_SQL_TABLES = {
+    "job_history",
+    "artifacts",
+    "pending_artifacts",
+    "users",
+    "api_keys",
+    "secrets",
+}
+
 
 class AppResponse(BaseModel):
     """App response."""
@@ -53,38 +61,17 @@ async def lifespan(_app: FastAPI):
     logger.info("Starting UpNext API server...")
 
     settings = get_settings()
-    # Initialize database (defaults to SQLite if not configured)
-    db = init_database(settings.effective_database_url)
-    await db.connect()
-
-    if settings.is_sqlite:
-        logger.info("Database connected (SQLite)")
-        # Auto-create tables for SQLite
-        await db.create_tables()
-    else:
-        logger.info("Database connected (PostgreSQL)")
-        required_tables = {
-            "job_history",
-            "artifacts",
-            "pending_artifacts",
-            "users",
-            "api_keys",
-            "secrets",
-        }
-        missing_tables = await db.get_missing_tables(required_tables)
-        if missing_tables:
-            raise RuntimeError(
-                "Database schema is missing required tables: "
-                + ", ".join(missing_tables)
-                + ". Run Alembic migrations (e.g. `alembic upgrade head`) before starting."
-            )
+    backend = get_backend(initialized=False)
+    await backend.connect()
+    await backend.prepare_startup(_REQUIRED_SQL_TABLES)
+    logger.info("Persistence connected (%s)", backend.backend_name)
 
     # Seed admin user + API key when auth is enabled
     if settings.auth_enabled:
         logger.info("Authentication enabled")
         if settings.api_key:
-            async with db.session() as session:
-                await AuthRepository(session).seed_admin_api_key(settings.api_key)
+            async with backend.session() as tx:
+                await tx.auth.seed_admin_api_key(settings.api_key)
         else:
             logger.warning(
                 "UPNEXT_AUTH_ENABLED=true but no UPNEXT_API_KEY set. "
@@ -116,10 +103,16 @@ async def lifespan(_app: FastAPI):
     else:
         logger.info("Redis not configured (UPNEXT_REDIS_URL not set)")
 
+    cleanup_retention_hours = settings.cleanup_retention_hours
+    if cleanup_retention_hours is None:
+        raise RuntimeError(
+            "cleanup_retention_hours was not initialized. This should never happen."
+        )
+
     # Start periodic cleanup service
     cleanup = CleanupService(
         redis_client=redis_client,
-        retention_days=settings.cleanup_retention_days,
+        retention_hours=cleanup_retention_hours,
         interval_hours=settings.cleanup_interval_hours,
         pending_retention_hours=settings.cleanup_pending_retention_hours,
         pending_promote_batch=settings.cleanup_pending_promote_batch,
@@ -150,10 +143,9 @@ async def lifespan(_app: FastAPI):
         await close_redis()
         logger.info("Redis disconnected")
 
-    # Disconnect database
-    db = get_database()
-    await db.disconnect()
-    logger.info("Database disconnected")
+    # Disconnect persistence backend
+    await backend.disconnect()
+    logger.info("Persistence disconnected")
 
 
 # Create FastAPI app

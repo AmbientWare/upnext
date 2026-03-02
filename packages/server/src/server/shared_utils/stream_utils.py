@@ -2,14 +2,14 @@
 
 import json
 from collections.abc import Mapping
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 StreamEntry: TypeAlias = Mapping[str | bytes, object]
 
 
 def get_stream_text_field(data: StreamEntry, key: str) -> str | None:
     """Decode a field from a stream entry supporting str/bytes keys."""
-    raw: Any = data.get(key)
+    raw: object | None = data.get(key)
     if raw is None:
         raw = data.get(key.encode())
     if raw is None:
@@ -21,7 +21,7 @@ def get_stream_text_field(data: StreamEntry, key: str) -> str | None:
 
 def get_stream_json_object(
     data: StreamEntry, key: str = "data"
-) -> dict[str, Any] | None:
+) -> dict[str, object] | None:
     """Parse a JSON object from a decoded stream field."""
     payload = get_stream_text_field(data, key)
     if not payload:

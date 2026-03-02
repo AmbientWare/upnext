@@ -10,7 +10,7 @@ UpNext is configured via environment variables with the `UPNEXT_` prefix. All se
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `UPNEXT_REDIS_URL` | — | Redis connection URL (required for workers) |
+| `UPNEXT_REDIS_URL` | — | Redis connection URL (required for workers and real-time server streams) |
 | `UPNEXT_URL` | `http://localhost:8000` | UpNext server URL (for dashboard reporting) |
 | `UPNEXT_API_KEY` | — | API key for server authentication |
 | `UPNEXT_DEBUG` | `false` | Enable debug mode |
@@ -18,10 +18,29 @@ UpNext is configured via environment variables with the `UPNEXT_` prefix. All se
 
 ## Server settings
 
+<Note>
+Backend-first: set `UPNEXT_BACKEND` explicitly when starting the server.
+</Note>
+
 | Variable | Default | Description |
 | --- | --- | --- |
-| `UPNEXT_DATABASE_URL` | — | Database connection string (PostgreSQL or SQLite) |
+| `UPNEXT_BACKEND` | `redis` | Server persistence backend: `redis`, `sqlite`, or `postgres` |
+| `UPNEXT_DATABASE_URL` | — | SQL connection URL used only when `UPNEXT_BACKEND=sqlite` or `postgres` |
 | `UPNEXT_AUTH_ENABLED` | `false` | Enable API key authentication |
+| `UPNEXT_CLEANUP_RETENTION_HOURS` | backend-dependent | Job/artifact cleanup retention window in hours |
+
+### Persistence backend behavior
+
+| `UPNEXT_BACKEND` | `UPNEXT_DATABASE_URL` behavior | Migrations |
+| --- | --- | --- |
+| `redis` | Ignored for persistence | Not used |
+| `sqlite` | Optional; defaults to `sqlite+aiosqlite:///upnext.db` | Not required (tables auto-create at startup) |
+| `postgres` | Required | Required before startup (`upnext server db upgrade head`) |
+
+### Cleanup retention defaults
+
+- `UPNEXT_BACKEND=redis` defaults `UPNEXT_CLEANUP_RETENTION_HOURS` to `6`.
+- `UPNEXT_BACKEND=sqlite` and `UPNEXT_BACKEND=postgres` default it to `168`.
 
 ## Queue tuning
 

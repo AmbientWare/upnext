@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import server.services.events.processing as event_processing_module
-from server.db.repositories import ArtifactRepository
-from server.db.tables import Artifact, JobHistory, PendingArtifact
+from server.backends.sql.shared.repositories import ArtifactRepository
+from server.backends.sql.shared.tables import ArtifactTable, JobHistoryTable, PendingArtifactTable
 from server.services.events import process_event
 from server.shared_utils import as_utc_aware
 from shared.contracts import (
@@ -54,7 +54,7 @@ async def test_job_started_duplicate_is_ignored(sqlite_db) -> None:
     assert second is False
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-start-1")
+        row = await session.get(JobHistoryTable, "job-start-1")
         assert row is not None
         assert row.status == "active"
         assert row.attempts == 1
@@ -119,7 +119,7 @@ async def test_job_failed_stale_event_does_not_override_terminal_state(
     )
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-fail-1")
+        row = await session.get(JobHistoryTable, "job-fail-1")
         assert row is not None
         assert row.status == "failed"
         assert row.error == "new failure"
@@ -179,7 +179,7 @@ async def test_job_completed_stale_event_does_not_override_terminal_state(
     assert stale is False
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-complete-1")
+        row = await session.get(JobHistoryTable, "job-complete-1")
         assert row is not None
         assert row.status == "complete"
         assert row.result == {"version": "fresh"}
@@ -226,8 +226,8 @@ async def test_terminal_events_backfill_created_at_when_started_was_missed(
     assert failed_applied is True
 
     async with sqlite_db.session() as session:
-        completed = await session.get(JobHistory, "job-terminal-created-1")
-        failed = await session.get(JobHistory, "job-terminal-created-2")
+        completed = await session.get(JobHistoryTable, "job-terminal-created-1")
+        failed = await session.get(JobHistoryTable, "job-terminal-created-2")
         assert completed is not None
         assert failed is not None
         assert as_utc_aware(completed.created_at) == completed_at
@@ -272,7 +272,7 @@ async def test_job_cancelled_event_persists_terminal_state_and_reason(
     assert applied is True
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-cancel-1")
+        row = await session.get(JobHistoryTable, "job-cancel-1")
         assert row is not None
         assert row.status == "cancelled"
         assert row.error == "Cancelled before execution"
@@ -313,7 +313,7 @@ async def test_job_cancelled_stale_event_does_not_override_newer_terminal_state(
     assert applied is False
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-cancel-stale-1")
+        row = await session.get(JobHistoryTable, "job-cancel-stale-1")
         assert row is not None
         assert row.status == "complete"
 
@@ -390,7 +390,7 @@ async def test_retrying_event_ignores_stale_payload_and_accepts_newer_payload(
     assert applied is True
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-retry-1")
+        row = await session.get(JobHistoryTable, "job-retry-1")
         assert row is not None
         assert row.status == "retrying"
         assert row.error == "retry scheduled"
@@ -440,7 +440,7 @@ async def test_progress_and_checkpoint_update_job_state(sqlite_db) -> None:
     )
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-progress-1")
+        row = await session.get(JobHistoryTable, "job-progress-1")
         assert row is not None
         assert row.progress == pytest.approx(0.42)
         assert row.checkpoint == {"offset": 99, "phase": "download"}
@@ -476,7 +476,7 @@ async def test_started_event_persists_runtime_fields(
     )
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-runtime-meta-1")
+        row = await session.get(JobHistoryTable, "job-runtime-meta-1")
         assert row is not None
         assert row.cron_window_at == 1739321000.0
         assert row.startup_reconciled is True
@@ -513,8 +513,8 @@ async def test_pending_artifacts_promote_when_job_is_recorded(sqlite_db) -> None
     )
 
     async with sqlite_db.session() as session:
-        artifact_rows = (await session.execute(Artifact.__table__.select())).all()
-        pending_rows = (await session.execute(PendingArtifact.__table__.select())).all()
+        artifact_rows = (await session.execute(ArtifactTable.__table__.select())).all()
+        pending_rows = (await session.execute(PendingArtifactTable.__table__.select())).all()
 
     assert len(artifact_rows) == 1
     assert len(pending_rows) == 0
@@ -595,7 +595,7 @@ async def test_progress_events_are_coalesced_before_db_write(
     )
 
     async with sqlite_db.session() as session:
-        row = await session.get(JobHistory, "job-progress-coalesce-1")
+        row = await session.get(JobHistoryTable, "job-progress-coalesce-1")
         assert row is not None
         assert row.progress == pytest.approx(0.8)
 
@@ -661,7 +661,7 @@ async def test_completed_event_raises_when_database_unavailable(
     def _raise_db():  # type: ignore[no-untyped-def]
         raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr(event_processing_module, "get_database", _raise_db)
+    monkeypatch.setattr(event_processing_module, "get_backend", _raise_db)
 
     with pytest.raises(RuntimeError, match="db unavailable"):
         await process_event(

@@ -6,7 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 
 # Import the models to register them with Base.metadata
-from server.db.tables import Base
+from server.backends.sql.shared.tables import Base
 from sqlalchemy import engine_from_config, pool
 
 # this is the Alembic Config object, which provides

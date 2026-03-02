@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,14 +11,15 @@ import server.main as main_module
 import server.services.apis.instances as api_instances_module
 import server.services.redis as redis_module
 from fastapi import FastAPI
+from server.backends.types import PersistenceBackends
 from shared._version import __version__ as shared_version
 
 
 @dataclass
 class _SettingsStub:
-    effective_database_url: str
-    is_sqlite: bool
-    redis_url: str | None
+    backend: PersistenceBackends = PersistenceBackends.SQLITE
+    redis_url: str | None = None
+    cleanup_retention_hours: int = 7 * 24
     host: str = "127.0.0.1"
     port: int = 9000
     version: str = shared_version
@@ -26,7 +28,6 @@ class _SettingsStub:
     event_subscriber_stale_claim_ms: int = 30000
     event_subscriber_invalid_stream: str = "upnext:status:events:invalid"
     event_subscriber_invalid_stream_maxlen: int = 10_000
-    cleanup_retention_days: int = 30
     cleanup_interval_hours: int = 1
     cleanup_pending_retention_hours: int = 24
     cleanup_pending_promote_batch: int = 500
@@ -40,7 +41,13 @@ class _SettingsStub:
 
 
 class _FakeDatabase:
-    def __init__(self, *, missing_tables: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        missing_tables: list[str] | None = None,
+        backend_name: str = "sqlite",
+    ) -> None:
+        self.backend_name = backend_name
         self.connected = 0
         self.disconnected = 0
         self.created_tables = 0
@@ -60,6 +67,27 @@ class _FakeDatabase:
         self.checked_tables += 1
         assert required_tables == {"job_history", "artifacts", "pending_artifacts", "users", "api_keys", "secrets"}
         return list(self.missing_tables)
+
+    async def prepare_startup(self, required_tables: set[str]) -> None:
+        if self.backend_name == "sqlite":
+            await self.create_tables()
+            return
+        missing = await self.get_missing_tables(required_tables)
+        if missing:
+            raise RuntimeError(
+                "Database schema is missing required tables: " + ", ".join(missing)
+            )
+
+    @asynccontextmanager
+    async def session(self):
+        class _Tx:
+            class _Auth:
+                async def seed_admin_api_key(self, _raw_key: str) -> None:
+                    return None
+
+            auth = _Auth()
+
+        yield _Tx()
 
 
 class _FakeCleanupService:
@@ -143,6 +171,7 @@ def _reset_singletons() -> None:
 
 def test_server_settings_defaults_and_flags(monkeypatch) -> None:
     monkeypatch.delenv("UPNEXT_DATABASE_URL", raising=False)
+    monkeypatch.delenv("UPNEXT_BACKEND", raising=False)
     monkeypatch.setenv("UPNEXT_ENV", "dev")
     monkeypatch.delenv("UPNEXT_CORS_ALLOW_ORIGINS", raising=False)
     monkeypatch.delenv("UPNEXT_CORS_ALLOW_CREDENTIALS", raising=False)
@@ -150,8 +179,9 @@ def test_server_settings_defaults_and_flags(monkeypatch) -> None:
 
     assert settings.is_development is True
     assert settings.is_production is False
-    assert settings.effective_database_url.startswith("sqlite+aiosqlite:///")
-    assert settings.is_sqlite is True
+    assert settings.backend == PersistenceBackends.REDIS
+    assert settings.effective_database_url is None
+    assert settings.is_sql_backend is False
     assert settings.cors_allow_origins_list == ["*"]
     assert settings.cors_allow_credentials is False
     assert config_module.get_settings() is settings
@@ -159,6 +189,7 @@ def test_server_settings_defaults_and_flags(monkeypatch) -> None:
 
 def test_server_settings_database_override(monkeypatch) -> None:
     monkeypatch.setenv("UPNEXT_ENV", "prod")
+    monkeypatch.setenv("UPNEXT_BACKEND", "postgres")
     monkeypatch.setenv("UPNEXT_SECRET_KEY", "test-secret-key")
     monkeypatch.setenv(
         "UPNEXT_DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/upnext"
@@ -172,8 +203,9 @@ def test_server_settings_database_override(monkeypatch) -> None:
 
     assert settings.is_production is True
     assert settings.is_development is False
+    assert settings.backend == PersistenceBackends.POSTGRES
     assert settings.effective_database_url.startswith("postgresql+asyncpg://")
-    assert settings.is_sqlite is False
+    assert settings.is_sql_backend is True
     assert settings.cors_allow_origins_list == [
         "https://app.example.com",
         "https://admin.example.com",
@@ -211,6 +243,25 @@ def test_server_settings_effective_secret_read_policy(monkeypatch) -> None:
     monkeypatch.setenv("UPNEXT_SECRETS_REQUIRE_ADMIN_READS", "true")
     settings = config_module.get_settings()
     assert settings.effective_secrets_require_admin_reads is True
+
+
+def test_cleanup_retention_defaults_by_backend(monkeypatch) -> None:
+    monkeypatch.setenv("UPNEXT_BACKEND", "redis")
+    monkeypatch.delenv("UPNEXT_CLEANUP_RETENTION_HOURS", raising=False)
+    settings = config_module.get_settings()
+    assert settings.cleanup_retention_hours == 6
+
+    config_module.get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_BACKEND", "postgres")
+    settings = config_module.get_settings()
+    assert settings.cleanup_retention_hours == 7 * 24
+
+
+def test_cleanup_retention_env_overrides_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("UPNEXT_BACKEND", "redis")
+    monkeypatch.setenv("UPNEXT_CLEANUP_RETENTION_HOURS", "11")
+    settings = config_module.get_settings()
+    assert settings.cleanup_retention_hours == 11
 
 
 @pytest.mark.asyncio
@@ -287,15 +338,13 @@ async def test_list_api_instances_parses_payloads_and_defaults(monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_lifespan_sqlite_path_runs_cleanup_without_redis(monkeypatch) -> None:
     settings = _SettingsStub(
-        effective_database_url="sqlite+aiosqlite:///tmp.db",
-        is_sqlite=True,
+        backend=PersistenceBackends.SQLITE,
         redis_url=None,
     )
     db = _FakeDatabase()
 
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(main_module, "init_database", lambda _url: db)
-    monkeypatch.setattr(main_module, "get_database", lambda: db)
+    monkeypatch.setattr(main_module, "get_backend", lambda **_: db)
     monkeypatch.setattr(main_module, "CleanupService", _FakeCleanupService)
     monkeypatch.setattr(main_module, "AlertEmitterService", _FakeAlertEmitterService)
     monkeypatch.setattr(main_module, "StreamSubscriber", _FakeStreamSubscriber)
@@ -313,7 +362,7 @@ async def test_lifespan_sqlite_path_runs_cleanup_without_redis(monkeypatch) -> N
         assert _FakeCleanupService.instances[0].started is True
         assert _FakeAlertEmitterService.instances[0].started is True
         assert _FakeCleanupService.instances[0].redis_client is None
-        assert _FakeCleanupService.instances[0].kwargs["retention_days"] == 30
+        assert _FakeCleanupService.instances[0].kwargs["retention_hours"] == 7 * 24
 
     assert db.disconnected == 1
     assert _FakeCleanupService.instances[0].stopped is True
@@ -324,14 +373,13 @@ async def test_lifespan_sqlite_path_runs_cleanup_without_redis(monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_lifespan_postgres_missing_tables_fails_fast(monkeypatch) -> None:
     settings = _SettingsStub(
-        effective_database_url="postgresql+asyncpg://db",
-        is_sqlite=False,
+        backend=PersistenceBackends.POSTGRES,
         redis_url=None,
     )
-    db = _FakeDatabase(missing_tables=["job_history"])
+    db = _FakeDatabase(missing_tables=["job_history"], backend_name="postgres")
 
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(main_module, "init_database", lambda _url: db)
+    monkeypatch.setattr(main_module, "get_backend", lambda **_: db)
     monkeypatch.setattr(main_module, "CleanupService", _FakeCleanupService)
     monkeypatch.setattr(main_module, "AlertEmitterService", _FakeAlertEmitterService)
 
@@ -347,17 +395,15 @@ async def test_lifespan_postgres_missing_tables_fails_fast(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_lifespan_with_redis_starts_and_stops_subscriber(monkeypatch) -> None:
     settings = _SettingsStub(
-        effective_database_url="postgresql+asyncpg://db",
-        is_sqlite=False,
+        backend=PersistenceBackends.POSTGRES,
         redis_url="redis://localhost:6379",
     )
-    db = _FakeDatabase(missing_tables=[])
+    db = _FakeDatabase(missing_tables=[], backend_name="postgres")
     redis_client = object()
     close_calls = {"count": 0}
 
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(main_module, "init_database", lambda _url: db)
-    monkeypatch.setattr(main_module, "get_database", lambda: db)
+    monkeypatch.setattr(main_module, "get_backend", lambda **_: db)
     monkeypatch.setattr(main_module, "CleanupService", _FakeCleanupService)
     monkeypatch.setattr(main_module, "AlertEmitterService", _FakeAlertEmitterService)
     monkeypatch.setattr(main_module, "StreamSubscriber", _FakeStreamSubscriber)
@@ -387,8 +433,7 @@ async def test_lifespan_with_redis_starts_and_stops_subscriber(monkeypatch) -> N
 
 def test_main_uses_settings_for_uvicorn(monkeypatch) -> None:
     settings = _SettingsStub(
-        effective_database_url="sqlite+aiosqlite:///tmp.db",
-        is_sqlite=True,
+        backend=PersistenceBackends.SQLITE,
         redis_url=None,
         host="0.0.0.0",
         port=8080,

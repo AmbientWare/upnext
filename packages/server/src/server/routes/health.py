@@ -13,10 +13,9 @@ from shared.contracts import (
     QueueHealthSummary,
     ReadinessMetrics,
 )
-from sqlalchemy import text
 
 from server.config import get_settings
-from server.db.session import get_database
+from server.backends import get_backend
 from server.services.events import get_event_processing_stats
 from server.services.jobs import get_queue_depth_stats
 from server.services.operations import get_alert_delivery_stats
@@ -40,17 +39,16 @@ def clear_health_metrics_cache() -> None:
 
 async def _check_database_readiness() -> DependencyHealth:
     try:
-        db = get_database()
+        db = get_backend()
     except RuntimeError as exc:
         return DependencyHealth(status="error", detail=str(exc))
 
     try:
-        async with db.session() as session:
-            await session.execute(text("SELECT 1"))
+        await db.check_readiness()
     except Exception as exc:  # pragma: no cover - defensive guard
         return DependencyHealth(
             status="error",
-            detail=f"Database readiness probe failed: {exc}",
+            detail=f"Backend readiness probe failed: {exc}",
         )
 
     return DependencyHealth(status="ok")

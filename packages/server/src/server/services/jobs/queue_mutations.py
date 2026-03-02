@@ -1,7 +1,8 @@
 """Queue mutation helpers for jobs routes."""
 
 from dataclasses import dataclass
-from typing import Any
+
+from redis.asyncio import Redis
 
 from shared.domain.jobs import Job, JobStatus
 from shared.keys import (
@@ -37,11 +38,11 @@ class CancelMutationResult:
     deleted_stream_entries: int = 0
 
 
-def _decode_text(value: Any) -> str:
+def _decode_text(value: object) -> str:
     return value.decode() if isinstance(value, bytes) else str(value)
 
 
-async def find_job_key_by_id(redis_client: Any, job_id: str) -> str | None:
+async def find_job_key_by_id(redis_client: Redis, job_id: str) -> str | None:
     """Find the canonical job payload key for a job ID."""
     index_key = job_index_key(job_id)
     indexed_job_key = await redis_client.get(index_key)
@@ -70,7 +71,7 @@ async def find_job_key_by_id(redis_client: Any, job_id: str) -> str | None:
     return None
 
 
-async def load_job(redis_client: Any, job_id: str) -> tuple[Job | None, str | None]:
+async def load_job(redis_client: Redis, job_id: str) -> tuple[Job | None, str | None]:
     """Load a job from active queue storage."""
     resolved_job_key = await find_job_key_by_id(redis_client, job_id)
     if resolved_job_key is None:
@@ -84,7 +85,7 @@ async def load_job(redis_client: Any, job_id: str) -> tuple[Job | None, str | No
 
 
 async def delete_stream_entries_for_job(
-    redis_client: Any,
+    redis_client: Redis,
     stream_key: str,
     job_id: str,
     *,
@@ -102,7 +103,7 @@ async def delete_stream_entries_for_job(
 
 
 async def cancel_job(
-    redis_client: Any,
+    redis_client: Redis,
     job: Job,
     *,
     existing_job_key: str | None,
@@ -162,7 +163,7 @@ async def cancel_job(
     )
 
 
-async def _ensure_consumer_group(redis_client: Any, stream_key: str) -> None:
+async def _ensure_consumer_group(redis_client: Redis, stream_key: str) -> None:
     try:
         await redis_client.xgroup_create(
             stream_key,
@@ -175,7 +176,7 @@ async def _ensure_consumer_group(redis_client: Any, stream_key: str) -> None:
             raise
 
 
-async def manual_retry(redis_client: Any, job: Job) -> None:
+async def manual_retry(redis_client: Redis, job: Job) -> None:
     """Requeue a failed/cancelled job for operator-initiated retry."""
     if job.status not in {JobStatus.FAILED, JobStatus.CANCELLED}:
         raise ValueError(

@@ -6,10 +6,10 @@ from uuid import uuid4
 
 import pytest
 import redis.asyncio as redis
-import server.db.session as session_module
 import server.services.events.processing as event_processing_module
-from server.db.session import init_database
-from server.db.tables import JobHistory
+import server.services.events.subscriber as subscriber_module
+from server.backends.sql.base import BaseSqlBackend
+from server.backends.sql.shared.tables import JobHistoryTable
 from server.services.events import StreamSubscriber, StreamSubscriberConfig
 from upnext.engine.status import StatusPublisher, StatusPublisherConfig
 
@@ -28,18 +28,18 @@ async def real_infra(monkeypatch):
     redis_client = redis.from_url(redis_url, decode_responses=True)
     await cast(Any, redis_client).ping()
 
-    db = init_database(database_url)
+    db = BaseSqlBackend(database_url)
     await db.connect()
     await db.drop_tables()
     await db.create_tables()
-    monkeypatch.setattr(event_processing_module, "get_database", lambda: db)
+    monkeypatch.setattr(event_processing_module, "get_backend", lambda: db)
+    monkeypatch.setattr(subscriber_module, "get_backend", lambda: db)
 
     try:
         yield redis_client, db
     finally:
         await db.drop_tables()
         await db.disconnect()
-        session_module._database = None  # type: ignore[attr-defined]
         await redis_client.aclose()
 
 
@@ -96,7 +96,7 @@ async def test_real_round_trip_worker_events_persist_to_postgres(real_infra) -> 
     assert pending["pending"] == 0
 
     async with db.session() as session:
-        row = await session.get(JobHistory, job_id)
+        row = await session.get(JobHistoryTable, job_id)
         assert row is not None
         assert row.status == "complete"
         assert row.worker_id == "worker-real"
@@ -157,7 +157,7 @@ async def test_real_stale_pending_event_is_reclaimed_after_consumer_crash(
     assert pending["pending"] == 0
 
     async with db.session() as session:
-        row = await session.get(JobHistory, job_id)
+        row = await session.get(JobHistoryTable, job_id)
         assert row is not None
         assert row.status == "active"
         assert row.attempts == 1
@@ -225,6 +225,6 @@ async def test_real_consumer_restart_continues_processing_same_group(
     assert await second_consumer._process_batch(drain=True) == 1  # noqa: SLF001
 
     async with db.session() as session:
-        row = await session.get(JobHistory, job_id)
+        row = await session.get(JobHistoryTable, job_id)
         assert row is not None
         assert row.status == "complete"

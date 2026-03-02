@@ -14,9 +14,9 @@ from shared.contracts import (
 from shared.keys import ARTIFACT_EVENTS_STREAM
 
 import server.routes.artifacts.artifacts_root as artifacts_root_route
-from server.db.session import Database
+from server.backends.service import BackendService
 from server.routes.artifacts.artifacts_utils import parse_artifact_stream_event
-from server.routes.depends import require_database
+from server.routes.depends import require_backend
 from server.routes.sse import SSE_BLOCK_MS, SSE_HEADERS, SSE_READ_COUNT
 from server.services.redis import get_redis
 
@@ -33,26 +33,28 @@ artifact_stream_router = APIRouter(tags=["artifacts"])
             "model": ArtifactQueuedResponse,
             "description": "Artifact queued until the job row is available.",
         },
-        503: {"model": ErrorResponse, "description": "Database not available."},
+        503: {"model": ErrorResponse, "description": "Backend not available."},
     },
 )
 async def create_job_artifact(
     job_id: str,
     request: CreateArtifactRequest,
     response: Response,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> ArtifactCreateResponse:
     """Create an artifact for a specific job (job-scoped path)."""
-    return await artifacts_root_route.create_artifact(job_id, request, response, db=db)
+    return await artifacts_root_route.create_artifact(
+        job_id, request, response, backend=backend
+    )
 
 
 @artifact_stream_router.get("", response_model=ArtifactListResponse)
 async def list_job_artifacts(
     job_id: str,
-    db: Database = Depends(require_database),
+    backend: BackendService = Depends(require_backend),
 ) -> ArtifactListResponse:
     """List artifacts for a specific job (job-scoped path)."""
-    return await artifacts_root_route.list_artifacts(job_id, db=db)
+    return await artifacts_root_route.list_artifacts(job_id, backend=backend)
 
 
 @artifact_stream_router.get("/stream")
@@ -95,7 +97,7 @@ async def stream_job_artifacts(job_id: str, request: Request) -> StreamingRespon
             return
         except Exception as exc:
             logger.warning("Artifact stream error: %s", exc)
-            yield "event: error\ndata: {\"error\": \"stream disconnected\"}\n\n"
+            yield 'event: error\ndata: {"error": "stream disconnected"}\n\n'
 
     return StreamingResponse(
         event_stream(),

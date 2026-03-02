@@ -3,7 +3,6 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -15,7 +14,7 @@ from shared.contracts import (
 )
 from shared.keys import EVENTS_STREAM
 
-from server.db import get_database
+from server.backends import get_backend
 from server.routes.jobs.jobs_root import get_job_trends
 from server.routes.jobs.jobs_utils import (
     STREAMABLE_EVENTS,
@@ -37,7 +36,7 @@ jobs_stream_router = APIRouter(tags=["jobs"])
 _TRENDS_CACHE_LOCK = asyncio.Lock()
 _trends_snapshot_cache: dict[
     tuple[int, str | None, str | None],
-    tuple[float, str | None, Any],
+    tuple[float, str | None, JobTrendsResponse],
 ] = {}
 
 
@@ -79,34 +78,16 @@ async def _fetch_job_trends_snapshot(
     hours: int,
     function: str | None,
     func_type: FunctionType | None,
-) -> Any:
-    db = None
-    try:
-        db = get_database()
-    except RuntimeError as exc:
-        if "Database not initialized" not in str(exc):
-            raise
-
-    if db is not None:
-        try:
-            return await get_job_trends(
-                hours=hours,
-                function=function,
-                type=func_type,
-                db=db,
-            )
-        except TypeError as exc:
-            # Backward compatibility for tests/patches that inject a simplified
-            # coroutine signature: fake_get_job_trends(hours, function, type).
-            if "db" not in str(exc):
-                raise
-
+) -> JobTrendsResponse:
     try:
         return await get_job_trends(
             hours=hours,
             function=function,
             type=func_type,
+            backend=get_backend(),
         )
+    except RuntimeError:
+        return _empty_job_trends_snapshot(hours)
     except Exception:
         logger.debug("Falling back to empty trends snapshot", exc_info=True)
         return _empty_job_trends_snapshot(hours)
@@ -116,9 +97,9 @@ async def _get_cached_job_trends_snapshot(
     *,
     hours: int,
     function: str | None,
-    func_type: FunctionType | None | Any,
+    func_type: FunctionType | None,
     event_token: str | None = None,
-) -> Any:
+) -> JobTrendsResponse:
     func_type_filter = func_type if isinstance(func_type, FunctionType) else None
     key = (
         hours,

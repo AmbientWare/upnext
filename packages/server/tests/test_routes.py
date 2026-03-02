@@ -22,7 +22,7 @@ import server.routes.workers.workers_root as workers_root_route
 import server.routes.workers.workers_stream as workers_stream_route
 import server.services.apis.tracking as api_tracking_module
 from fastapi import HTTPException, Response
-from server.db.repositories import JobRepository
+from server.backends.sql.shared.repositories import JobRepository
 from server.services.jobs.metrics import QueuedJobSnapshot
 from shared.contracts import (
     ApiInstance,
@@ -74,24 +74,24 @@ async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
         before=None,
         limit=100,
         cursor=None,
-        db=sqlite_db,
+        backend=sqlite_db,
     )
     assert listed.total == 1
     assert listed.jobs[0].id == "job-list-1"
 
-    fetched = await jobs_route.get_job("job-list-1", db=sqlite_db)
+    fetched = await jobs_route.get_job("job-list-1", backend=sqlite_db)
     assert fetched.id == "job-list-1"
     assert fetched.duration_ms == 1000
 
     stats = await jobs_route.get_job_stats(
-        function="fn.list", after=None, before=None, db=sqlite_db
+        function="fn.list", after=None, before=None, backend=sqlite_db
     )
     assert stats.total == 1
     assert stats.success_count == 1
     assert stats.avg_duration_ms == pytest.approx(1000.0, abs=0.1)
 
     trends = await jobs_route.get_job_trends(
-        hours=2, function="fn.list", type=None, db=sqlite_db
+        hours=2, function="fn.list", type=None, backend=sqlite_db
     )
     assert len(trends.hourly) == 2
     assert sum(hour.complete for hour in trends.hourly) == 1
@@ -99,35 +99,10 @@ async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
 
 
 @pytest.mark.asyncio
-async def test_jobs_routes_handle_missing_database_and_not_found(monkeypatch) -> None:
-    import server.routes.depends as depends_module
-    from server.routes.depends import require_database
-
-    def _no_db():
-        raise RuntimeError("db unavailable")
-
-    monkeypatch.setattr(depends_module, "get_database", _no_db)
-
-    with pytest.raises(HTTPException) as list_exc:
-        require_database()
-    assert list_exc.value.status_code == 503
-
-
-@pytest.mark.asyncio
 async def test_health_route_includes_alert_metrics(monkeypatch) -> None:
-    class _SessionStub:
-        async def __aenter__(self) -> "_SessionStub":
-            return self
-
-        async def __aexit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
-            return None
-
-        async def execute(self, _query) -> None:  # type: ignore[no-untyped-def]
-            return None
-
     class _DatabaseStub:
-        def session(self) -> _SessionStub:
-            return _SessionStub()
+        async def check_readiness(self) -> None:
+            return None
 
     class _RedisStub:
         async def ping(self) -> bool:
@@ -141,7 +116,7 @@ async def test_health_route_includes_alert_metrics(monkeypatch) -> None:
         return _RedisStub()
 
     monkeypatch.setattr(health_route, "get_settings", lambda: _SettingsStub())
-    monkeypatch.setattr(health_route, "get_database", lambda: _DatabaseStub())
+    monkeypatch.setattr(health_route, "get_backend", lambda: _DatabaseStub())
     monkeypatch.setattr(health_route, "get_redis", _get_redis)
     monkeypatch.setattr(
         health_route,
@@ -174,7 +149,7 @@ async def test_readiness_route_returns_503_when_dependencies_fail(monkeypatch) -
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(health_route, "get_settings", lambda: _SettingsStub())
-    monkeypatch.setattr(health_route, "get_database", _get_database)
+    monkeypatch.setattr(health_route, "get_backend", _get_database)
     monkeypatch.setattr(health_route, "get_redis", _get_redis)
 
     liveness = await health_route.health_check()
@@ -190,19 +165,9 @@ async def test_readiness_route_returns_503_when_dependencies_fail(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_readiness_requires_redis_in_production(monkeypatch) -> None:
-    class _SessionStub:
-        async def __aenter__(self) -> "_SessionStub":
-            return self
-
-        async def __aexit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
-            return None
-
-        async def execute(self, _query) -> None:  # type: ignore[no-untyped-def]
-            return None
-
     class _DatabaseStub:
-        def session(self) -> _SessionStub:
-            return _SessionStub()
+        async def check_readiness(self) -> None:
+            return None
 
     class _SettingsStub:
         version = __version__
@@ -211,7 +176,7 @@ async def test_readiness_requires_redis_in_production(monkeypatch) -> None:
         readiness_require_redis = False
 
     monkeypatch.setattr(health_route, "get_settings", lambda: _SettingsStub())
-    monkeypatch.setattr(health_route, "get_database", lambda: _DatabaseStub())
+    monkeypatch.setattr(health_route, "get_backend", lambda: _DatabaseStub())
 
     liveness = await health_route.health_check()
     assert liveness.status == "degraded"
@@ -226,19 +191,9 @@ async def test_readiness_requires_redis_in_production(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_readiness_allows_missing_redis_in_development(monkeypatch) -> None:
-    class _SessionStub:
-        async def __aenter__(self) -> "_SessionStub":
-            return self
-
-        async def __aexit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
-            return None
-
-        async def execute(self, _query) -> None:  # type: ignore[no-untyped-def]
-            return None
-
     class _DatabaseStub:
-        def session(self) -> _SessionStub:
-            return _SessionStub()
+        async def check_readiness(self) -> None:
+            return None
 
     class _SettingsStub:
         version = __version__
@@ -247,7 +202,7 @@ async def test_readiness_allows_missing_redis_in_development(monkeypatch) -> Non
         readiness_require_redis = False
 
     monkeypatch.setattr(health_route, "get_settings", lambda: _SettingsStub())
-    monkeypatch.setattr(health_route, "get_database", lambda: _DatabaseStub())
+    monkeypatch.setattr(health_route, "get_backend", lambda: _DatabaseStub())
 
     liveness = await health_route.health_check()
     assert liveness.status == "ok"
@@ -262,6 +217,9 @@ async def test_readiness_allows_missing_redis_in_development(monkeypatch) -> Non
 
 @pytest.mark.asyncio
 async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) -> None:
+    class _BackendStub:
+        is_initialized = True
+
     class _RedisStub:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
@@ -288,8 +246,9 @@ async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
         hours: int = 24,
         function: str | None = None,
         type: str | None = None,
+        backend=None,
     ) -> JobTrendsResponse:
-        _ = hours, function, type
+        _ = hours, function, type, backend
         call_count["value"] += 1
         return JobTrendsResponse(
             hourly=[
@@ -301,6 +260,7 @@ async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
         )
 
     monkeypatch.setattr(jobs_stream_route, "get_redis", _get_redis)
+    monkeypatch.setattr(jobs_stream_route, "get_backend", lambda: _BackendStub())
     monkeypatch.setattr(jobs_stream_route, "get_job_trends", _get_job_trends)
 
     response = await jobs_route.stream_job_trends(_RequestStub())
@@ -321,6 +281,9 @@ async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
+    class _BackendStub:
+        is_initialized = True
+
     class _RedisStub:
         def __init__(self) -> None:
             self._call = 0
@@ -376,8 +339,9 @@ async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
         hours: int = 24,
         function: str | None = None,
         type: str | None = None,
+        backend=None,
     ) -> JobTrendsResponse:
-        _ = hours, function, type
+        _ = hours, function, type, backend
         call_count["value"] += 1
         return JobTrendsResponse(
             hourly=[
@@ -389,6 +353,7 @@ async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(jobs_stream_route, "get_redis", _get_redis)
+    monkeypatch.setattr(jobs_stream_route, "get_backend", lambda: _BackendStub())
     monkeypatch.setattr(jobs_stream_route, "get_job_trends", _get_job_trends)
 
     response = await jobs_route.stream_job_trends(_RequestStub())
@@ -458,7 +423,7 @@ async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
     assert await fake_redis.get(queued_key) is None
     assert await fake_redis.get("upnext:job_index:job-123") is None
 
-    retry_out = await jobs_route.retry_job("job-456", db=sqlite_db)
+    retry_out = await jobs_route.retry_job("job-456", backend=sqlite_db)
     assert retry_out.job_id == "job-456"
     assert retry_out.retried is True
     retried_job = await fake_redis.get("upnext:job:fn.retry:job-456")
@@ -506,7 +471,7 @@ async def test_jobs_cancel_and_retry_routes_validate_status_and_presence(
         )
 
     with pytest.raises(HTTPException, match="cannot be retried") as conflict:
-        await jobs_route.retry_job("job-active", db=sqlite_db)
+        await jobs_route.retry_job("job-active", backend=sqlite_db)
     assert conflict.value.status_code == 409
 
 
@@ -540,7 +505,7 @@ async def test_retry_route_rejects_active_idempotency_key(
     await fake_redis.sadd("upnext:fn:fn.retry:dedup", "shared-key")
 
     with pytest.raises(HTTPException, match="idempotency key 'shared-key'") as conflict:
-        await jobs_route.retry_job("job-idempotency", db=sqlite_db)
+        await jobs_route.retry_job("job-idempotency", backend=sqlite_db)
     assert conflict.value.status_code == 409
 
 
@@ -570,7 +535,7 @@ async def test_jobs_timeline_returns_recursive_subtree(sqlite_db) -> None:
             }
         )
 
-    out = await jobs_route.get_job_timeline("root-job", db=sqlite_db)
+    out = await jobs_route.get_job_timeline("root-job", backend=sqlite_db)
     assert out.total == 2
     assert [job.id for job in out.jobs] == ["root-job", "child-job"]
 
@@ -626,7 +591,7 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
     monkeypatch.setattr(functions_route, "get_function_definitions", fake_defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", fake_workers)
 
-    out = await functions_route.list_functions(type=None, db=sqlite_db)
+    out = await functions_route.list_functions(type=None, backend=sqlite_db)
     assert out.total == 1
     fn = out.functions[0]
     assert fn.key == "task_key"
@@ -829,23 +794,6 @@ async def test_workers_stream_returns_503_when_redis_unavailable(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_dashboard_returns_503_when_database_unavailable(
-    monkeypatch,
-) -> None:
-    import server.routes.depends as depends_module
-    from server.routes.depends import require_database
-
-    def _no_db():
-        raise RuntimeError("db unavailable")
-
-    monkeypatch.setattr(depends_module, "get_database", _no_db)
-
-    with pytest.raises(HTTPException) as exc:
-        require_database()
-    assert exc.value.status_code == 503
-
-
-@pytest.mark.asyncio
 async def test_dashboard_includes_queue_depth_when_database_available(
     sqlite_db, monkeypatch
 ) -> None:
@@ -907,7 +855,7 @@ async def test_dashboard_includes_queue_depth_when_database_available(
     monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
 
-    out = await dashboard_route.get_dashboard_stats(db=sqlite_db)
+    out = await dashboard_route.get_dashboard_stats(backend=sqlite_db)
     assert out.queue.running == 4
     assert out.queue.waiting == 1
     assert out.queue.claimed == 5
@@ -961,7 +909,7 @@ async def test_dashboard_window_stats_use_requested_minutes(
     monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
 
-    out = await dashboard_route.get_dashboard_stats(window_minutes=5, db=sqlite_db)
+    out = await dashboard_route.get_dashboard_stats(window_minutes=5, backend=sqlite_db)
     assert out.runs.window_minutes == 5
     assert out.runs.total == 0
     assert out.runs.jobs_per_min == 0.0
@@ -1096,7 +1044,7 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
     monkeypatch.setattr(dashboard_route, "get_function_definitions", fake_defs)
     monkeypatch.setattr(dashboard_route, "get_oldest_queued_jobs", fake_oldest)
 
-    out = await dashboard_route.get_dashboard_stats(db=sqlite_db)
+    out = await dashboard_route.get_dashboard_stats(backend=sqlite_db)
     assert out.top_failing_functions[0].key == "fn.fail"
     assert out.top_failing_functions[0].name == "Orders Processor"
     assert out.top_failing_functions[0].failures == 2
@@ -1107,7 +1055,7 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
     assert out.oldest_queued_jobs[0].id == "job-q-1"
     assert out.oldest_queued_jobs[0].source == "stream"
 
-    filtered = await dashboard_route.get_dashboard_stats(failing_min_rate=70.0, db=sqlite_db)
+    filtered = await dashboard_route.get_dashboard_stats(failing_min_rate=70.0, backend=sqlite_db)
     assert filtered.top_failing_functions == []
 
 
@@ -1129,16 +1077,18 @@ async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) ->
     async def raise_integrity(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise IntegrityError("insert", {}, Exception("fk race"))
 
-    monkeypatch.setattr(
-        artifacts_root_route.ArtifactRepository, "create", raise_integrity
+    from server.backends.sql.shared.repositories.artifacts_repository import (
+        PostgresArtifactRepository,
     )
+
+    monkeypatch.setattr(PostgresArtifactRepository, "create", raise_integrity)
 
     response = Response()
     out = await artifacts_root_route.create_artifact(
         "job-art-race",
         CreateArtifactRequest(name="summary", type=ArtifactType.JSON, data={"x": 1}),
         response,
-        db=sqlite_db,
+        backend=sqlite_db,
     )
 
     assert response.status_code == 202
