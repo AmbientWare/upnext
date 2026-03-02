@@ -1657,7 +1657,7 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.10.0" }]
 
 [[package]]
 name = "upnext-workspace"
-version = "0.0.4"
+version = "0.0.5"
 source = { virtual = "." }
 
 [package.dev-dependencies]
