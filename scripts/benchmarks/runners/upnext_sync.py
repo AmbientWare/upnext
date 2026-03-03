@@ -17,7 +17,7 @@ from .common import (
     async_produce_jobs,
     async_produce_jobs_sustained,
     await_worker_readiness_async,
-    effective_prefetch,
+    configured_prefetch,
     load_queue_wait_samples_async,
     now,
     record_queue_wait_sync,
@@ -32,11 +32,14 @@ class UpnextSyncRunner(FrameworkRunner):
     async def _run_async(self, cfg: BenchmarkConfig) -> BenchmarkResult:
         try:
             from redis.asyncio import Redis as AsyncRedis
+            from upnext.config import get_settings
             from upnext.sdk import Worker, WorkerQueueConfig
         except Exception as exc:
             return self._skip(cfg, f"Dependency missing: {exc}")
 
-        target_prefetch = effective_prefetch(cfg)
+        settings = get_settings()
+        requested_prefetch = cfg.consumer_prefetch
+        target_prefetch = configured_prefetch(cfg)
         queue_config = (
             WorkerQueueConfig(
                 batch_size=max(1, target_prefetch),
@@ -44,6 +47,16 @@ class UpnextSyncRunner(FrameworkRunner):
             )
             if cfg.profile == BenchmarkProfile.THROUGHPUT
             else None
+        )
+        default_batch_size = max(1, int(settings.queue_batch_size))
+        default_inbox_size = max(default_batch_size, int(settings.queue_inbox_size))
+        effective_queue_batch_size = (
+            default_batch_size if queue_config is None else max(1, target_prefetch)
+        )
+        effective_queue_inbox_size = (
+            default_inbox_size
+            if queue_config is None
+            else max(effective_queue_batch_size, max(1, target_prefetch))
         )
         done_client: Any | None = None
         task_done_client: Any | None = None
@@ -162,25 +175,27 @@ class UpnextSyncRunner(FrameworkRunner):
                 notes=(
                     f"profile={cfg.profile.value}; "
                     f"producer_concurrency={cfg.producer_concurrency}; "
-                    f"consumer_prefetch={target_prefetch}; "
+                    f"consumer_prefetch_requested={requested_prefetch}; "
+                    f"consumer_prefetch_effective={target_prefetch}; "
+                    f"queue_batch_size={effective_queue_batch_size}; "
+                    f"queue_inbox_size={effective_queue_inbox_size}; "
                     f"workload={cfg.workload.value}; "
                     f"arrival_rate={cfg.arrival_rate}; "
                     f"sync_executor=thread"
                 ),
                 framework_version=self._framework_version("upnext"),
                 diagnostics={
-                    "consumer_prefetch": target_prefetch,
+                    "consumer_prefetch_requested": requested_prefetch,
+                    "consumer_prefetch_effective": target_prefetch,
                     "workload": cfg.workload.value,
                     "profile": cfg.profile.value,
                     "arrival_rate": cfg.arrival_rate,
                     "duration_seconds": cfg.duration_seconds,
                     "queue_wait_sample_rate": cfg.queue_wait_sample_rate,
                     "queue_wait_samples": len(queue_wait_samples),
-                    "queue_batch_size_override": (
-                        max(1, target_prefetch)
-                        if cfg.profile == BenchmarkProfile.THROUGHPUT
-                        else 0
-                    ),
+                    "queue_batch_size_effective": effective_queue_batch_size,
+                    "queue_inbox_size_effective": effective_queue_inbox_size,
+                    "queue_override_applied": queue_config is not None,
                 },
             )
         except Exception as exc:

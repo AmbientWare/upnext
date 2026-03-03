@@ -117,10 +117,10 @@ The benchmark suite is fully command-driven:
 
 ```bash
 # Validate Redis + framework imports
-uv run benchmarks doctor
+uv run python -m scripts.benchmarks doctor
 
 # Primary benchmark: sustained API-like workload (recommended)
-uv run benchmarks matrix \
+uv run python -m scripts.benchmarks matrix \
   --workload sustained \
   --duration-seconds 60 \
   --arrival-rate 200 \
@@ -130,7 +130,7 @@ uv run benchmarks matrix \
   --framework saq
 
 # Burst/backpressure guardrail
-uv run benchmarks matrix \
+uv run python -m scripts.benchmarks matrix \
   --workload burst \
   --jobs 10000 \
   --framework upnext-async \
@@ -146,8 +146,8 @@ For GitHub Actions, use the `Benchmarks` workflow with:
 Both modes are deterministic/fair by default:
 - fixed framework set (`upnext-async`, `upnext-sync`, `celery`, `saq`)
 - fixed matrix seed (`42`)
-- quick: sustained `duration=30s`, `arrival=150/s`, `repeats=1`, `warmups=1`
-- full: sustained `duration=60s`, `arrival=200/s` + burst `jobs=10000`, `repeats=2`, `warmups=1`
+- quick: sustained `duration=30s`, `arrival=150/s`, `repeats=1`, `warmups=0`
+- full: sustained `duration=60s`, `arrival=200/s` + burst `jobs=10000`, `repeats=1`, `warmups=0`
 
 ## Testing and Verification
 

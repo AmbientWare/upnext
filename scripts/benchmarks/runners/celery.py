@@ -15,7 +15,7 @@ from ..models import (
 from .base import FrameworkRunner
 from .common import (
     await_worker_readiness_sync,
-    effective_prefetch,
+    configured_prefetch,
     load_queue_wait_samples_sync,
     now,
     record_queue_wait_sync,
@@ -42,7 +42,8 @@ class CeleryRunner(FrameworkRunner):
 
         queue_name = f"bench.celery.{cfg.run_id}"
         throughput_mode = cfg.profile == BenchmarkProfile.THROUGHPUT
-        target_prefetch = effective_prefetch(cfg)
+        requested_prefetch = cfg.consumer_prefetch
+        target_prefetch = configured_prefetch(cfg)
         worker_prefetch_multiplier: int | None = None
 
         app = Celery(f"bench_{cfg.run_id}", broker=cfg.redis_url)
@@ -168,6 +169,8 @@ class CeleryRunner(FrameworkRunner):
             notes=(
                 f"profile={cfg.profile.value}; "
                 f"producer_concurrency={cfg.producer_concurrency}; "
+                f"consumer_prefetch_requested={requested_prefetch}; "
+                f"consumer_prefetch_effective={target_prefetch}; "
                 f"worker_prefetch_multiplier={effective_worker_prefetch_multiplier}; "
                 f"workload={cfg.workload.value}; "
                 f"arrival_rate={cfg.arrival_rate}; "
@@ -176,6 +179,8 @@ class CeleryRunner(FrameworkRunner):
             framework_version=self._framework_version("celery"),
             diagnostics={
                 "profile": cfg.profile.value,
+                "consumer_prefetch_requested": requested_prefetch,
+                "consumer_prefetch_effective": target_prefetch,
                 "worker_prefetch_multiplier": effective_worker_prefetch_multiplier,
                 "workload": cfg.workload.value,
                 "arrival_rate": cfg.arrival_rate,

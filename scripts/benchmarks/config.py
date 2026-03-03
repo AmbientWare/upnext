@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from .models import SUPPORTED_FRAMEWORKS, BenchmarkProfile, BenchmarkWorkload
 
+THROUGHPUT_PREFETCH_TARGET = 32
+
 
 @dataclass(frozen=True)
 class WorkloadPreset:
@@ -193,12 +195,10 @@ def validate_common_numeric_args(
 def resolve_consumer_prefetch(
     *,
     consumer_prefetch: int,
-    concurrency: int,
     profile: BenchmarkProfile,
 ) -> int:
     if consumer_prefetch > 0:
         return consumer_prefetch
     if profile == BenchmarkProfile.THROUGHPUT:
-        return 32
-    _ = concurrency
+        return THROUGHPUT_PREFETCH_TARGET
     return 0

@@ -18,6 +18,7 @@ from .engine import MatrixEngine
 from .io import emit_marked_json, load_matrix_payloads, write_json_file
 from .models import (
     SCHEMA_VERSION,
+    SUPPORTED_FRAMEWORKS,
     SUPPORTED_PROFILES,
     SUPPORTED_WORKLOADS,
     BenchmarkConfig,
@@ -40,7 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run", help="Run a single benchmark sample")
     _add_common_case_args(run)
-    run.add_argument("--framework", required=True)
+    run.add_argument("--framework", required=True, choices=SUPPORTED_FRAMEWORKS)
     run.add_argument("--run-id", default="")
     run.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     run.add_argument("--output-json", default="", help="Write JSON payload to file")
@@ -126,7 +127,10 @@ def _add_common_case_args(parser: argparse.ArgumentParser) -> None:
         "--consumer-prefetch",
         type=int,
         default=0,
-        help="Consumer reserve depth target. 0 = auto.",
+        help=(
+            "Consumer reserve depth target. 0 uses profile defaults "
+            "(base=no override, throughput=32)."
+        ),
     )
     parser.add_argument("--timeout-seconds", type=float, default=None)
     parser.add_argument(
@@ -161,7 +165,6 @@ def _resolve_case_args(
     )
     consumer_prefetch = resolve_consumer_prefetch(
         consumer_prefetch=args.consumer_prefetch,
-        concurrency=concurrency,
         profile=args.profile,
     )
 
@@ -189,6 +192,47 @@ def _resolve_case_args(
         arrival_rate,
         duration_seconds,
     )
+
+
+def _matrix_config_payload(
+    *,
+    workload: BenchmarkWorkload,
+    profile: BenchmarkProfile,
+    frameworks: list[str],
+    jobs: int,
+    concurrency: int,
+    payload_bytes: int,
+    producer_concurrency: int,
+    consumer_prefetch: int,
+    timeout_seconds: float,
+    arrival_rate: float,
+    duration_seconds: float,
+    repeats: int,
+    warmups: int,
+    redis_url: str,
+    seed: int,
+    queue_wait_sample_rate: float,
+    queue_wait_max_samples: int,
+) -> dict[str, Any]:
+    return {
+        "workload": workload.value,
+        "profile": profile.value,
+        "frameworks": frameworks,
+        "jobs": jobs,
+        "concurrency": concurrency,
+        "payload_bytes": payload_bytes,
+        "producer_concurrency": producer_concurrency,
+        "consumer_prefetch": consumer_prefetch,
+        "timeout_seconds": timeout_seconds,
+        "arrival_rate": arrival_rate,
+        "duration_seconds": duration_seconds,
+        "repeats": repeats,
+        "warmups": warmups,
+        "redis_url": redis_url,
+        "seed": seed,
+        "queue_wait_sample_rate": queue_wait_sample_rate,
+        "queue_wait_max_samples": queue_wait_max_samples,
+    }
 
 
 def _build_cfg_from_run_args(args: argparse.Namespace) -> BenchmarkConfig:
@@ -285,28 +329,29 @@ def _matrix_command(args: argparse.Namespace) -> int:
     try:
         ensure_redis(args.redis_url)
     except Exception as exc:
+        config_payload = _matrix_config_payload(
+            workload=args.workload,
+            profile=args.profile,
+            frameworks=frameworks,
+            jobs=jobs,
+            concurrency=concurrency,
+            payload_bytes=args.payload_bytes,
+            producer_concurrency=producer_concurrency,
+            consumer_prefetch=consumer_prefetch,
+            timeout_seconds=timeout_seconds,
+            arrival_rate=arrival_rate,
+            duration_seconds=duration_seconds,
+            repeats=args.repeats,
+            warmups=args.warmups,
+            redis_url=args.redis_url,
+            seed=args.seed,
+            queue_wait_sample_rate=args.queue_wait_sample_rate,
+            queue_wait_max_samples=args.queue_wait_max_samples,
+        )
         payload = {
             "schema_version": SCHEMA_VERSION,
             "kind": "benchmark-matrix",
-            "config": {
-                "workload": args.workload.value,
-                "profile": args.profile.value,
-                "frameworks": frameworks,
-                "jobs": jobs,
-                "concurrency": concurrency,
-                "payload_bytes": args.payload_bytes,
-                "producer_concurrency": producer_concurrency,
-                "consumer_prefetch": consumer_prefetch,
-                "timeout_seconds": timeout_seconds,
-                "arrival_rate": arrival_rate,
-                "duration_seconds": duration_seconds,
-                "repeats": args.repeats,
-                "warmups": args.warmups,
-                "redis_url": args.redis_url,
-                "seed": args.seed,
-                "queue_wait_sample_rate": args.queue_wait_sample_rate,
-                "queue_wait_max_samples": args.queue_wait_max_samples,
-            },
+            "config": config_payload,
             "error": f"Redis unavailable ({args.redis_url}): {exc}",
         }
         if args.output_json:
@@ -339,27 +384,28 @@ def _matrix_command(args: argparse.Namespace) -> int:
 
     engine = MatrixEngine(client=SubprocessBenchmarkClient())
     execution = engine.run(settings)
+    config_payload = _matrix_config_payload(
+        workload=settings.workload,
+        profile=settings.profile,
+        frameworks=settings.frameworks,
+        jobs=settings.jobs,
+        concurrency=settings.concurrency,
+        payload_bytes=settings.payload_bytes,
+        producer_concurrency=settings.producer_concurrency,
+        consumer_prefetch=settings.consumer_prefetch,
+        timeout_seconds=settings.timeout_seconds,
+        arrival_rate=settings.arrival_rate,
+        duration_seconds=settings.duration_seconds,
+        repeats=settings.repeats,
+        warmups=settings.warmups,
+        redis_url=settings.redis_url,
+        seed=settings.seed,
+        queue_wait_sample_rate=settings.queue_wait_sample_rate,
+        queue_wait_max_samples=settings.queue_wait_max_samples,
+    )
 
     payload = matrix_json_payload(
-        config={
-            "workload": settings.workload.value,
-            "profile": settings.profile.value,
-            "frameworks": settings.frameworks,
-            "jobs": settings.jobs,
-            "concurrency": settings.concurrency,
-            "payload_bytes": settings.payload_bytes,
-            "producer_concurrency": settings.producer_concurrency,
-            "consumer_prefetch": settings.consumer_prefetch,
-            "timeout_seconds": settings.timeout_seconds,
-            "arrival_rate": settings.arrival_rate,
-            "duration_seconds": settings.duration_seconds,
-            "repeats": settings.repeats,
-            "warmups": settings.warmups,
-            "redis_url": settings.redis_url,
-            "seed": settings.seed,
-            "queue_wait_sample_rate": settings.queue_wait_sample_rate,
-            "queue_wait_max_samples": settings.queue_wait_max_samples,
-        },
+        config=config_payload,
         warmups=execution.warmups,
         runs=execution.runs,
         summaries=execution.summaries,

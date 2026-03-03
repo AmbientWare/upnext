@@ -7,17 +7,20 @@ from typing import Any, Awaitable, Callable, cast
 
 from redis import Redis
 
-from ..models import BenchmarkConfig
+from ..config import THROUGHPUT_PREFETCH_TARGET
+from ..models import BenchmarkConfig, BenchmarkProfile
 
 
 def now() -> float:
     return time.perf_counter()
 
 
-def effective_prefetch(cfg: BenchmarkConfig) -> int:
+def configured_prefetch(cfg: BenchmarkConfig) -> int:
     if cfg.consumer_prefetch > 0:
         return cfg.consumer_prefetch
-    return max(1, cfg.concurrency)
+    if cfg.profile == BenchmarkProfile.THROUGHPUT:
+        return THROUGHPUT_PREFETCH_TARGET
+    return 0
 
 
 def worker_readiness_key(done_key: str) -> str:

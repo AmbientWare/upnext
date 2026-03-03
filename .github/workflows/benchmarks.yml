@@ -20,10 +20,16 @@ on:
 
 jobs:
   benchmark:
+    name: Benchmarks (${{ matrix.profile }} / ${{ matrix.workload }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [base, throughput]
+        workload: ${{ fromJSON((inputs.mode == 'full' && '["sustained","burst"]') || '["sustained"]') }}
     services:
       redis:
         image: redis:7-alpine
@@ -47,77 +53,97 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-packages --group benchmark
 
-      - name: Set benchmark params
+      - name: Resolve benchmark args
         id: params
         run: |
-          case "${{ inputs.mode }}" in
-            full)
-              echo "profiles=base throughput" >> "$GITHUB_OUTPUT"
-              echo "workloads=sustained burst" >> "$GITHUB_OUTPUT"
-              echo "sustained_duration=60" >> "$GITHUB_OUTPUT"
-              echo "sustained_arrival=200" >> "$GITHUB_OUTPUT"
-              echo "burst_jobs=10000" >> "$GITHUB_OUTPUT"
-              echo "repeats=2" >> "$GITHUB_OUTPUT"
-              echo "warmups=1" >> "$GITHUB_OUTPUT"
-              ;;
-            quick|"")
-              echo "profiles=base throughput" >> "$GITHUB_OUTPUT"
-              echo "workloads=sustained" >> "$GITHUB_OUTPUT"
-              echo "sustained_duration=30" >> "$GITHUB_OUTPUT"
-              echo "sustained_arrival=150" >> "$GITHUB_OUTPUT"
-              echo "burst_jobs=5000" >> "$GITHUB_OUTPUT"
-              echo "repeats=1" >> "$GITHUB_OUTPUT"
-              echo "warmups=1" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "Unsupported benchmarks mode: '${{ inputs.mode }}'" >&2
-              exit 2
-              ;;
-          esac
+          if [ "${{ matrix.workload }}" = "sustained" ]; then
+            if [ "${{ inputs.mode }}" = "full" ]; then
+              echo "extra_args=--duration-seconds 60 --arrival-rate 200" >> "$GITHUB_OUTPUT"
+            else
+              echo "extra_args=--duration-seconds 30 --arrival-rate 150" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "extra_args=--jobs 10000" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Run standard matrix
+      - name: Run benchmark
         env:
           UPNEXT_PERF_REDIS_URL: redis://localhost:6379/15
         run: |
           mkdir -p results
-          for profile in ${{ steps.params.outputs.profiles }}; do
-            for workload in ${{ steps.params.outputs.workloads }}; do
-              extra_args=""
-              if [ "$workload" = "sustained" ]; then
-                extra_args="--duration-seconds ${{ steps.params.outputs.sustained_duration }} --arrival-rate ${{ steps.params.outputs.sustained_arrival }}"
-              else
-                extra_args="--jobs ${{ steps.params.outputs.burst_jobs }}"
-              fi
-              uv run benchmarks matrix \
-                --workload "$workload" \
-                --profile "$profile" \
-                --framework upnext-async \
-                --framework upnext-sync \
-                --framework celery \
-                --framework saq \
-                --concurrency 32 \
-                --repeats ${{ steps.params.outputs.repeats }} \
-                --warmups ${{ steps.params.outputs.warmups }} \
-                --seed 42 \
-                $extra_args \
-                --fail-on-non-ok \
-                --show-runs \
-                --output-json "results/benchmark-${profile}-${workload}.json" \
-                2>&1 | tee "results/benchmark-${profile}-${workload}.txt"
-            done
-          done
+          uv run python -m scripts.benchmarks matrix \
+            --workload "${{ matrix.workload }}" \
+            --profile "${{ matrix.profile }}" \
+            --framework upnext-async \
+            --framework upnext-sync \
+            --framework celery \
+            --framework saq \
+            --concurrency 32 \
+            --repeats 1 \
+            --warmups 0 \
+            --seed 42 \
+            ${{ steps.params.outputs.extra_args }} \
+            --fail-on-non-ok \
+            --show-runs \
+            --output-json "results/benchmark-${{ matrix.profile }}-${{ matrix.workload }}.json" \
+            2>&1 | tee "results/benchmark-${{ matrix.profile }}-${{ matrix.workload }}.txt"
 
-      - name: Build markdown summary
-        if: always()
-        run: uv run python -m scripts.benchmarks summarize --input results --format markdown >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Build json summary artifact
-        if: always()
-        run: uv run python -m scripts.benchmarks summarize --input results --format json --output results/benchmark-summary.json > /dev/null
-
-      - name: Upload summary artifact
+      - name: Upload benchmark artifact
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: benchmark-results
+          name: benchmark-results-${{ matrix.profile }}-${{ matrix.workload }}
           path: results
+
+  benchmark-summary:
+    name: Benchmarks (aggregate summary)
+    runs-on: ubuntu-latest
+    needs: benchmark
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --all-packages --group benchmark
+
+      - name: Download benchmark artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: benchmark-results-*
+          merge-multiple: true
+          path: merged-results
+
+      - name: Validate aggregated payloads
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          from scripts.benchmarks.io import load_matrix_payloads
+          payloads = load_matrix_payloads(Path("merged-results"))
+          if not payloads:
+              raise SystemExit("No benchmark matrix payloads found in merged-results")
+          print(f"Found {len(payloads)} benchmark payload(s)")
+          PY
+
+      - name: Build aggregated markdown summary
+        if: always()
+        run: uv run python -m scripts.benchmarks summarize --input merged-results --format markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build aggregated json summary
+        if: always()
+        run: uv run python -m scripts.benchmarks summarize --input merged-results --format json --output merged-results/benchmark-summary.json > /dev/null
+
+      - name: Upload aggregated artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-results-aggregate
+          path: merged-results

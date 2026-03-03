@@ -41,7 +41,9 @@ def _load_json_file(path: Path) -> dict[str, Any] | None:
 
 def load_matrix_payloads(results_dir: Path) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
-    seen_configs: set[str] = set()
+    seen_payloads: set[str] = set()
+    workload_rank = {"sustained": 0, "burst": 1}
+    profile_rank = {"base": 0, "throughput": 1}
 
     for path in sorted(results_dir.rglob("*")):
         if not path.is_file():
@@ -61,11 +63,24 @@ def load_matrix_payloads(results_dir: Path) -> list[dict[str, Any]]:
         if payload.get("kind") != "benchmark-matrix":
             continue
 
-        config = payload.get("config", {})
-        config_key = json.dumps(config, sort_keys=True)
-        if config_key in seen_configs:
+        payload_key = json.dumps(payload, sort_keys=True)
+        if payload_key in seen_payloads:
             continue
-        seen_configs.add(config_key)
+        seen_payloads.add(payload_key)
         payloads.append(payload)
 
+    def sort_key(payload: dict[str, Any]) -> tuple[int, int, str]:
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            return (99, 99, "")
+        workload = str(config.get("workload", ""))
+        profile = str(config.get("profile", ""))
+        config_key = json.dumps(config, sort_keys=True)
+        return (
+            workload_rank.get(workload, 99),
+            profile_rank.get(profile, 99),
+            config_key,
+        )
+
+    payloads.sort(key=sort_key)
     return payloads

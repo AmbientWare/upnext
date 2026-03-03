@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
 
@@ -24,10 +25,12 @@ from scripts.benchmarks.models import (  # noqa: E402
     BenchmarkResult,
     BenchmarkWorkload,
 )
+from scripts.benchmarks.report_markdown import build_markdown_report  # noqa: E402
 from scripts.benchmarks.runners.common import (  # noqa: E402
     await_worker_readiness_async,
     await_worker_readiness_sync,
 )
+from scripts.benchmarks.subprocess_client import SubprocessBenchmarkClient  # noqa: E402
 
 
 class _FakeClient:
@@ -118,7 +121,6 @@ def test_resolve_consumer_prefetch_uses_profile_defaults() -> None:
     assert (
         resolve_consumer_prefetch(
             consumer_prefetch=0,
-            concurrency=16,
             profile=BenchmarkProfile.BASE,
         )
         == 0
@@ -126,7 +128,6 @@ def test_resolve_consumer_prefetch_uses_profile_defaults() -> None:
     assert (
         resolve_consumer_prefetch(
             consumer_prefetch=0,
-            concurrency=16,
             profile=BenchmarkProfile.THROUGHPUT,
         )
         == 32
@@ -180,6 +181,101 @@ def test_load_matrix_payloads_supports_flat_results_directory(tmp_path: Path) ->
     assert workloads == ["burst", "sustained"]
 
 
+def test_load_matrix_payloads_dedupes_exact_payload_and_sorts(tmp_path: Path) -> None:
+    sustained_json = (
+        '{"kind":"benchmark-matrix","config":{"workload":"sustained","profile":"throughput"},"summaries":[]}\n'
+    )
+    burst_json = (
+        '{"kind":"benchmark-matrix","config":{"workload":"burst","profile":"base"},"summaries":[]}\n'
+    )
+    sustained_base_json = (
+        '{"kind":"benchmark-matrix","config":{"workload":"sustained","profile":"base"},"summaries":[]}\n'
+    )
+
+    (tmp_path / "a-sustained-throughput.json").write_text(sustained_json)
+    # Same payload in .txt form should be ignored as duplicate.
+    (tmp_path / "a-sustained-throughput.txt").write_text(
+        "x\n===BENCHMARK_JSON_START===\n"
+        + sustained_json.strip()
+        + "\n===BENCHMARK_JSON_END===\n"
+    )
+    (tmp_path / "b-burst-base.json").write_text(burst_json)
+    (tmp_path / "c-sustained-base.json").write_text(sustained_base_json)
+
+    payloads = load_matrix_payloads(tmp_path)
+    order = [
+        (
+            str(item["config"]["workload"]),
+            str(item["config"]["profile"]),
+        )
+        for item in payloads
+    ]
+    assert len(payloads) == 3
+    assert order == [
+        ("sustained", "base"),
+        ("sustained", "throughput"),
+        ("burst", "base"),
+    ]
+
+
+def test_markdown_report_includes_settings_summary_table() -> None:
+    payloads = [
+        {
+            "kind": "benchmark-matrix",
+            "config": {
+                "workload": "sustained",
+                "profile": "base",
+                "frameworks": ["upnext-async", "upnext-sync", "celery", "saq"],
+                "jobs": 9_000,
+                "concurrency": 32,
+                "payload_bytes": 256,
+                "producer_concurrency": 16,
+                "consumer_prefetch": 0,
+                "timeout_seconds": 240.0,
+                "arrival_rate": 200.0,
+                "duration_seconds": 45.0,
+                "repeats": 1,
+                "warmups": 0,
+                "redis_url": "redis://127.0.0.1:6379/15",
+                "seed": 42,
+                "queue_wait_sample_rate": 0.1,
+                "queue_wait_max_samples": 5000,
+            },
+            "summaries": [],
+        },
+        {
+            "kind": "benchmark-matrix",
+            "config": {
+                "workload": "burst",
+                "profile": "throughput",
+                "frameworks": ["upnext-async", "upnext-sync", "celery", "saq"],
+                "jobs": 7_000,
+                "concurrency": 32,
+                "payload_bytes": 256,
+                "producer_concurrency": 32,
+                "consumer_prefetch": 32,
+                "timeout_seconds": 180.0,
+                "arrival_rate": 0.0,
+                "duration_seconds": 0.0,
+                "repeats": 1,
+                "warmups": 0,
+                "redis_url": "redis://127.0.0.1:6379/15",
+                "seed": 42,
+                "queue_wait_sample_rate": 0.1,
+                "queue_wait_max_samples": 5000,
+            },
+            "summaries": [],
+        },
+    ]
+
+    markdown = build_markdown_report(payloads)
+
+    assert "### Settings Summary" in markdown
+    assert "| Workload | Profile | Frameworks | Jobs |" in markdown
+    assert "| sustained | base | upnext-async, upnext-sync, celery, saq | 9,000 |" in markdown
+    assert "| burst | throughput | upnext-async, upnext-sync, celery, saq | 7,000 |" in markdown
+
+
 def test_matrix_engine_interleaves_runs_deterministically() -> None:
     fake = _FakeClient()
     engine = MatrixEngine(client=fake)
@@ -213,6 +309,42 @@ def test_matrix_engine_interleaves_runs_deterministically() -> None:
     assert set(fake.calls[:2]) == {"upnext-async", "celery"}
     assert set(fake.calls[2:4]) == {"upnext-async", "celery"}
     assert set(fake.calls[4:6]) == {"upnext-async", "celery"}
+
+
+def test_subprocess_client_includes_command_and_stream_tails_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = BenchmarkConfig(
+        framework="upnext-async",
+        workload=BenchmarkWorkload.BURST,
+        profile=BenchmarkProfile.BASE,
+        jobs=10,
+        concurrency=2,
+        payload_bytes=32,
+        producer_concurrency=2,
+        consumer_prefetch=0,
+        timeout_seconds=30.0,
+        redis_url="redis://127.0.0.1:6379/15",
+        run_id="abc123",
+    )
+
+    def fake_run(*_args, **_kwargs) -> CompletedProcess[str]:
+        return CompletedProcess(
+            args=["python", "-m", "scripts.benchmarks"],
+            returncode=2,
+            stdout="stdout marker",
+            stderr="stderr marker",
+        )
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    client = SubprocessBenchmarkClient()
+    result = client.run_once(cfg)
+
+    assert result.status == "error"
+    assert "returncode=2" in result.notes
+    assert "cmd=" in result.notes
+    assert "stderr_tail=stderr marker" in result.notes
+    assert "stdout_tail=stdout marker" in result.notes
 
 
 class _SyncCounterClient:

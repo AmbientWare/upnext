@@ -51,6 +51,7 @@ class SubprocessBenchmarkClient:
             str(cfg.queue_wait_max_samples),
             "--json",
         ]
+        cmd_display = " ".join(cmd)
 
         proc = subprocess.run(
             cmd,
@@ -62,13 +63,13 @@ class SubprocessBenchmarkClient:
         )
 
         if proc.returncode != 0:
-            stderr_tail = proc.stderr.strip()[-700:]
-            stdout_tail = proc.stdout.strip()[-700:]
-            note = f"Subprocess failed ({proc.returncode})"
+            stderr_tail = self._tail(proc.stderr)
+            stdout_tail = self._tail(proc.stdout)
+            note = f"Subprocess failed (returncode={proc.returncode}, cmd={cmd_display})"
             if stderr_tail:
-                note += f": {stderr_tail}"
-            elif stdout_tail:
-                note += f": {stdout_tail}"
+                note += f"; stderr_tail={stderr_tail}"
+            if stdout_tail:
+                note += f"; stdout_tail={stdout_tail}"
             return BenchmarkResult.empty(cfg, status="error", notes=note)
 
         try:
@@ -78,12 +79,24 @@ class SubprocessBenchmarkClient:
                 raise TypeError("Expected object in 'result'")
             return self._benchmark_result_from_payload(cfg, result_payload)
         except Exception as exc:
-            stdout_tail = proc.stdout.strip()[-700:]
+            stdout_tail = self._tail(proc.stdout)
+            stderr_tail = self._tail(proc.stderr)
             return BenchmarkResult.empty(
                 cfg,
                 status="error",
-                notes=f"Failed to parse subprocess output: {exc}; tail={stdout_tail}",
+                notes=(
+                    f"Failed to parse subprocess output: {exc}; "
+                    f"cmd={cmd_display}; stdout_tail={stdout_tail}; "
+                    f"stderr_tail={stderr_tail}"
+                ),
             )
+
+    @staticmethod
+    def _tail(text: str, *, limit: int = 700) -> str:
+        cleaned = text.strip()
+        if not cleaned:
+            return ""
+        return cleaned[-limit:]
 
     @staticmethod
     def _benchmark_result_from_payload(

@@ -16,7 +16,7 @@ from .common import (
     async_produce_jobs,
     async_produce_jobs_sustained,
     await_worker_readiness_async,
-    effective_prefetch,
+    configured_prefetch,
     load_queue_wait_samples_async,
     now,
     record_queue_wait_async,
@@ -38,8 +38,11 @@ class SaqRunner(FrameworkRunner):
         done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
         await done_client.delete(cfg.done_key, cfg.queue_wait_key)
         task_done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
-        target_prefetch = effective_prefetch(cfg)
-        effective_prefetch_depth = max(1, cfg.concurrency)
+        requested_prefetch = cfg.consumer_prefetch
+        target_prefetch = configured_prefetch(cfg)
+        effective_prefetch_depth = (
+            max(1, target_prefetch) if target_prefetch > 0 else max(1, cfg.concurrency)
+        )
         dequeue_timeout = 0.1 if cfg.profile == BenchmarkProfile.THROUGHPUT else 0.0
 
         queue_name = f"bench_saq_{cfg.run_id}"
@@ -162,7 +165,7 @@ class SaqRunner(FrameworkRunner):
                     f"profile={cfg.profile.value}; "
                     f"producer_concurrency={cfg.producer_concurrency}; "
                     f"worker_concurrency={cfg.concurrency}; "
-                    f"consumer_prefetch_requested={target_prefetch}; "
+                    f"consumer_prefetch_requested={requested_prefetch}; "
                     f"consumer_prefetch_effective={effective_prefetch_depth}; "
                     f"dequeue_timeout={dequeue_timeout}; "
                     f"workload={cfg.workload.value}; "
@@ -172,7 +175,7 @@ class SaqRunner(FrameworkRunner):
                 diagnostics={
                     "profile": cfg.profile.value,
                     "worker_concurrency": cfg.concurrency,
-                    "consumer_prefetch_requested": target_prefetch,
+                    "consumer_prefetch_requested": requested_prefetch,
                     "consumer_prefetch_effective": effective_prefetch_depth,
                     "dequeue_timeout": dequeue_timeout,
                     "workload": cfg.workload.value,

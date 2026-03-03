@@ -17,22 +17,43 @@ def _tail_ratio(max_value: float, p95_value: float) -> float:
     return max_value / p95_value
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _as_frameworks(value: Any) -> str:
+    if not isinstance(value, list):
+        return "-"
+    items = [str(item).strip() for item in value if str(item).strip()]
+    return ", ".join(items) if items else "-"
+
+
 def _config_header(config: dict[str, Any]) -> str:
     workload = str(config.get("workload", "unknown"))
     profile = str(config.get("profile", "base"))
-    jobs = int(config.get("jobs", 0) or 0)
-    concurrency = int(config.get("concurrency", 0) or 0)
-    producers = int(config.get("producer_concurrency", 0) or 0)
-    repeats = int(config.get("repeats", 0) or 0)
-    warmups = int(config.get("warmups", 0) or 0)
+    jobs = _as_int(config.get("jobs", 0))
+    concurrency = _as_int(config.get("concurrency", 0))
+    producers = _as_int(config.get("producer_concurrency", 0))
+    repeats = _as_int(config.get("repeats", 0))
+    warmups = _as_int(config.get("warmups", 0))
 
     line = (
         f"{workload} · profile {profile} · jobs {jobs:,} · concurrency {concurrency} · "
         f"producers {producers} · {repeats} repeats · {warmups} warmups"
     )
     if workload == "sustained":
-        duration = float(config.get("duration_seconds", 0.0) or 0.0)
-        arrival = float(config.get("arrival_rate", 0.0) or 0.0)
+        duration = _as_float(config.get("duration_seconds", 0.0))
+        arrival = _as_float(config.get("arrival_rate", 0.0))
         line += f" · duration {duration:.1f}s · arrival {arrival:.1f} jobs/s"
     return line
 
@@ -42,6 +63,36 @@ def build_markdown_report(payloads: list[dict[str, Any]]) -> str:
         return "> No benchmark result payloads found.\n"
 
     lines: list[str] = ["## Benchmark Results", ""]
+    lines.append("### Settings Summary")
+    lines.append("")
+    lines.append(
+        "| Workload | Profile | Frameworks | Jobs | Concurrency | Producers | Repeats | Warmups | Duration (s) | Arrival (jobs/s) | Payload (bytes) | Prefetch | Queue Wait Sample | Queue Wait Max | Seed |"
+    )
+    lines.append("|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+
+    for payload in payloads:
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            continue
+        lines.append(
+            f"| {str(config.get('workload', 'unknown'))} "
+            f"| {str(config.get('profile', 'base'))} "
+            f"| {_as_frameworks(config.get('frameworks'))} "
+            f"| {_as_int(config.get('jobs', 0)):,} "
+            f"| {_as_int(config.get('concurrency', 0))} "
+            f"| {_as_int(config.get('producer_concurrency', 0))} "
+            f"| {_as_int(config.get('repeats', 0))} "
+            f"| {_as_int(config.get('warmups', 0))} "
+            f"| {_fmt_float(_as_float(config.get('duration_seconds', 0.0)), 1)} "
+            f"| {_fmt_float(_as_float(config.get('arrival_rate', 0.0)), 1)} "
+            f"| {_as_int(config.get('payload_bytes', 0))} "
+            f"| {_as_int(config.get('consumer_prefetch', 0))} "
+            f"| {_fmt_float(_as_float(config.get('queue_wait_sample_rate', 0.0)), 2)} "
+            f"| {_as_int(config.get('queue_wait_max_samples', 0))} "
+            f"| {_as_int(config.get('seed', 0))} |"
+        )
+    lines.append("")
+
     for payload in payloads:
         config = payload.get("config", {})
         lines.append(f"### {_config_header(config)}")
