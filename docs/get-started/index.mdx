@@ -43,6 +43,7 @@ UpNext works in two modes. Start with **SDK + Redis** to get the core runtime, t
 
     <Note>
     Backend-first: set `UPNEXT_BACKEND` explicitly. The example below uses `sqlite`.
+    For Redis vs PostgreSQL guidance, see [Persistence Backends](/concepts/backends).
     </Note>
 
     ```bash
@@ -50,9 +51,11 @@ UpNext works in two modes. Start with **SDK + Redis** to get the core runtime, t
     UPNEXT_BACKEND=sqlite \
     UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
     UPNEXT_REDIS_URL=redis://localhost:6379 \
-    upnext server start --port 8080     # Start the server
+    upnext server start --port 8080
+
+    # Connect workers/APIs to the server
     UPNEXT_REDIS_URL=redis://localhost:6379 \
-    UPNEXT_URL=http://localhost:8080 \   # Connect to the server
+    UPNEXT_URL=http://localhost:8080 \
     upnext run service.py
     ```
   </Tab>

@@ -29,8 +29,13 @@ class Settings(BaseSettings):
 
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
+    queue_batch_size: int = 100
+    queue_inbox_size: int = 1_000
+    queue_outbox_size: int = 10_000
+    queue_flush_interval_ms: float = 5.0
     queue_job_ttl_seconds: int = 86_400
     queue_claim_timeout_ms: int = 30_000
+    queue_stream_maxlen: int = 0
     queue_dispatch_events_stream_maxlen: int = 10_000
 
     # Status stream durability controls

@@ -189,6 +189,31 @@ async def test_heartbeat_restores_job_ttls_when_missing(fake_redis) -> None:
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_refreshes_dedup_ttl_for_active_idempotent_jobs(fake_redis) -> None:
+    queue = RedisQueue(
+        client=fake_redis,
+        key_prefix="upnext-heartbeat-dedup-ttl",
+        job_ttl_seconds=5,
+    )
+    job = Job(function="task_fn", function_name="task", key="heartbeat-dedup-ttl")
+    await queue.enqueue(job)
+
+    active = await queue.dequeue(["task_fn"], timeout=0.2)
+    assert active is not None
+
+    client = await queue._ensure_connected()  # noqa: SLF001
+    dedup_key = queue._dedup_key(job.function)  # noqa: SLF001
+
+    await client.persist(dedup_key)
+    assert await client.ttl(dedup_key) == -1
+
+    await queue.heartbeat_active_jobs([active])
+
+    assert await client.sismember(dedup_key, job.key) == 1
+    assert await client.ttl(dedup_key) > 0
+
+
+@pytest.mark.asyncio
 async def test_find_job_key_by_id_rebuilds_stale_index(fake_redis) -> None:
     queue = RedisQueue(client=fake_redis, key_prefix="upnext-index-rebuild")
     job = Job(function="task_fn", function_name="task", key="stale-index-key")

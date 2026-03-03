@@ -39,23 +39,43 @@ from shared.keys import (
     QUEUE_KEY_PREFIX,
     cron_registry_member_key,
     cron_window_job_key,
-    dispatch_events_stream_key as shared_dispatch_events_stream_key,
-    dispatch_reasons_key as shared_dispatch_reasons_key,
-    function_dedup_key as shared_function_dedup_key,
     function_definition_key,
     function_definition_pattern,
-    function_rate_limit_key as shared_function_rate_limit_key,
-    function_scheduled_key as shared_function_scheduled_key,
-    function_stream_key as shared_function_stream_key,
-    job_cancelled_key as shared_job_cancelled_key,
-    job_index_key as shared_job_index_key,
-    job_key as shared_job_key,
     job_match_pattern,
     job_status_channel,
     queue_key,
 )
+from shared.keys import (
+    dispatch_events_stream_key as shared_dispatch_events_stream_key,
+)
+from shared.keys import (
+    dispatch_reasons_key as shared_dispatch_reasons_key,
+)
+from shared.keys import (
+    function_dedup_key as shared_function_dedup_key,
+)
+from shared.keys import (
+    function_rate_limit_key as shared_function_rate_limit_key,
+)
+from shared.keys import (
+    function_scheduled_key as shared_function_scheduled_key,
+)
+from shared.keys import (
+    function_stream_key as shared_function_stream_key,
+)
+from shared.keys import (
+    job_cancelled_key as shared_job_cancelled_key,
+)
+from shared.keys import (
+    job_index_key as shared_job_index_key,
+)
+from shared.keys import (
+    job_key as shared_job_key,
+)
 from shared.queue_mutations import (
     delete_stream_entries_for_job as shared_delete_stream_entries_for_job,
+)
+from shared.queue_mutations import (
     prepare_job_for_manual_retry,
 )
 
@@ -776,11 +796,7 @@ class RedisQueue(BaseQueue):
     def _cleanup_stale_claims(self) -> None:
         """Remove orphaned stream claims older than claim_timeout_ms * 10."""
         cutoff = time.monotonic() - (self._claim_timeout_ms * 10 / 1000.0)
-        stale = [
-            jid
-            for jid, c in self._stream_claims.items()
-            if c.created_at < cutoff
-        ]
+        stale = [jid for jid, c in self._stream_claims.items() if c.created_at < cutoff]
         for jid in stale:
             del self._stream_claims[jid]
         if stale:
@@ -1714,6 +1730,8 @@ class RedisQueue(BaseQueue):
             async with client.pipeline(transaction=False) as pipe:
                 pipe.expire(key, self._job_ttl_seconds)
                 pipe.expire(index_key, self._job_ttl_seconds)
+                if job.key:
+                    pipe.expire(self._dedup_key(job.function), self._job_ttl_seconds)
                 await pipe.execute()
         except Exception:
             logger.debug("Failed refreshing TTL for job %s", job.id)
@@ -1723,9 +1741,14 @@ class RedisQueue(BaseQueue):
             return
         try:
             async with client.pipeline(transaction=False) as pipe:
+                dedup_keys: set[str] = set()
                 for job in jobs:
                     pipe.expire(self._job_key(job), self._job_ttl_seconds)
                     pipe.expire(self._job_index_key(job.id), self._job_ttl_seconds)
+                    if job.key:
+                        dedup_keys.add(self._dedup_key(job.function))
+                for dedup_key in dedup_keys:
+                    pipe.expire(dedup_key, self._job_ttl_seconds)
                 await pipe.execute()
         except Exception:
             logger.debug("Failed refreshing TTL for %s active jobs", len(jobs))
@@ -1841,7 +1864,11 @@ class RedisQueue(BaseQueue):
                     ts_ms = int(last_delivered.split("-")[0])
                 except (ValueError, IndexError):
                     ts_ms = 0
-                idle_ms = int(time.time() * 1000) - ts_ms if ts_ms > 0 else idle_threshold_ms + 1
+                idle_ms = (
+                    int(time.time() * 1000) - ts_ms
+                    if ts_ms > 0
+                    else idle_threshold_ms + 1
+                )
                 if consumers == 0 and idle_ms > idle_threshold_ms:
                     try:
                         await client.xgroup_destroy(stream_key, name)
@@ -1855,9 +1882,7 @@ class RedisQueue(BaseQueue):
                         pass
 
         if destroyed:
-            logger.info(
-                "Cleaned up %d stale consumer groups", destroyed
-            )
+            logger.info("Cleaned up %d stale consumer groups", destroyed)
         return destroyed
 
     # =========================================================================
@@ -2203,11 +2228,15 @@ class RedisQueue(BaseQueue):
         function: str,
         owner_job_id: str,
     ) -> bool:
-        scheduled_score = await client.zscore(self._scheduled_key(function), owner_job_id)
+        scheduled_score = await client.zscore(
+            self._scheduled_key(function), owner_job_id
+        )
         if scheduled_score is not None:
             return True
 
-        owner_job_key = shared_job_key(function, owner_job_id, key_prefix=self._key_prefix)
+        owner_job_key = shared_job_key(
+            function, owner_job_id, key_prefix=self._key_prefix
+        )
         if not await client.exists(owner_job_key):
             return False
 
@@ -2375,9 +2404,7 @@ class RedisQueue(BaseQueue):
         if next_run_at < now_ts:
             schedule = job.schedule
             if schedule:
-                policy, max_window = await self._cron_reconcile_policy(
-                    job.function
-                )
+                policy, max_window = await self._cron_reconcile_policy(job.function)
 
                 if policy in (
                     MissedRunPolicy.LATEST_ONLY,

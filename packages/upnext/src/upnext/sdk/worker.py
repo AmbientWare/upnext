@@ -263,18 +263,26 @@ class Worker:
             )
         self._redis_client = create_redis_client(self.redis_url)
 
-        # Enforce inbox_size >= batch_size to prevent fetcher starvation.
-        inbox_size = max(DEFAULT_QUEUE_INBOX_SIZE, DEFAULT_QUEUE_BATCH_SIZE)
+        # Enforce sane queue tuning and prevent fetcher starvation.
+        batch_size = max(1, int(settings.queue_batch_size))
+        inbox_size = max(batch_size, int(settings.queue_inbox_size))
+        outbox_size = max(1, int(settings.queue_outbox_size))
+        flush_interval_seconds = max(
+            0.001, float(settings.queue_flush_interval_ms) / 1000
+        )
+        claim_timeout_ms = max(1, int(settings.queue_claim_timeout_ms))
+        job_ttl_seconds = max(1, int(settings.queue_job_ttl_seconds))
+        stream_maxlen = max(0, int(settings.queue_stream_maxlen))
 
         self._queue_backend = RedisQueue(
             client=self._redis_client,
-            claim_timeout_ms=DEFAULT_QUEUE_CLAIM_TIMEOUT_MS,
-            batch_size=DEFAULT_QUEUE_BATCH_SIZE,
+            claim_timeout_ms=claim_timeout_ms,
+            batch_size=batch_size,
             inbox_size=inbox_size,
-            outbox_size=DEFAULT_QUEUE_OUTBOX_SIZE,
-            flush_interval=DEFAULT_QUEUE_FLUSH_INTERVAL_MS / 1000,
-            job_ttl_seconds=DEFAULT_QUEUE_JOB_TTL_SECONDS,
-            stream_maxlen=DEFAULT_QUEUE_STREAM_MAXLEN,
+            outbox_size=outbox_size,
+            flush_interval=flush_interval_seconds,
+            job_ttl_seconds=job_ttl_seconds,
+            stream_maxlen=stream_maxlen,
         )
 
         # Connect task handles to queue

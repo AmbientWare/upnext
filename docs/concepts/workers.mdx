@@ -50,44 +50,32 @@ A worker manages:
 | --- | --- | --- | --- |
 | `name` | `str` | auto-generated | Worker name for dashboard identification |
 | `concurrency` | `int` | `2` | Maximum concurrent job executions |
-| `profile` | `WorkerProfile` | `ProfileOptions.SAFE` | Queue tuning profile (see [Queue tuning](#queue-tuning)) |
 | `sync_executor` | `SyncExecutor` | `THREAD` | Executor for sync tasks: `THREAD` or `PROCESS` |
 | `redis_url` | `str` | `None` | Redis URL (falls back to `UPNEXT_REDIS_URL` env var) |
 | `secrets` | `list[str]` | `[]` | Secret names to fetch on startup (requires server) |
 
 ## Queue tuning
 
-Workers use a `WorkerProfile` to control queue batch sizes, buffer capacities, and stream limits. The default profile is `ProfileOptions.SAFE`.
+Queue behavior is tuned with `UPNEXT_QUEUE_*` environment variables. These values are read when the worker initializes.
 
-```python
-import upnext
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPNEXT_QUEUE_BATCH_SIZE` | `100` | Number of jobs fetched/flushed per batch |
+| `UPNEXT_QUEUE_INBOX_SIZE` | `1000` | In-memory fetch buffer size (minimum is batch size) |
+| `UPNEXT_QUEUE_OUTBOX_SIZE` | `10000` | In-memory completion buffer size |
+| `UPNEXT_QUEUE_FLUSH_INTERVAL_MS` | `5.0` | Max delay before flushing completed jobs |
+| `UPNEXT_QUEUE_CLAIM_TIMEOUT_MS` | `30000` | Idle time before stale jobs are reclaimable |
+| `UPNEXT_QUEUE_JOB_TTL_SECONDS` | `86400` | TTL for job payload/index/dedup keys |
+| `UPNEXT_QUEUE_STREAM_MAXLEN` | `0` | Redis stream trim cap (`0` means unbounded) |
 
-# Use the throughput preset for high-volume workloads
-worker = upnext.Worker("my-worker", profile=upnext.ProfileOptions.THROUGHPUT)
-
-# Or create a custom profile
-worker = upnext.Worker(
-    "my-worker",
-    profile=upnext.WorkerProfile(batch_size=500, inbox_size=5000),
-)
-```
-
-### Built-in presets
-
-| Preset | `batch_size` | `inbox_size` | `outbox_size` | `flush_interval_ms` | `stream_maxlen` |
-| --- | --- | --- | --- | --- | --- |
-| `ProfileOptions.SAFE` | 100 | 1,000 | 10,000 | 5.0 | 0 (unbounded) |
-| `ProfileOptions.THROUGHPUT` | 200 | 2,000 | 20,000 | 20.0 | 200,000 |
-
-You can also subclass `WorkerProfile` to create your own reusable presets:
-
-```python
-class HighVolumeProfile(upnext.WorkerProfile):
-    batch_size: int = 500
-    inbox_size: int = 5000
-    stream_maxlen: int = 500_000
-
-worker = upnext.Worker("my-worker", profile=HighVolumeProfile())
+```bash
+UPNEXT_QUEUE_BATCH_SIZE=200 \
+UPNEXT_QUEUE_INBOX_SIZE=2000 \
+UPNEXT_QUEUE_OUTBOX_SIZE=20000 \
+UPNEXT_QUEUE_FLUSH_INTERVAL_MS=20 \
+UPNEXT_QUEUE_STREAM_MAXLEN=200000 \
+UPNEXT_REDIS_URL=redis://localhost:6379 \
+upnext run service.py
 ```
 
 ## Run a worker
@@ -120,7 +108,9 @@ upnext run service.py
 upnext run service.py
 ```
 
-Under the hood, UpNext uses **Redis Streams consumer groups**. Each worker instance joins the same consumer group and claims jobs via `XREADGROUP`, so no two workers process the same job. If a worker crashes, its pending jobs are automatically recovered by other instances.
+Under the hood, UpNext uses **Redis Streams consumer groups**. Delivery is **at-least-once**, not exactly-once. If a worker crashes after claiming a job but before ACK/finalize, another worker can reclaim and execute it.
+
+Use idempotency keys for duplicate-sensitive submissions (see [Submit and Wait](/guides/submit-and-wait)).
 
 Each instance manages its own concurrency independently:
 

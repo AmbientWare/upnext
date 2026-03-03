@@ -22,6 +22,23 @@ UpNext server persistence is selected with `UPNEXT_BACKEND` or `upnext server st
 | SQLite | `UPNEXT_BACKEND=sqlite` (optional `UPNEXT_DATABASE_URL`) | Tables are auto-created on startup |
 | PostgreSQL | `UPNEXT_BACKEND=postgres`, `UPNEXT_DATABASE_URL` | Fails fast if required tables are missing; run migrations first |
 
+## Choosing by scale
+
+- Use `redis` for the simplest deployment and low-scale persistence with no SQL dependency.
+- Use `sqlite` for local/dev setups that still need persistent history in a file.
+- Use `postgres` for larger or long-term deployments where query scale and retention are more demanding.
+
+## Redis vs PostgreSQL
+
+| If you need... | Choose |
+| --- | --- |
+| Simplest setup with no SQL service dependency | `UPNEXT_BACKEND=redis` |
+| Small, low-scale persistence with minimal infrastructure | `UPNEXT_BACKEND=redis` |
+| Long retention windows and growing historical query load | `UPNEXT_BACKEND=postgres` |
+| Production-scale durability and analytics-heavy dashboards | `UPNEXT_BACKEND=postgres` |
+
+For many teams, `redis` is a great beta/default path and `postgres` is the natural upgrade path as usage grows.
+
 ## Redis has two roles
 
 Redis can be used in two separate ways:

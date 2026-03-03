@@ -6,6 +6,7 @@ import pytest
 from shared.keys import EVENTS_STREAM
 from shared.keys.workers import FUNCTION_KEY_PREFIX, WORKER_DEF_PREFIX
 from shared.contracts import MissedRunPolicy
+from upnext.config import get_settings
 from upnext.sdk.worker import Worker
 
 
@@ -198,6 +199,34 @@ def test_worker_uses_fixed_queue_tuning(fake_redis, monkeypatch) -> None:
     assert queue._claim_timeout_ms == 30_000  # noqa: SLF001
     assert queue._job_ttl_seconds == 86_400  # noqa: SLF001
     assert queue._stream_maxlen == 0  # noqa: SLF001
+
+
+def test_worker_uses_queue_tuning_from_settings(fake_redis, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis
+    )
+    monkeypatch.setenv("UPNEXT_QUEUE_BATCH_SIZE", "23")
+    monkeypatch.setenv("UPNEXT_QUEUE_INBOX_SIZE", "41")
+    monkeypatch.setenv("UPNEXT_QUEUE_OUTBOX_SIZE", "59")
+    monkeypatch.setenv("UPNEXT_QUEUE_FLUSH_INTERVAL_MS", "17.5")
+    monkeypatch.setenv("UPNEXT_QUEUE_CLAIM_TIMEOUT_MS", "4567")
+    monkeypatch.setenv("UPNEXT_QUEUE_JOB_TTL_SECONDS", "789")
+    monkeypatch.setenv("UPNEXT_QUEUE_STREAM_MAXLEN", "321")
+    get_settings.cache_clear()
+
+    try:
+        worker = Worker(name="env-tuned-worker", redis_url="redis://ignored")
+        worker.initialize(redis_url="redis://ignored")
+        queue = worker._queue_backend  # noqa: SLF001
+        assert queue._batch_size == 23  # noqa: SLF001
+        assert queue._inbox_size == 41  # noqa: SLF001
+        assert queue._outbox_size == 59  # noqa: SLF001
+        assert queue._flush_interval == 0.0175  # noqa: SLF001
+        assert queue._claim_timeout_ms == 4567  # noqa: SLF001
+        assert queue._job_ttl_seconds == 789  # noqa: SLF001
+        assert queue._stream_maxlen == 321  # noqa: SLF001
+    finally:
+        get_settings.cache_clear()
 
 
 def test_worker_rejects_profile_constructor_arg() -> None:
