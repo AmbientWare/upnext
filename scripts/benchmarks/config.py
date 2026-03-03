@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import BenchmarkWorkload, SUPPORTED_FRAMEWORKS
+from .models import SUPPORTED_FRAMEWORKS, BenchmarkProfile, BenchmarkWorkload
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ WORKLOAD_PRESETS: dict[BenchmarkWorkload, WorkloadPreset] = {
 @dataclass(frozen=True)
 class MatrixSettings:
     workload: BenchmarkWorkload
+    profile: BenchmarkProfile
     frameworks: list[str]
     jobs: int
     concurrency: int
@@ -93,7 +94,9 @@ def resolve_workload_parameters(
     preset = WORKLOAD_PRESETS[workload]
 
     resolved_concurrency = (
-        int(concurrency) if concurrency is not None and concurrency > 0 else preset.concurrency
+        int(concurrency)
+        if concurrency is not None and concurrency > 0
+        else preset.concurrency
     )
     resolved_timeout = (
         float(timeout_seconds)
@@ -191,7 +194,11 @@ def resolve_consumer_prefetch(
     *,
     consumer_prefetch: int,
     concurrency: int,
+    profile: BenchmarkProfile,
 ) -> int:
     if consumer_prefetch > 0:
         return consumer_prefetch
-    return max(1, concurrency)
+    if profile == BenchmarkProfile.THROUGHPUT:
+        return 32
+    _ = concurrency
+    return 0

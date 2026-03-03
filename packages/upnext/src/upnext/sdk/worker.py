@@ -53,13 +53,22 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 DEFAULT_CONCURRENCY = 2
-DEFAULT_QUEUE_BATCH_SIZE = 100
-DEFAULT_QUEUE_INBOX_SIZE = 1000
-DEFAULT_QUEUE_OUTBOX_SIZE = 10_000
-DEFAULT_QUEUE_FLUSH_INTERVAL_MS = 5.0
-DEFAULT_QUEUE_CLAIM_TIMEOUT_MS = 30_000
-DEFAULT_QUEUE_JOB_TTL_SECONDS = 86_400
-DEFAULT_QUEUE_STREAM_MAXLEN = 0
+
+
+@dataclass(frozen=True)
+class WorkerQueueConfig:
+    """Optional per-worker queue overrides.
+
+    Any field left as None falls back to the matching `UPNEXT_QUEUE_*` setting.
+    """
+
+    batch_size: int | None = None
+    inbox_size: int | None = None
+    outbox_size: int | None = None
+    flush_interval_ms: float | None = None
+    claim_timeout_ms: int | None = None
+    job_ttl_seconds: int | None = None
+    stream_maxlen: int | None = None
 
 
 @dataclass
@@ -87,6 +96,7 @@ class Worker:
     concurrency: int = DEFAULT_CONCURRENCY
     sync_executor: SyncExecutor = SyncExecutor.THREAD
     redis_url: str | None = None
+    queue_config: WorkerQueueConfig | None = None
     secrets: list[str] = field(default_factory=list)
     handle_signals: bool = True
     autodiscover_packages: list[str] = field(default_factory=list)
@@ -263,16 +273,52 @@ class Worker:
             )
         self._redis_client = create_redis_client(self.redis_url)
 
+        queue_config = self.queue_config or WorkerQueueConfig()
+
         # Enforce sane queue tuning and prevent fetcher starvation.
-        batch_size = max(1, int(settings.queue_batch_size))
-        inbox_size = max(batch_size, int(settings.queue_inbox_size))
-        outbox_size = max(1, int(settings.queue_outbox_size))
-        flush_interval_seconds = max(
-            0.001, float(settings.queue_flush_interval_ms) / 1000
+        batch_size_raw = (
+            settings.queue_batch_size
+            if queue_config.batch_size is None
+            else queue_config.batch_size
         )
-        claim_timeout_ms = max(1, int(settings.queue_claim_timeout_ms))
-        job_ttl_seconds = max(1, int(settings.queue_job_ttl_seconds))
-        stream_maxlen = max(0, int(settings.queue_stream_maxlen))
+        inbox_size_raw = (
+            settings.queue_inbox_size
+            if queue_config.inbox_size is None
+            else queue_config.inbox_size
+        )
+        outbox_size_raw = (
+            settings.queue_outbox_size
+            if queue_config.outbox_size is None
+            else queue_config.outbox_size
+        )
+        flush_interval_ms_raw = (
+            settings.queue_flush_interval_ms
+            if queue_config.flush_interval_ms is None
+            else queue_config.flush_interval_ms
+        )
+        claim_timeout_ms_raw = (
+            settings.queue_claim_timeout_ms
+            if queue_config.claim_timeout_ms is None
+            else queue_config.claim_timeout_ms
+        )
+        job_ttl_seconds_raw = (
+            settings.queue_job_ttl_seconds
+            if queue_config.job_ttl_seconds is None
+            else queue_config.job_ttl_seconds
+        )
+        stream_maxlen_raw = (
+            settings.queue_stream_maxlen
+            if queue_config.stream_maxlen is None
+            else queue_config.stream_maxlen
+        )
+
+        batch_size = max(1, int(batch_size_raw))
+        inbox_size = max(batch_size, int(inbox_size_raw))
+        outbox_size = max(1, int(outbox_size_raw))
+        flush_interval_seconds = max(0.001, float(flush_interval_ms_raw) / 1000)
+        claim_timeout_ms = max(1, int(claim_timeout_ms_raw))
+        job_ttl_seconds = max(1, int(job_ttl_seconds_raw))
+        stream_maxlen = max(0, int(stream_maxlen_raw))
 
         self._queue_backend = RedisQueue(
             client=self._redis_client,

@@ -52,6 +52,7 @@ A worker manages:
 | `concurrency` | `int` | `2` | Maximum concurrent job executions |
 | `sync_executor` | `SyncExecutor` | `THREAD` | Executor for sync tasks: `THREAD` or `PROCESS` |
 | `redis_url` | `str` | `None` | Redis URL (falls back to `UPNEXT_REDIS_URL` env var) |
+| `queue_config` | `WorkerQueueConfig \| None` | `None` | Optional per-worker queue overrides (otherwise uses `UPNEXT_QUEUE_*`) |
 | `secrets` | `list[str]` | `[]` | Secret names to fetch on startup (requires server) |
 
 ## Queue tuning
@@ -60,13 +61,22 @@ Queue behavior is tuned with `UPNEXT_QUEUE_*` environment variables. These value
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `UPNEXT_QUEUE_BATCH_SIZE` | `100` | Number of jobs fetched/flushed per batch |
-| `UPNEXT_QUEUE_INBOX_SIZE` | `1000` | In-memory fetch buffer size (minimum is batch size) |
+| `UPNEXT_QUEUE_BATCH_SIZE` | `4` | Number of jobs fetched/flushed per batch |
+| `UPNEXT_QUEUE_INBOX_SIZE` | `4` | In-memory fetch buffer size (minimum is batch size) |
 | `UPNEXT_QUEUE_OUTBOX_SIZE` | `10000` | In-memory completion buffer size |
 | `UPNEXT_QUEUE_FLUSH_INTERVAL_MS` | `5.0` | Max delay before flushing completed jobs |
 | `UPNEXT_QUEUE_CLAIM_TIMEOUT_MS` | `30000` | Idle time before stale jobs are reclaimable |
 | `UPNEXT_QUEUE_JOB_TTL_SECONDS` | `86400` | TTL for job payload/index/dedup keys |
 | `UPNEXT_QUEUE_STREAM_MAXLEN` | `0` | Redis stream trim cap (`0` means unbounded) |
+
+You can also override queue tuning per worker in code:
+
+```python
+worker = upnext.Worker(
+    "my-worker",
+    queue_config=upnext.WorkerQueueConfig(batch_size=32, inbox_size=32),
+)
+```
 
 ```bash
 UPNEXT_QUEUE_BATCH_SIZE=200 \

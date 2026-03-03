@@ -5,12 +5,13 @@ from upnext.sdk.artifacts import create_artifact, create_artifact_sync
 from upnext.sdk.context import Context, get_current_context
 from upnext.sdk.parallel import first_completed, gather, map_tasks, submit_many
 from upnext.sdk.task import Future, TaskExecutionError, TaskResult, TaskTimeoutError
-from upnext.sdk.worker import Worker
+from upnext.sdk.worker import Worker, WorkerQueueConfig
 
 __all__ = [
     "Api",
     "Context",
     "Worker",
+    "WorkerQueueConfig",
     "create_artifact",
     "create_artifact_sync",
     "get_current_context",

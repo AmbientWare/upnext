@@ -36,7 +36,10 @@ class MatrixEngine:
         measured_by_framework = defaultdict(list)
         rng = random.Random(settings.seed)
 
-        for phase, count in (("warmup", settings.warmups), ("measured", settings.repeats)):
+        for phase, count in (
+            ("warmup", settings.warmups),
+            ("measured", settings.repeats),
+        ):
             for run_index in range(1, count + 1):
                 order = list(settings.frameworks)
                 rng.shuffle(order)
@@ -77,6 +80,7 @@ class MatrixEngine:
         return BenchmarkConfig(
             framework=framework,
             workload=settings.workload,
+            profile=settings.profile,
             jobs=settings.jobs,
             concurrency=settings.concurrency,
             payload_bytes=settings.payload_bytes,

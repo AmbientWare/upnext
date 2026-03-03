@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 from .io import extract_marked_json
-from .models import BenchmarkConfig, BenchmarkResult, DiagnosticValue, SCHEMA_VERSION
+from .models import SCHEMA_VERSION, BenchmarkConfig, BenchmarkResult, DiagnosticValue
 
 
 class SubprocessBenchmarkClient:
@@ -23,6 +23,8 @@ class SubprocessBenchmarkClient:
             cfg.framework,
             "--workload",
             cfg.workload.value,
+            "--profile",
+            cfg.profile.value,
             "--jobs",
             str(cfg.jobs),
             "--duration-seconds",
@@ -103,7 +105,10 @@ class SubprocessBenchmarkClient:
             framework=str(payload.get("framework", cfg.framework)),
             status=str(payload.get("status", "error")),
             workload=str(payload.get("workload", cfg.workload.value)),
-            jobs=SubprocessBenchmarkClient._coerce_int(payload.get("jobs"), default=cfg.jobs),
+            profile=str(payload.get("profile", cfg.profile.value)),
+            jobs=SubprocessBenchmarkClient._coerce_int(
+                payload.get("jobs"), default=cfg.jobs
+            ),
             concurrency=SubprocessBenchmarkClient._coerce_int(
                 payload.get("concurrency"),
                 default=cfg.concurrency,

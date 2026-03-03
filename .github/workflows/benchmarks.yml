@@ -52,6 +52,7 @@ jobs:
         run: |
           case "${{ inputs.mode }}" in
             full)
+              echo "profiles=base throughput" >> "$GITHUB_OUTPUT"
               echo "workloads=sustained burst" >> "$GITHUB_OUTPUT"
               echo "sustained_duration=60" >> "$GITHUB_OUTPUT"
               echo "sustained_arrival=200" >> "$GITHUB_OUTPUT"
@@ -60,6 +61,7 @@ jobs:
               echo "warmups=1" >> "$GITHUB_OUTPUT"
               ;;
             quick|"")
+              echo "profiles=base throughput" >> "$GITHUB_OUTPUT"
               echo "workloads=sustained" >> "$GITHUB_OUTPUT"
               echo "sustained_duration=30" >> "$GITHUB_OUTPUT"
               echo "sustained_arrival=150" >> "$GITHUB_OUTPUT"
@@ -78,28 +80,31 @@ jobs:
           UPNEXT_PERF_REDIS_URL: redis://localhost:6379/15
         run: |
           mkdir -p results
-          for workload in ${{ steps.params.outputs.workloads }}; do
-            extra_args=""
-            if [ "$workload" = "sustained" ]; then
-              extra_args="--duration-seconds ${{ steps.params.outputs.sustained_duration }} --arrival-rate ${{ steps.params.outputs.sustained_arrival }}"
-            else
-              extra_args="--jobs ${{ steps.params.outputs.burst_jobs }}"
-            fi
-            uv run benchmarks matrix \
-              --workload "$workload" \
-              --framework upnext-async \
-              --framework upnext-sync \
-              --framework celery \
-              --framework saq \
-              --concurrency 32 \
-              --repeats ${{ steps.params.outputs.repeats }} \
-              --warmups ${{ steps.params.outputs.warmups }} \
-              --seed 42 \
-              $extra_args \
-              --fail-on-non-ok \
-              --show-runs \
-              --output-json "results/benchmark-${workload}.json" \
-              2>&1 | tee "results/benchmark-${workload}.txt"
+          for profile in ${{ steps.params.outputs.profiles }}; do
+            for workload in ${{ steps.params.outputs.workloads }}; do
+              extra_args=""
+              if [ "$workload" = "sustained" ]; then
+                extra_args="--duration-seconds ${{ steps.params.outputs.sustained_duration }} --arrival-rate ${{ steps.params.outputs.sustained_arrival }}"
+              else
+                extra_args="--jobs ${{ steps.params.outputs.burst_jobs }}"
+              fi
+              uv run benchmarks matrix \
+                --workload "$workload" \
+                --profile "$profile" \
+                --framework upnext-async \
+                --framework upnext-sync \
+                --framework celery \
+                --framework saq \
+                --concurrency 32 \
+                --repeats ${{ steps.params.outputs.repeats }} \
+                --warmups ${{ steps.params.outputs.warmups }} \
+                --seed 42 \
+                $extra_args \
+                --fail-on-non-ok \
+                --show-runs \
+                --output-json "results/benchmark-${profile}-${workload}.json" \
+                2>&1 | tee "results/benchmark-${profile}-${workload}.txt"
+            done
           done
 
       - name: Build markdown summary

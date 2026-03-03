@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SUPPORTED_FRAMEWORKS = ("upnext-async", "upnext-sync", "celery", "saq")
 
 
@@ -13,7 +13,14 @@ class BenchmarkWorkload(StrEnum):
     BURST = "burst"
 
 
+class BenchmarkProfile(StrEnum):
+    BASE = "base"
+    THROUGHPUT = "throughput"
+
+
 SUPPORTED_WORKLOADS = tuple(BenchmarkWorkload)
+SUPPORTED_PROFILES = tuple(BenchmarkProfile)
+
 DiagnosticValue = str | int | float | bool
 
 
@@ -21,6 +28,7 @@ DiagnosticValue = str | int | float | bool
 class BenchmarkConfig:
     framework: str
     workload: BenchmarkWorkload
+    profile: BenchmarkProfile
     jobs: int
     concurrency: int
     payload_bytes: int
@@ -67,6 +75,7 @@ class BenchmarkConfig:
             "schema_version": SCHEMA_VERSION,
             "framework": self.framework,
             "workload": self.workload.value,
+            "profile": self.profile.value,
             "jobs": self.jobs,
             "concurrency": self.concurrency,
             "payload_bytes": self.payload_bytes,
@@ -87,6 +96,7 @@ class BenchmarkResult:
     framework: str
     status: str
     workload: str
+    profile: str
     jobs: int
     concurrency: int
     producer_concurrency: int
@@ -125,6 +135,7 @@ class BenchmarkResult:
             framework=cfg.framework,
             status=status,
             workload=cfg.workload.value,
+            profile=cfg.profile.value,
             jobs=cfg.jobs,
             concurrency=cfg.concurrency,
             producer_concurrency=cfg.producer_concurrency,

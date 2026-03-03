@@ -39,6 +39,7 @@ class FrameworkRunner(ABC):
             framework=cfg.framework,
             status="ok",
             workload=cfg.workload.value,
+            profile=cfg.profile.value,
             jobs=cfg.jobs,
             concurrency=cfg.concurrency,
             producer_concurrency=cfg.producer_concurrency,

@@ -18,8 +18,10 @@ from .engine import MatrixEngine
 from .io import emit_marked_json, load_matrix_payloads, write_json_file
 from .models import (
     SCHEMA_VERSION,
+    SUPPORTED_PROFILES,
     SUPPORTED_WORKLOADS,
     BenchmarkConfig,
+    BenchmarkProfile,
     BenchmarkWorkload,
 )
 from .report_json import matrix_json_payload
@@ -93,6 +95,12 @@ def _add_common_case_args(parser: argparse.ArgumentParser) -> None:
         choices=SUPPORTED_WORKLOADS,
         default=BenchmarkWorkload.SUSTAINED,
     )
+    parser.add_argument(
+        "--profile",
+        type=BenchmarkProfile,
+        choices=SUPPORTED_PROFILES,
+        default=BenchmarkProfile.BASE,
+    )
     parser.add_argument("--jobs", type=int, default=None)
     parser.add_argument(
         "--duration-seconds",
@@ -154,6 +162,7 @@ def _resolve_case_args(
     consumer_prefetch = resolve_consumer_prefetch(
         consumer_prefetch=args.consumer_prefetch,
         concurrency=concurrency,
+        profile=args.profile,
     )
 
     validate_common_numeric_args(
@@ -196,6 +205,7 @@ def _build_cfg_from_run_args(args: argparse.Namespace) -> BenchmarkConfig:
     return BenchmarkConfig(
         framework=args.framework,
         workload=args.workload,
+        profile=args.profile,
         jobs=jobs,
         concurrency=concurrency,
         payload_bytes=args.payload_bytes,
@@ -280,6 +290,7 @@ def _matrix_command(args: argparse.Namespace) -> int:
             "kind": "benchmark-matrix",
             "config": {
                 "workload": args.workload.value,
+                "profile": args.profile.value,
                 "frameworks": frameworks,
                 "jobs": jobs,
                 "concurrency": concurrency,
@@ -308,6 +319,7 @@ def _matrix_command(args: argparse.Namespace) -> int:
 
     settings = MatrixSettings(
         workload=args.workload,
+        profile=args.profile,
         frameworks=frameworks,
         jobs=jobs,
         concurrency=concurrency,
@@ -331,6 +343,7 @@ def _matrix_command(args: argparse.Namespace) -> int:
     payload = matrix_json_payload(
         config={
             "workload": settings.workload.value,
+            "profile": settings.profile.value,
             "frameworks": settings.frameworks,
             "jobs": settings.jobs,
             "concurrency": settings.concurrency,

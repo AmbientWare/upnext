@@ -6,7 +6,12 @@ from typing import Any
 
 from redis import Redis
 
-from ..models import BenchmarkConfig, BenchmarkResult, BenchmarkWorkload
+from ..models import (
+    BenchmarkConfig,
+    BenchmarkProfile,
+    BenchmarkResult,
+    BenchmarkWorkload,
+)
 from .base import FrameworkRunner
 from .common import (
     await_worker_readiness_sync,
@@ -36,20 +41,34 @@ class CeleryRunner(FrameworkRunner):
         task_done_client = Redis.from_url(cfg.redis_url, decode_responses=False)
 
         queue_name = f"bench.celery.{cfg.run_id}"
+        throughput_mode = cfg.profile == BenchmarkProfile.THROUGHPUT
         target_prefetch = effective_prefetch(cfg)
-        worker_prefetch_multiplier = max(
-            1,
-            math.ceil(target_prefetch / max(1, cfg.concurrency)),
-        )
+        worker_prefetch_multiplier: int | None = None
 
         app = Celery(f"bench_{cfg.run_id}", broker=cfg.redis_url)
-        app.conf.update(
-            task_default_queue=queue_name,
-            task_ignore_result=True,
-            worker_prefetch_multiplier=worker_prefetch_multiplier,
-            task_acks_late=True,
-            task_reject_on_worker_lost=True,
-        )
+        app_conf: dict[str, Any] = {
+            "task_default_queue": queue_name,
+            "task_ignore_result": True,
+        }
+        if throughput_mode:
+            worker_prefetch_multiplier = max(
+                1,
+                math.ceil(target_prefetch / max(1, cfg.concurrency)),
+            )
+            app_conf.update(
+                worker_prefetch_multiplier=worker_prefetch_multiplier,
+                task_acks_late=True,
+                task_reject_on_worker_lost=True,
+            )
+        elif cfg.consumer_prefetch > 0:
+            worker_prefetch_multiplier = max(
+                1,
+                math.ceil(target_prefetch / max(1, cfg.concurrency)),
+            )
+            app_conf.update(worker_prefetch_multiplier=worker_prefetch_multiplier)
+        app.conf.update(**app_conf)
+        effective_worker_prefetch_multiplier = int(app.conf.worker_prefetch_multiplier)
+        effective_task_acks_late = bool(app.conf.task_acks_late)
 
         @app.task(name=f"bench_task_{cfg.run_id}")
         def bench_task(payload: dict[str, Any], done_key: str, redis_url: str) -> None:
@@ -109,11 +128,13 @@ class CeleryRunner(FrameworkRunner):
                     )
 
                 if cfg.workload == BenchmarkWorkload.SUSTAINED:
-                    enqueue_seconds, enqueue_latencies = threaded_produce_jobs_sustained(
-                        total_jobs=cfg.jobs,
-                        arrival_rate=cfg.arrival_rate,
-                        producer_concurrency=cfg.producer_concurrency,
-                        submit_one=submit_one,
+                    enqueue_seconds, enqueue_latencies = (
+                        threaded_produce_jobs_sustained(
+                            total_jobs=cfg.jobs,
+                            arrival_rate=cfg.arrival_rate,
+                            producer_concurrency=cfg.producer_concurrency,
+                            submit_one=submit_one,
+                        )
                     )
                 else:
                     enqueue_seconds, enqueue_latencies = threaded_produce_jobs(
@@ -145,19 +166,21 @@ class CeleryRunner(FrameworkRunner):
             enqueue_latencies_seconds=enqueue_latencies,
             queue_wait_ms_samples=queue_wait_samples,
             notes=(
+                f"profile={cfg.profile.value}; "
                 f"producer_concurrency={cfg.producer_concurrency}; "
-                f"worker_prefetch_multiplier={worker_prefetch_multiplier}; "
+                f"worker_prefetch_multiplier={effective_worker_prefetch_multiplier}; "
                 f"workload={cfg.workload.value}; "
                 f"arrival_rate={cfg.arrival_rate}; "
-                "task_acks_late=true"
+                f"task_acks_late={str(effective_task_acks_late).lower()}"
             ),
             framework_version=self._framework_version("celery"),
             diagnostics={
-                "worker_prefetch_multiplier": worker_prefetch_multiplier,
+                "profile": cfg.profile.value,
+                "worker_prefetch_multiplier": effective_worker_prefetch_multiplier,
                 "workload": cfg.workload.value,
                 "arrival_rate": cfg.arrival_rate,
                 "duration_seconds": cfg.duration_seconds,
-                "task_acks_late": True,
+                "task_acks_late": effective_task_acks_late,
                 "queue_wait_sample_rate": cfg.queue_wait_sample_rate,
                 "queue_wait_samples": len(queue_wait_samples),
             },

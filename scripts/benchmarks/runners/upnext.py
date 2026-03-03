@@ -4,12 +4,17 @@ import asyncio
 import time
 from typing import Any
 
-from ..models import BenchmarkConfig, BenchmarkResult, BenchmarkWorkload
+from ..models import (
+    BenchmarkConfig,
+    BenchmarkProfile,
+    BenchmarkResult,
+    BenchmarkWorkload,
+)
 from .base import FrameworkRunner
 from .common import (
-    await_worker_readiness_async,
     async_produce_jobs,
     async_produce_jobs_sustained,
+    await_worker_readiness_async,
     effective_prefetch,
     load_queue_wait_samples_async,
     now,
@@ -25,30 +30,36 @@ class UpnextAsyncRunner(FrameworkRunner):
     async def _run_async(self, cfg: BenchmarkConfig) -> BenchmarkResult:
         try:
             from redis.asyncio import Redis as AsyncRedis
-            from upnext.sdk import worker as worker_module
+            from upnext.sdk import Worker, WorkerQueueConfig
         except Exception as exc:
             return self._skip(cfg, f"Dependency missing: {exc}")
 
         target_prefetch = effective_prefetch(cfg)
-        original_batch_size = worker_module.DEFAULT_QUEUE_BATCH_SIZE
-        original_inbox_size = worker_module.DEFAULT_QUEUE_INBOX_SIZE
+        queue_config = (
+            WorkerQueueConfig(
+                batch_size=max(1, target_prefetch),
+                inbox_size=max(1, target_prefetch),
+            )
+            if cfg.profile == BenchmarkProfile.THROUGHPUT
+            else None
+        )
         done_client: Any | None = None
         task_done_client: Any | None = None
         worker: Any | None = None
         worker_task: asyncio.Task[None] | None = None
 
-        worker_module.DEFAULT_QUEUE_BATCH_SIZE = max(1, target_prefetch)
-        worker_module.DEFAULT_QUEUE_INBOX_SIZE = max(1, target_prefetch)
-
         try:
             done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
             await done_client.delete(cfg.done_key, cfg.queue_wait_key)
-            task_done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
+            task_done_client = AsyncRedis.from_url(
+                cfg.redis_url, decode_responses=False
+            )
 
-            worker = worker_module.Worker(
+            worker = Worker(
                 name=f"bench-upnext-{cfg.run_id}",
                 concurrency=max(1, cfg.concurrency),
                 redis_url=cfg.redis_url,
+                queue_config=queue_config,
                 handle_signals=False,
             )
 
@@ -78,7 +89,9 @@ class UpnextAsyncRunner(FrameworkRunner):
                     break
                 await asyncio.sleep(0.01)
             else:
-                raise RuntimeError("UpNext worker did not initialize task queue in time")
+                raise RuntimeError(
+                    "UpNext worker did not initialize task queue in time"
+                )
 
             readiness_key = worker_readiness_key(cfg.done_key)
 
@@ -146,6 +159,7 @@ class UpnextAsyncRunner(FrameworkRunner):
                 enqueue_latencies_seconds=enqueue_latencies,
                 queue_wait_ms_samples=queue_wait_samples,
                 notes=(
+                    f"profile={cfg.profile.value}; "
                     f"producer_concurrency={cfg.producer_concurrency}; "
                     f"consumer_prefetch={target_prefetch}; "
                     f"workload={cfg.workload.value}; "
@@ -155,10 +169,16 @@ class UpnextAsyncRunner(FrameworkRunner):
                 diagnostics={
                     "consumer_prefetch": target_prefetch,
                     "workload": cfg.workload.value,
+                    "profile": cfg.profile.value,
                     "arrival_rate": cfg.arrival_rate,
                     "duration_seconds": cfg.duration_seconds,
                     "queue_wait_sample_rate": cfg.queue_wait_sample_rate,
                     "queue_wait_samples": len(queue_wait_samples),
+                    "queue_batch_size_override": (
+                        max(1, target_prefetch)
+                        if cfg.profile == BenchmarkProfile.THROUGHPUT
+                        else 0
+                    ),
                 },
             )
         except Exception as exc:
@@ -180,8 +200,6 @@ class UpnextAsyncRunner(FrameworkRunner):
                 await task_done_client.aclose()
             if done_client is not None:
                 await done_client.aclose()
-            worker_module.DEFAULT_QUEUE_BATCH_SIZE = original_batch_size
-            worker_module.DEFAULT_QUEUE_INBOX_SIZE = original_inbox_size
 
     def run(self, cfg: BenchmarkConfig) -> BenchmarkResult:
         return asyncio.run(self._run_async(cfg))

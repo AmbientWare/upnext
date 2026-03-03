@@ -7,7 +7,7 @@ from shared.keys import EVENTS_STREAM
 from shared.keys.workers import FUNCTION_KEY_PREFIX, WORKER_DEF_PREFIX
 from shared.contracts import MissedRunPolicy
 from upnext.config import get_settings
-from upnext.sdk.worker import Worker
+from upnext.sdk.worker import Worker, WorkerQueueConfig
 
 
 class _NoopJobProcessor:
@@ -192,8 +192,8 @@ def test_worker_uses_fixed_queue_tuning(fake_redis, monkeypatch) -> None:
     worker = Worker(name="default-worker", concurrency=8, redis_url="redis://ignored")
     worker.initialize(redis_url="redis://ignored")
     queue = worker._queue_backend  # noqa: SLF001
-    assert queue._batch_size == 100  # noqa: SLF001
-    assert queue._inbox_size == 1000  # noqa: SLF001
+    assert queue._batch_size == 4  # noqa: SLF001
+    assert queue._inbox_size == 4  # noqa: SLF001
     assert queue._outbox_size == 10_000  # noqa: SLF001
     assert queue._flush_interval == 0.005  # noqa: SLF001
     assert queue._claim_timeout_ms == 30_000  # noqa: SLF001
@@ -225,6 +225,28 @@ def test_worker_uses_queue_tuning_from_settings(fake_redis, monkeypatch) -> None
         assert queue._claim_timeout_ms == 4567  # noqa: SLF001
         assert queue._job_ttl_seconds == 789  # noqa: SLF001
         assert queue._stream_maxlen == 321  # noqa: SLF001
+    finally:
+        get_settings.cache_clear()
+
+
+def test_worker_applies_queue_config_overrides(fake_redis, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "upnext.sdk.worker.create_redis_client", lambda _url: fake_redis
+    )
+    monkeypatch.setenv("UPNEXT_QUEUE_BATCH_SIZE", "4")
+    monkeypatch.setenv("UPNEXT_QUEUE_INBOX_SIZE", "4")
+    get_settings.cache_clear()
+
+    try:
+        worker = Worker(
+            name="queue-config-worker",
+            redis_url="redis://ignored",
+            queue_config=WorkerQueueConfig(batch_size=32, inbox_size=32),
+        )
+        worker.initialize(redis_url="redis://ignored")
+        queue = worker._queue_backend  # noqa: SLF001
+        assert queue._batch_size == 32  # noqa: SLF001
+        assert queue._inbox_size == 32  # noqa: SLF001
     finally:
         get_settings.cache_clear()
 

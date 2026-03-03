@@ -111,12 +111,6 @@ The dashboard and API views use a stream-first model:
 
 This keeps UI updates near-realtime while reducing avoidable polling load.
 
-## Worker Queue Defaults
-
-Workers now run with fixed, safe queue tuning defaults. Queue profile selection
-and custom profile overrides are intentionally not exposed in the public
-constructor.
-
 ## Benchmarking
 
 The benchmark suite is fully command-driven:
@@ -135,7 +129,7 @@ uv run benchmarks matrix \
   --framework celery \
   --framework saq
 
-# Secondary benchmark: burst/backpressure guardrail
+# Burst/backpressure guardrail
 uv run benchmarks matrix \
   --workload burst \
   --jobs 10000 \
@@ -146,8 +140,8 @@ uv run benchmarks matrix \
 ```
 
 For GitHub Actions, use the `Benchmarks` workflow with:
-- `mode=quick` for routine checks (sustained only, light settings)
-- `mode=full` for deeper comparisons (sustained + burst)
+- `mode=quick` for routine checks
+- `mode=full` for deeper comparisons
 
 Both modes are deterministic/fair by default:
 - fixed framework set (`upnext-async`, `upnext-sync`, `celery`, `saq`)

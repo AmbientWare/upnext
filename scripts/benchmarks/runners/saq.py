@@ -5,12 +5,17 @@ import contextlib
 import time
 from typing import Any
 
-from ..models import BenchmarkConfig, BenchmarkResult, BenchmarkWorkload
+from ..models import (
+    BenchmarkConfig,
+    BenchmarkProfile,
+    BenchmarkResult,
+    BenchmarkWorkload,
+)
 from .base import FrameworkRunner
 from .common import (
-    await_worker_readiness_async,
     async_produce_jobs,
     async_produce_jobs_sustained,
+    await_worker_readiness_async,
     effective_prefetch,
     load_queue_wait_samples_async,
     now,
@@ -35,6 +40,7 @@ class SaqRunner(FrameworkRunner):
         task_done_client = AsyncRedis.from_url(cfg.redis_url, decode_responses=False)
         target_prefetch = effective_prefetch(cfg)
         effective_prefetch_depth = max(1, cfg.concurrency)
+        dequeue_timeout = 0.1 if cfg.profile == BenchmarkProfile.THROUGHPUT else 0.0
 
         queue_name = f"bench_saq_{cfg.run_id}"
         task_name = f"bench_task_{cfg.run_id}"
@@ -65,7 +71,7 @@ class SaqRunner(FrameworkRunner):
             queue=worker_queue,
             functions=[(task_name, bench_task)],
             concurrency=max(1, cfg.concurrency),
-            dequeue_timeout=0.1,
+            dequeue_timeout=dequeue_timeout,
         )
 
         async def run_worker() -> None:
@@ -153,18 +159,22 @@ class SaqRunner(FrameworkRunner):
                 enqueue_latencies_seconds=enqueue_latencies,
                 queue_wait_ms_samples=queue_wait_samples,
                 notes=(
+                    f"profile={cfg.profile.value}; "
                     f"producer_concurrency={cfg.producer_concurrency}; "
                     f"worker_concurrency={cfg.concurrency}; "
                     f"consumer_prefetch_requested={target_prefetch}; "
                     f"consumer_prefetch_effective={effective_prefetch_depth}; "
+                    f"dequeue_timeout={dequeue_timeout}; "
                     f"workload={cfg.workload.value}; "
                     f"arrival_rate={cfg.arrival_rate}"
                 ),
                 framework_version=self._framework_version("saq"),
                 diagnostics={
+                    "profile": cfg.profile.value,
                     "worker_concurrency": cfg.concurrency,
                     "consumer_prefetch_requested": target_prefetch,
                     "consumer_prefetch_effective": effective_prefetch_depth,
+                    "dequeue_timeout": dequeue_timeout,
                     "workload": cfg.workload.value,
                     "arrival_rate": cfg.arrival_rate,
                     "duration_seconds": cfg.duration_seconds,

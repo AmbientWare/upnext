@@ -87,11 +87,6 @@ from upnext.engine.queue.base import (
     QueueStats,
 )
 from upnext.engine.queue.redis.constants import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_CLAIM_TIMEOUT_MS,
-    DEFAULT_FLUSH_INTERVAL,
-    DEFAULT_INBOX_SIZE,
-    DEFAULT_OUTBOX_SIZE,
     CompletedJob,
 )
 from upnext.engine.queue.redis.fetcher import Fetcher
@@ -162,15 +157,15 @@ class RedisQueue(BaseQueue):
         redis_url: str = "redis://localhost:6379",
         key_prefix: str = QUEUE_KEY_PREFIX,
         consumer_group: str = QUEUE_CONSUMER_GROUP,
-        claim_timeout_ms: int = DEFAULT_CLAIM_TIMEOUT_MS,
+        claim_timeout_ms: int | None = None,
         job_ttl_seconds: int | None = None,
         sweep_interval: float = 5.0,
         *,
         client: Any | None = None,
-        batch_size: int = DEFAULT_BATCH_SIZE,
-        inbox_size: int = DEFAULT_INBOX_SIZE,
-        outbox_size: int = DEFAULT_OUTBOX_SIZE,
-        flush_interval: float = DEFAULT_FLUSH_INTERVAL,
+        batch_size: int | None = None,
+        inbox_size: int | None = None,
+        outbox_size: int | None = None,
+        flush_interval: float | None = None,
         stream_maxlen: int | None = None,
     ) -> None:
         settings = get_settings()
@@ -178,7 +173,12 @@ class RedisQueue(BaseQueue):
         self._redis_url = redis_url
         self._key_prefix = key_prefix
         self._consumer_group = consumer_group
-        self._claim_timeout_ms = claim_timeout_ms
+        self._claim_timeout_ms = max(
+            1,
+            int(settings.queue_claim_timeout_ms)
+            if claim_timeout_ms is None
+            else int(claim_timeout_ms),
+        )
         self._job_ttl_seconds = (
             settings.queue_job_ttl_seconds
             if job_ttl_seconds is None
@@ -187,10 +187,25 @@ class RedisQueue(BaseQueue):
         self._sweep_interval = sweep_interval
 
         # Batching config (stored for component creation)
-        self._batch_size = batch_size
-        self._inbox_size = inbox_size
-        self._outbox_size = outbox_size
-        self._flush_interval = flush_interval
+        self._batch_size = max(
+            1,
+            int(settings.queue_batch_size) if batch_size is None else int(batch_size),
+        )
+        self._inbox_size = max(
+            self._batch_size,
+            int(settings.queue_inbox_size) if inbox_size is None else int(inbox_size),
+        )
+        self._outbox_size = max(
+            1,
+            int(settings.queue_outbox_size)
+            if outbox_size is None
+            else int(outbox_size),
+        )
+        self._flush_interval = (
+            max(0.001, float(settings.queue_flush_interval_ms) / 1000.0)
+            if flush_interval is None
+            else max(0.001, float(flush_interval))
+        )
         self._stream_maxlen = max(0, int(stream_maxlen or 0))
         self._dispatch_events_stream_maxlen = max(
             0,

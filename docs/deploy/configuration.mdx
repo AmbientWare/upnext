@@ -53,8 +53,8 @@ Queue behavior can be tuned with environment variables.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `UPNEXT_QUEUE_BATCH_SIZE` | `100` | Number of jobs fetched/flushed per batch |
-| `UPNEXT_QUEUE_INBOX_SIZE` | `1000` | In-memory fetch buffer size (minimum batch size) |
+| `UPNEXT_QUEUE_BATCH_SIZE` | `4` | Number of jobs fetched/flushed per batch |
+| `UPNEXT_QUEUE_INBOX_SIZE` | `4` | In-memory fetch buffer size (minimum batch size) |
 | `UPNEXT_QUEUE_OUTBOX_SIZE` | `10000` | In-memory completion buffer size |
 | `UPNEXT_QUEUE_FLUSH_INTERVAL_MS` | `5.0` | Max delay before flushing completion updates |
 | `UPNEXT_QUEUE_JOB_TTL_SECONDS` | `86400` | Job data TTL (24 hours) |

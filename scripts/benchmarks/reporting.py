@@ -15,6 +15,7 @@ def print_single_result(result: BenchmarkResult) -> None:
             [
                 f"framework={result.framework}",
                 f"workload={result.workload}",
+                f"profile={result.profile}",
                 f"status={result.status}",
                 f"jobs/s={result.jobs_per_second:,.0f}",
                 f"total_s={_fmt(result.total_seconds)}",
@@ -36,7 +37,7 @@ def print_matrix_report(
     print()
     print(
         "Benchmark Matrix "
-        f"workload={config.get('workload')}"
+        f"workload={config.get('workload')} profile={config.get('profile')}"
     )
     print(
         "config: "
@@ -67,7 +68,7 @@ def print_matrix_report(
         ok_runs = int(row.get("ok_runs", 0))
         requested_runs = int(row.get("requested_runs", 0))
         print(
-            f"{framework:<20} {_fmt(jps, 0):>10} { _fmt(total):>12} "
+            f"{framework:<20} {_fmt(jps, 0):>10} {_fmt(total):>12} "
             f"{_fmt(p95_enqueue):>17} {_fmt(p95_queue_wait):>20} "
             f"{ok_runs}/{requested_runs:>5}"
         )

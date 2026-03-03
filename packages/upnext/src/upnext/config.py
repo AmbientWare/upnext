@@ -29,8 +29,8 @@ class Settings(BaseSettings):
 
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
-    queue_batch_size: int = 100
-    queue_inbox_size: int = 1_000
+    queue_batch_size: int = 4
+    queue_inbox_size: int = 4
     queue_outbox_size: int = 10_000
     queue_flush_interval_ms: float = 5.0
     queue_job_ttl_seconds: int = 86_400

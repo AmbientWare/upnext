@@ -12,12 +12,15 @@ if str(ROOT) not in sys.path:
 from scripts.benchmarks.config import (  # noqa: E402
     MatrixSettings,
     parse_frameworks,
+    resolve_consumer_prefetch,
     resolve_workload_parameters,
 )
 from scripts.benchmarks.engine import MatrixEngine  # noqa: E402
 from scripts.benchmarks.io import extract_marked_json, load_matrix_payloads  # noqa: E402
 from scripts.benchmarks.models import (  # noqa: E402
+    SCHEMA_VERSION,
     BenchmarkConfig,
+    BenchmarkProfile,
     BenchmarkResult,
     BenchmarkWorkload,
 )
@@ -35,10 +38,11 @@ class _FakeClient:
         self.calls.append(cfg.framework)
         value = 1000.0 if cfg.framework == "upnext-async" else 500.0
         return BenchmarkResult(
-            schema_version=3,
+            schema_version=SCHEMA_VERSION,
             framework=cfg.framework,
             status="ok",
             workload=cfg.workload.value,
+            profile=cfg.profile.value,
             jobs=cfg.jobs,
             concurrency=cfg.concurrency,
             producer_concurrency=cfg.producer_concurrency,
@@ -110,6 +114,45 @@ def test_resolve_workload_burst_uses_defaults() -> None:
     assert duration == 0.0
 
 
+def test_resolve_consumer_prefetch_uses_profile_defaults() -> None:
+    assert (
+        resolve_consumer_prefetch(
+            consumer_prefetch=0,
+            concurrency=16,
+            profile=BenchmarkProfile.BASE,
+        )
+        == 0
+    )
+    assert (
+        resolve_consumer_prefetch(
+            consumer_prefetch=0,
+            concurrency=16,
+            profile=BenchmarkProfile.THROUGHPUT,
+        )
+        == 32
+    )
+
+
+def test_benchmark_config_runtime_config_contains_profile() -> None:
+    cfg = BenchmarkConfig(
+        framework="upnext-async",
+        workload=BenchmarkWorkload.SUSTAINED,
+        profile=BenchmarkProfile.THROUGHPUT,
+        jobs=10,
+        concurrency=2,
+        payload_bytes=32,
+        producer_concurrency=2,
+        consumer_prefetch=32,
+        timeout_seconds=30.0,
+        redis_url="redis://127.0.0.1:6379/15",
+        run_id="abc123",
+        arrival_rate=20.0,
+        duration_seconds=0.5,
+    )
+    runtime = cfg.runtime_config()
+    assert runtime["profile"] == "throughput"
+
+
 def test_extract_marked_json_parses_payload() -> None:
     payload = extract_marked_json(
         "before\n===BENCHMARK_JSON_START===\n{\"x\": 1}\n===BENCHMARK_JSON_END===\nafter"
@@ -143,6 +186,7 @@ def test_matrix_engine_interleaves_runs_deterministically() -> None:
 
     settings = MatrixSettings(
         workload=BenchmarkWorkload.SUSTAINED,
+        profile=BenchmarkProfile.BASE,
         frameworks=["upnext-async", "celery"],
         jobs=100,
         concurrency=2,
@@ -165,6 +209,7 @@ def test_matrix_engine_interleaves_runs_deterministically() -> None:
     assert len(execution.warmups) == 2
     assert len(execution.runs) == 4
     assert len(execution.summaries) == 2
+    assert all(record.result.profile == "base" for record in execution.runs)
     assert set(fake.calls[:2]) == {"upnext-async", "celery"}
     assert set(fake.calls[2:4]) == {"upnext-async", "celery"}
     assert set(fake.calls[4:6]) == {"upnext-async", "celery"}

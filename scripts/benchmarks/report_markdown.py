@@ -19,6 +19,7 @@ def _tail_ratio(max_value: float, p95_value: float) -> float:
 
 def _config_header(config: dict[str, Any]) -> str:
     workload = str(config.get("workload", "unknown"))
+    profile = str(config.get("profile", "base"))
     jobs = int(config.get("jobs", 0) or 0)
     concurrency = int(config.get("concurrency", 0) or 0)
     producers = int(config.get("producer_concurrency", 0) or 0)
@@ -26,7 +27,7 @@ def _config_header(config: dict[str, Any]) -> str:
     warmups = int(config.get("warmups", 0) or 0)
 
     line = (
-        f"{workload} · jobs {jobs:,} · concurrency {concurrency} · "
+        f"{workload} · profile {profile} · jobs {jobs:,} · concurrency {concurrency} · "
         f"producers {producers} · {repeats} repeats · {warmups} warmups"
     )
     if workload == "sustained":
