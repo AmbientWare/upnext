@@ -11,7 +11,7 @@ import time as time_module
 from datetime import UTC, datetime
 from typing import Any
 
-from shared.contracts import FunctionConfig
+from shared.contracts import FunctionConfig, WorkerDefinition
 from shared.domain import CronSource, Job
 from shared.keys import (
     FUNCTION_DEF_TTL,
@@ -100,15 +100,13 @@ async def write_worker_definition(
 ) -> None:
     """Write persistent worker definition to Redis with 30-day TTL."""
     key = worker_definition_key(worker_name)
-    data = json.dumps(
-        {
-            "name": worker_name,
-            "functions": registered_functions,
-            "function_names": function_name_map,
-            "concurrency": concurrency,
-        }
+    definition = WorkerDefinition(
+        name=worker_name,
+        functions=registered_functions,
+        function_names=function_name_map,
+        concurrency=concurrency,
     )
-    await redis_client.setex(key, WORKER_DEF_TTL, data)
+    await redis_client.setex(key, WORKER_DEF_TTL, definition.model_dump_json())
     await publish_worker_signal(
         redis_client, "", worker_name, "worker.definition.updated"
     )

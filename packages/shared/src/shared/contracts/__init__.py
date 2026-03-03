@@ -79,19 +79,6 @@ from shared.contracts.health import (
     QueueHealthSummary,
     ReadinessMetrics,
 )
-from shared.contracts.secrets import (
-    CreateSecretRequest,
-    SecretDetailResponse,
-    SecretResponse,
-    SecretValuesResponse,
-    SecretsListResponse,
-    UpdateSecretRequest,
-)
-from shared.contracts.metrics import (
-    FunctionQueueMetrics,
-    QueueMetricsResponse,
-    QueueMetricsTotals,
-)
 from shared.contracts.jobs import (
     JobCancelResponse,
     JobHistoryResponse,
@@ -102,6 +89,19 @@ from shared.contracts.jobs import (
     JobTrendsResponse,
     JobTrendsSnapshotEvent,
     Run,
+)
+from shared.contracts.metrics import (
+    FunctionQueueMetrics,
+    QueueMetricsResponse,
+    QueueMetricsTotals,
+)
+from shared.contracts.secrets import (
+    CreateSecretRequest,
+    SecretDetailResponse,
+    SecretResponse,
+    SecretsListResponse,
+    SecretValuesResponse,
+    UpdateSecretRequest,
 )
 from shared.contracts.source import (
     CronJobSource,
@@ -115,6 +115,7 @@ from shared.contracts.streams import (
     WorkerSignalStreamEvent,
 )
 from shared.contracts.workers import (
+    WorkerDefinition,
     WorkerInfo,
     WorkerInstance,
     WorkersListResponse,
@@ -209,6 +210,7 @@ __all__ = [
     "StatusStreamEvent",
     "ApiRequestStreamEvent",
     "WorkerSignalStreamEvent",
+    "WorkerDefinition",
     "WorkerInstance",
     "WorkerInfo",
     "WorkersListResponse",

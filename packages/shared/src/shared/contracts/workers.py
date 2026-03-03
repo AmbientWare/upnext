@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class WorkerInstance(BaseModel):
@@ -33,6 +33,17 @@ class WorkerInfo(BaseModel):
     concurrency: int = 0
 
 
+class WorkerDefinition(BaseModel):
+    """Persistent worker definition payload stored in Redis."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    functions: list[str] = Field(default_factory=list)
+    function_names: dict[str, str] = Field(default_factory=dict)
+    concurrency: int = Field(default=0, ge=0)
+
+
 class WorkersListResponse(BaseModel):
     """Workers list response."""
 
@@ -57,6 +68,7 @@ class WorkerStats(BaseModel):
 __all__ = [
     "WorkerInstance",
     "WorkerInfo",
+    "WorkerDefinition",
     "WorkersListResponse",
     "WorkersSnapshotEvent",
     "WorkerStats",

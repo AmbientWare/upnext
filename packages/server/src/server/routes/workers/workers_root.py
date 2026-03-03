@@ -41,9 +41,9 @@ async def list_workers_route() -> WorkersListResponse:
                 active=bool(instances),
                 instance_count=len(instances),
                 instances=instances,
-                functions=defn.get("functions", []),
-                function_names=defn.get("function_names", {}),
-                concurrency=defn.get("concurrency", 0),
+                functions=defn.functions,
+                function_names=defn.function_names,
+                concurrency=defn.concurrency,
             )
         )
 

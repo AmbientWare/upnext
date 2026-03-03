@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 from typing import AsyncIterator, cast
 
 import pytest
-from shared._version import __version__
 import server.routes.apis as apis_route
 import server.routes.apis.apis_root as apis_root_route
 import server.routes.artifacts.artifacts_root as artifacts_root_route
@@ -24,6 +23,7 @@ import server.services.apis.tracking as api_tracking_module
 from fastapi import HTTPException, Response
 from server.backends.sql.shared.repositories import JobRepository
 from server.services.jobs.metrics import QueuedJobSnapshot
+from shared._version import __version__
 from shared.contracts import (
     ApiInstance,
     ArtifactType,
@@ -32,6 +32,7 @@ from shared.contracts import (
     FunctionType,
     JobTrendHour,
     JobTrendsResponse,
+    WorkerDefinition,
     WorkerInstance,
     WorkerStats,
 )
@@ -654,14 +655,14 @@ async def test_functions_pause_and_resume_routes_persist_pause_state(
 async def test_workers_route_includes_defs_and_instance_only_workers(
     monkeypatch,
 ) -> None:
-    async def fake_defs() -> dict:
+    async def fake_defs() -> dict[str, WorkerDefinition]:
         return {
-            "defined-worker": {
-                "name": "defined-worker",
-                "functions": ["fn.defined"],
-                "function_names": {"fn.defined": "defined"},
-                "concurrency": 2,
-            }
+            "defined-worker": WorkerDefinition(
+                name="defined-worker",
+                functions=["fn.defined"],
+                function_names={"fn.defined": "defined"},
+                concurrency=2,
+            )
         }
 
     async def fake_instances() -> list[WorkerInstance]:
@@ -1055,7 +1056,9 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
     assert out.oldest_queued_jobs[0].id == "job-q-1"
     assert out.oldest_queued_jobs[0].source == "stream"
 
-    filtered = await dashboard_route.get_dashboard_stats(failing_min_rate=70.0, backend=sqlite_db)
+    filtered = await dashboard_route.get_dashboard_stats(
+        failing_min_rate=70.0, backend=sqlite_db
+    )
     assert filtered.top_failing_functions == []
 
 

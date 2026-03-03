@@ -8,8 +8,9 @@ import server.services.apis.tracking as api_tracking_module
 import server.services.jobs.metrics as queue_service_module
 import server.services.registry as workers_service_module
 from fakeredis.aioredis import FakeRedis
-from shared.keys.api import API_PREFIX
+from shared.contracts import WorkerDefinition
 from shared.domain.jobs import Job
+from shared.keys.api import API_PREFIX
 from shared.keys.workers import (
     FUNCTION_KEY_PREFIX,
     WORKER_DEF_PREFIX,
@@ -213,7 +214,7 @@ async def test_workers_service_parses_and_lists_instances_and_definitions(
     assert {w.id for w in listed} == {"worker-1", "worker-2"}
 
     defs = await workers_service_module.get_worker_definitions()
-    assert defs["alpha"]["name"] == "alpha"
+    assert defs["alpha"] == WorkerDefinition(name="alpha", functions=["fn.a"])
 
     stats = await workers_service_module.get_worker_stats()
     assert stats.total == 2
@@ -338,7 +339,9 @@ async def test_queue_service_returns_zero_stats_when_redis_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_queue_service_lists_oldest_queued_jobs(redis_text_client, monkeypatch) -> None:
+async def test_queue_service_lists_oldest_queued_jobs(
+    redis_text_client, monkeypatch
+) -> None:
     now = datetime.now(UTC)
     stream_job = Job(
         id="job-stream-1",

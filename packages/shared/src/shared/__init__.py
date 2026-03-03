@@ -73,6 +73,7 @@ from shared.contracts.source import (
     TaskJobSource,
 )
 from shared.contracts.workers import (
+    WorkerDefinition,
     WorkerInfo,
     WorkerInstance,
     WorkersListResponse,
@@ -161,6 +162,7 @@ __all__ = [
     "ApiTrendHour",
     "ApiTrendsSnapshotEvent",
     "ApiTrendsResponse",
+    "WorkerDefinition",
     "FunctionType",
     "Run",
     "WorkerInstance",

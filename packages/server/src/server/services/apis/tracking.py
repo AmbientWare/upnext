@@ -17,9 +17,10 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Protocol, cast
 
-from redis.asyncio import Redis
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from redis.asyncio import Redis
 from shared.keys import (
     api_endpoints_key,
     api_hourly_bucket_key,
@@ -69,11 +70,23 @@ class _HourlyTotals:
     status_5xx: int = 0
 
 
+class _MetricsPipeline(Protocol):
+    def hgetall(self, key: str) -> object: ...
+    def hget(self, key: str, field: str) -> object: ...
+    async def execute(self) -> list[object]: ...
+
+
+class _MetricsRedisClient(Protocol):
+    async def smembers(self, key: str) -> object: ...
+    def pipeline(self, *, transaction: bool = False) -> _MetricsPipeline: ...
+
+
 class ApiMetricsReader:
     """Reads API metrics from Redis hash buckets."""
 
     def __init__(self, redis_client: Redis) -> None:
-        self._redis = redis_client
+        # redis-py's async stubs currently under-type some awaitable commands.
+        self._redis = cast(_MetricsRedisClient, redis_client)
 
     @staticmethod
     def _decode_text(value: object) -> str | None:

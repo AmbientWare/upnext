@@ -7,12 +7,13 @@ so only one server instance performs cleanup at a time.
 import asyncio
 import logging
 import random
+from typing import Protocol, cast
 from uuid import uuid4
 
 from redis.asyncio import Redis
 
-from server.backends.base import ArtifactRecord, PendingArtifactRecord
 from server.backends import get_backend
+from server.backends.base import ArtifactRecord, PendingArtifactRecord
 from server.services.storage import get_artifact_storage
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,10 @@ else
   return 0
 end
 """
+
+
+class _RedisEvalClient(Protocol):
+    async def eval(self, script: str, numkeys: int, *keys_and_args: str) -> object: ...
 
 
 class CleanupService:
@@ -194,7 +199,8 @@ class CleanupService:
         finally:
             if self._redis and acquired and lock_token:
                 try:
-                    await self._redis.eval(
+                    redis = cast(_RedisEvalClient, self._redis)
+                    await redis.eval(
                         RELEASE_LOCK_SCRIPT,
                         1,
                         CLEANUP_LOCK_KEY,

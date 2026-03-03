@@ -30,13 +30,24 @@ def _require_package_smoke_enabled() -> None:
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None) -> None:
-    subprocess.run(
+    result = subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        cwd_label = str(cwd) if cwd else os.getcwd()
+        joined = " ".join(cmd)
+        raise AssertionError(
+            "Command failed in package smoke test.\n"
+            f"cwd: {cwd_label}\n"
+            f"cmd: {joined}\n"
+            f"exit_code: {result.returncode}\n"
+            f"stdout:\n{result.stdout or '<empty>'}\n"
+            f"stderr:\n{result.stderr or '<empty>'}"
+        )
 
 
 def _build_all(dist_dir: Path) -> None:

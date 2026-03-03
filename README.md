@@ -2,7 +2,7 @@
 
 Background jobs and APIs for Python.
 
-UpNext is an alpha-stage framework for running workers, APIs, cron jobs, and event-driven tasks with a shared Redis-backed runtime.
+UpNext is a beta-stage framework for running workers, APIs, cron jobs, and event-driven tasks with a shared Redis-backed runtime.
 
 [Documentation](https://docs.upnext.run) | [PyPI](https://pypi.org/project/upnext/) | [GitHub](https://github.com/AmbientWare/upnext)
 

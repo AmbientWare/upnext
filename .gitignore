@@ -70,6 +70,7 @@ yarn-error.log*
 
 # Generated server dashboard build output
 packages/server/static/
+packages/server/src/server/static/
 # Local runtime state (dev only)
 .upnext/
 packages/server/.upnext/

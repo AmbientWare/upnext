@@ -7,7 +7,12 @@ This module reads those keys for the dashboard.
 import json
 import logging
 
-from shared.contracts import FunctionConfig, WorkerInstance, WorkerStats
+from shared.contracts import (
+    FunctionConfig,
+    WorkerDefinition,
+    WorkerInstance,
+    WorkerStats,
+)
 from shared.keys import (
     function_definition_pattern,
     worker_definition_pattern,
@@ -81,16 +86,21 @@ async def list_worker_instances() -> list[WorkerInstance]:
     return instances
 
 
-async def get_worker_definitions() -> dict[str, dict[str, object]]:
+async def get_worker_definitions() -> dict[str, WorkerDefinition]:
     """Get all persistent worker definitions from Redis."""
     r = await get_redis()
-    defs: dict[str, dict[str, object]] = {}
+    defs: dict[str, WorkerDefinition] = {}
 
     async for key in r.scan_iter(match=worker_definition_pattern(), count=100):
         data = await r.get(key)
         if data:
-            d = json.loads(data)
-            defs[d["name"]] = d
+            payload = data.decode() if isinstance(data, bytes) else str(data)
+            try:
+                definition = WorkerDefinition.model_validate_json(payload)
+            except Exception:
+                logger.debug("Skipping malformed worker definition for key %s", key)
+                continue
+            defs[definition.name] = definition
 
     return defs
 

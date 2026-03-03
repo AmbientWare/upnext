@@ -14,8 +14,8 @@ RUN bun install --frozen-lockfile
 # Copy frontend source
 COPY packages/server/web ./
 
-# Build frontend (outputs to ../static)
-RUN bun run build && mv ../static /static
+# Build frontend (outputs to ../src/server/static)
+RUN bun run build && mv ../src/server/static /static
 
 # Stage 2: Python server
 FROM python:3.12-slim
@@ -39,7 +39,7 @@ COPY packages/shared ./packages/shared
 COPY packages/server ./packages/server
 
 # Copy built frontend
-COPY --from=frontend-builder /static ./packages/server/static
+COPY --from=frontend-builder /static ./packages/server/src/server/static
 
 # Install dependencies using workspace
 RUN uv sync --frozen --no-dev --package upnext-server
