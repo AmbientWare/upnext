@@ -22,6 +22,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    cloud_url: str = "https://upnext.run"
+
     debug: bool = False
 
     # UpNext server URL (for dashboard)

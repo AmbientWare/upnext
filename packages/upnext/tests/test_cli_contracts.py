@@ -42,6 +42,7 @@ from upnext.sdk.api import Api
 from upnext.sdk.worker import Worker
 
 call_module = importlib.import_module("upnext.cli.call")
+discovery_module = importlib.import_module("upnext.cli.init.discovery")
 run_module = importlib.import_module("upnext.cli.run")
 server_module = importlib.import_module("upnext.cli.server")
 
@@ -59,6 +60,7 @@ def test_cli_app_help_and_version() -> None:
     help_result = runner.invoke(app, ["--help"])
     assert help_result.exit_code == 0
     assert "upnext" in help_result.stdout
+    assert "init" in help_result.stdout
     assert "run" in help_result.stdout
     assert "call" in help_result.stdout
 
@@ -722,3 +724,329 @@ def test_resolve_alembic_config_fails_when_no_sources(monkeypatch) -> None:
     assert exc.value.exit_code == 1
     assert errors
     assert "Could not locate server migration files." in errors[0]
+
+
+def _read_upnext_yaml(root: Path) -> str:
+    return (root / "upnext.yaml").read_text(encoding="utf-8")
+
+
+def test_init_command_writes_upnext_yaml_with_relative_paths() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+            encoding="utf-8",
+        )
+        (root / "app").mkdir()
+        (root / "app" / "service.py").write_text(
+            "\n".join(
+                [
+                    "from upnext import Api",
+                    "api = Api('demo-api', redis_url=None)",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            ["init", "app/service.py"],
+            input="3.12\n ffmpeg, , libpq-dev \nn\n",
+        )
+
+        assert result.exit_code == 0, result.stdout
+        config_path = root / "upnext.yaml"
+        assert config_path.exists()
+        assert _read_upnext_yaml(root) == (
+            'version: 1\n'
+            'deploy:\n'
+            '  entrypoint: "app/service.py"\n'
+            '  pyproject: "pyproject.toml"\n'
+            '  python_version: "3.12"\n'
+            '  linux_packages:\n'
+            '    - "ffmpeg"\n'
+            '    - "libpq-dev"\n'
+            "apis:\n"
+            '  demo-api:\n'
+            '    domain: null\n'
+            '    replicas: null\n'
+            '    cpu_request: null\n'
+            '    cpu_limit: null\n'
+            '    memory_request: null\n'
+            '    memory_limit: null\n'
+            "workers: {}\n"
+        )
+
+
+def test_init_command_refuses_overwrite_without_force() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+            encoding="utf-8",
+        )
+        (root / "service.py").write_text(
+            "from upnext import Api\napi = Api('demo-api', redis_url=None)\n",
+            encoding="utf-8",
+        )
+        (root / "upnext.yaml").write_text(
+            "version: 1\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["init", "service.py"], input="3.12\n\nn\n")
+        assert result.exit_code == 1
+        assert "already exists" in result.stdout
+
+        forced = runner.invoke(
+            app,
+            ["init", "service.py", "--force", "--python-version", "3.13"],
+            input="\nn\n",
+        )
+        assert forced.exit_code == 0, forced.stdout
+        assert 'python_version: "3.13"' in _read_upnext_yaml(root)
+
+
+def test_init_command_prefers_nearest_ancestor_pyproject() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "pyproject.toml").write_text(
+            "[project]\nname = 'root'\nrequires-python = '>=3.11'\n",
+            encoding="utf-8",
+        )
+        package_dir = root / "services" / "orders"
+        package_dir.mkdir(parents=True)
+        (package_dir / "pyproject.toml").write_text(
+            "[project]\nname = 'orders'\nrequires-python = '>=3.12'\n",
+            encoding="utf-8",
+        )
+        (package_dir / "service.py").write_text(
+            "from upnext import Api\napi = Api('orders-api', redis_url=None)\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            ["init", "services/orders/service.py"],
+            input="3.12\n\nn\n",
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert 'pyproject: "services/orders/pyproject.toml"' in _read_upnext_yaml(root)
+
+
+def test_init_command_falls_back_to_repo_search_for_pyproject() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "infra").mkdir()
+        (root / "infra" / "pyproject.toml").write_text(
+            "[project]\nname = 'infra'\nrequires-python = '>=3.12'\n",
+            encoding="utf-8",
+        )
+        (root / "src").mkdir()
+        (root / "src" / "service.py").write_text(
+            "from upnext import Api\napi = Api('repo-search-api', redis_url=None)\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["init", "src/service.py"], input="3.12\n\nn\n")
+
+        assert result.exit_code == 0, result.stdout
+        assert 'pyproject: "infra/pyproject.toml"' in _read_upnext_yaml(root)
+
+
+def test_init_command_prompts_when_multiple_pyprojects_exist() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "apps" / "one").mkdir(parents=True)
+        (root / "apps" / "two").mkdir(parents=True)
+        (root / "apps" / "one" / "pyproject.toml").write_text(
+            "[project]\nname = 'one'\nrequires-python = '>=3.11'\n",
+            encoding="utf-8",
+        )
+        (root / "apps" / "two" / "pyproject.toml").write_text(
+            "[project]\nname = 'two'\nrequires-python = '>=3.13'\n",
+            encoding="utf-8",
+        )
+        (root / "service.py").write_text(
+            "from upnext import Api\napi = Api('root-api', redis_url=None)\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["init", "service.py"], input="2\n3.13\n\nn\n")
+
+        assert result.exit_code == 0, result.stdout
+        assert 'pyproject: "apps/two/pyproject.toml"' in _read_upnext_yaml(root)
+
+
+def test_init_command_rejects_invalid_entrypoint_and_pyproject_override() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "service.txt").write_text("hello\n", encoding="utf-8")
+        invalid_entrypoint = runner.invoke(app, ["init", "service.txt"])
+        assert invalid_entrypoint.exit_code == 1
+        assert "Not a Python file" in invalid_entrypoint.stdout
+
+        (root / "service.py").write_text("print('hello')\n", encoding="utf-8")
+        invalid_pyproject = runner.invoke(
+            app,
+            ["init", "service.py", "--pyproject", "missing.toml"],
+        )
+        assert invalid_pyproject.exit_code == 1
+        assert "pyproject.toml not found" in invalid_pyproject.stdout
+
+
+def test_init_command_warns_and_writes_when_discovery_fails(monkeypatch) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+            encoding="utf-8",
+        )
+        (root / "service.py").write_text("print('hello')\n", encoding="utf-8")
+
+        monkeypatch.setattr(
+            discovery_module,
+            "discover_objects",
+            lambda _files: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        result = runner.invoke(app, ["init", "service.py"], input="3.12\n\n")
+
+        assert result.exit_code == 0, result.stdout
+        assert "Could not validate Api/Worker discovery locally" in result.stdout
+        assert (root / "upnext.yaml").exists()
+        assert "apis: {}" in _read_upnext_yaml(root)
+        assert "workers: {}" in _read_upnext_yaml(root)
+
+
+def test_init_command_warns_and_writes_when_no_objects_are_found(
+    monkeypatch,
+) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+            encoding="utf-8",
+        )
+        (root / "service.py").write_text("print('hello')\n", encoding="utf-8")
+
+        monkeypatch.setattr(discovery_module, "discover_objects", lambda _files: ([], []))
+
+        result = runner.invoke(app, ["init", "service.py"], input="3.12\n\n")
+
+        assert result.exit_code == 0, result.stdout
+        assert "No Api or Worker objects were discovered" in result.stdout
+        assert (root / "upnext.yaml").exists()
+        assert "apis: {}" in _read_upnext_yaml(root)
+        assert "workers: {}" in _read_upnext_yaml(root)
+
+
+def test_init_command_normalizes_requires_python_and_explicit_version() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12,<3.14'\n",
+            encoding="utf-8",
+        )
+        (root / "service.py").write_text(
+            "from upnext import Api\napi = Api('demo-api', redis_url=None)\n",
+            encoding="utf-8",
+        )
+
+        derived = runner.invoke(app, ["init", "service.py"], input="\n\nn\n")
+        assert derived.exit_code == 0, derived.stdout
+        assert 'python_version: "3.12"' in _read_upnext_yaml(root)
+
+        explicit = runner.invoke(
+            app,
+            ["init", "service.py", "--force", "--python-version", "3.13"],
+            input="\nn\n",
+        )
+        assert explicit.exit_code == 0, explicit.stdout
+        assert 'python_version: "3.13"' in _read_upnext_yaml(root)
+
+
+def test_init_command_can_configure_advanced_api_and_worker_fields() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        root = Path.cwd()
+        (root / ".git").mkdir()
+        (root / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+            encoding="utf-8",
+        )
+        (root / "service.py").write_text(
+            "\n".join(
+                [
+                    "from upnext import Api, Worker",
+                    "api = Api('demo-api', redis_url=None)",
+                    "worker = Worker('demo-worker', redis_url='redis://demo')",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            ["init", "service.py"],
+            input=(
+                "3.12\n"
+                "\n"
+                "y\n"
+                "api.example.com\n"
+                "3\n"
+                "250m\n"
+                "500m\n"
+                "256Mi\n"
+                "512Mi\n"
+                "2\n"
+                "100m\n"
+                "\n"
+                "128Mi\n"
+                "\n"
+            ),
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert _read_upnext_yaml(root) == (
+            'version: 1\n'
+            'deploy:\n'
+            '  entrypoint: "service.py"\n'
+            '  pyproject: "pyproject.toml"\n'
+            '  python_version: "3.12"\n'
+            '  linux_packages: []\n'
+            "apis:\n"
+            '  demo-api:\n'
+            '    domain: "api.example.com"\n'
+            '    replicas: "3"\n'
+            '    cpu_request: "250m"\n'
+            '    cpu_limit: "500m"\n'
+            '    memory_request: "256Mi"\n'
+            '    memory_limit: "512Mi"\n'
+            "workers:\n"
+            '  demo-worker:\n'
+            '    replicas: "2"\n'
+            '    cpu_request: "100m"\n'
+            '    cpu_limit: null\n'
+            '    memory_request: "128Mi"\n'
+            '    memory_limit: null\n'
+        )

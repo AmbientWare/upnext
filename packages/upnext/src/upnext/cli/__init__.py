@@ -4,6 +4,7 @@ import typer
 
 from upnext.cli._console import console
 from upnext.cli.call import call
+from upnext.cli.init import init
 from upnext.cli.list import list_cmd
 from upnext.cli.run import run
 from upnext.cli.server import (
@@ -53,6 +54,7 @@ def main(
 # Register commands
 app.command()(run)
 app.command()(call)
+app.command()(init)
 app.command("list")(list_cmd)
 
 server_app = typer.Typer(

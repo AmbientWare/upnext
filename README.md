@@ -82,6 +82,52 @@ Server-only environments can install just:
 uv add upnext-server
 ```
 
+## Hosted Deploy Config
+
+Generate a repo-root deploy contract for the hosted web app flow:
+
+```bash
+upnext init path/to/service.py
+```
+
+This creates `upnext.yaml` at the repository root with:
+
+- the UpNext entrypoint file relative to the repo root
+- the selected `pyproject.toml`
+- an explicit Python version
+- optional extra Linux packages for the hosted builder
+- per-API and per-worker deployment settings
+
+Example:
+
+```yaml
+version: 1
+
+deploy:
+  entrypoint: "app/service.py"
+  pyproject: "pyproject.toml"
+  python_version: "3.12"
+  linux_packages:
+    - "ffmpeg"
+
+apis:
+  public-api:
+    domain: null
+    replicas: null
+    cpu_request: null
+    cpu_limit: null
+    memory_request: null
+    memory_limit: null
+
+workers:
+  email-worker:
+    replicas: null
+    cpu_request: null
+    cpu_limit: null
+    memory_request: null
+    memory_limit: null
+```
+
 ## Hosted Server
 
 Server commands work from source checkout and installed package environments.

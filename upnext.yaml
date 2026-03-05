@@ -1,0 +1,23 @@
+# this is an example of what the generated upnext.yaml file will look like after running `upnext init`
+
+version: 1
+deploy:
+  entrypoint: "examples/service.py"
+  pyproject: "pyproject.toml"
+  python_version: "3.12"
+  linux_packages: []
+apis:
+  example-api:
+    domain: null
+    replicas: null
+    cpu_request: null
+    cpu_limit: null
+    memory_request: null
+    memory_limit: null
+workers:
+  example-worker:
+    replicas: null
+    cpu_request: null
+    cpu_limit: null
+    memory_request: null
+    memory_limit: null
