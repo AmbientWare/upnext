@@ -102,7 +102,7 @@ async def publish_artifact_event(event: ArtifactStreamEvent) -> None:
         return
     try:
         await redis_client.xadd(
-            artifact_events_stream_key(deployment_id=event.deployment_id),
+            artifact_events_stream_key(workspace_id=event.workspace_id),
             {"data": event.model_dump_json()},
             maxlen=10_000,
             approximate=True,

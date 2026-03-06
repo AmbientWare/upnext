@@ -73,8 +73,8 @@ class Api:
     _api_id: str | None = field(default=None, init=False)
     _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
     _started_at: datetime | None = field(default=None, init=False)
-    _deployment_id: str = field(
-        default_factory=lambda: get_settings().normalized_deployment_id,
+    _workspace_id: str = field(
+        default_factory=lambda: get_settings().normalized_workspace_id,
         init=False,
     )
     _pending_routers: list[tuple["APIRouter", dict[str, Any]]] = field(
@@ -389,7 +389,7 @@ class Api:
         """Write instance data to Redis with TTL."""
         if not self._redis or not self._api_id:
             return
-        key = api_instance_key(self._api_id, deployment_id=self._deployment_id)
+        key = api_instance_key(self._api_id, workspace_id=self._workspace_id)
         await self._redis.setex(key, API_INSTANCE_TTL, self._instance_data())
 
     async def _heartbeat_loop(self) -> None:
@@ -422,7 +422,7 @@ class Api:
                     await self._redis.delete(
                         api_instance_key(
                             self._api_id,
-                            deployment_id=self._deployment_id,
+                            workspace_id=self._workspace_id,
                         )
                     )
                 except Exception:

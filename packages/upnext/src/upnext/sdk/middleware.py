@@ -78,7 +78,7 @@ class ApiTrackingMiddleware(BaseHTTPMiddleware):
         self.redis = redis_client
         self._config = config or ApiTrackingConfig()
         self._api_instance_id = api_instance_id
-        self._deployment_id = get_settings().normalized_deployment_id
+        self._workspace_id = get_settings().normalized_workspace_id
         self._last_registry_refresh_monotonic = time.monotonic()
         self._seen_endpoint_keys: set[str] = set()
 
@@ -185,18 +185,18 @@ class ApiTrackingMiddleware(BaseHTTPMiddleware):
             self.api_name,
             endpoint_key,
             minute_key,
-            deployment_id=self._deployment_id,
+            workspace_id=self._workspace_id,
         )
         hourly_hash = api_hourly_bucket_key(
             self.api_name,
             endpoint_key,
             hour_key,
-            deployment_id=self._deployment_id,
+            workspace_id=self._workspace_id,
         )
-        registry_key = api_registry_key(deployment_id=self._deployment_id)
+        registry_key = api_registry_key(workspace_id=self._workspace_id)
         endpoints_key = api_endpoints_key(
             self.api_name,
-            deployment_id=self._deployment_id,
+            workspace_id=self._workspace_id,
         )
 
         status_field = _status_bucket(status)
@@ -237,7 +237,7 @@ class ApiTrackingMiddleware(BaseHTTPMiddleware):
 
         stream_payload = {
             "type": "api.request",
-            "deployment_id": self._deployment_id,
+            "workspace_id": self._workspace_id,
             "api_name": self.api_name,
             "method": method.upper(),
             "path": path,
@@ -247,14 +247,14 @@ class ApiTrackingMiddleware(BaseHTTPMiddleware):
         }
         try:
             await self.redis.xadd(
-                api_requests_stream_key(deployment_id=self._deployment_id),
+                api_requests_stream_key(workspace_id=self._workspace_id),
                 stream_payload,
                 maxlen=max(self._config.request_events_stream_max_len, 100),
                 approximate=True,
             )
         except TypeError:
             await self.redis.xadd(
-                api_requests_stream_key(deployment_id=self._deployment_id),
+                api_requests_stream_key(workspace_id=self._workspace_id),
                 stream_payload,
                 maxlen=max(self._config.request_events_stream_max_len, 100),
             )

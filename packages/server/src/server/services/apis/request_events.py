@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from redis.asyncio import Redis
 
-from shared.keys import DEFAULT_DEPLOYMENT_ID, api_requests_stream_key
+from shared.keys import DEFAULT_WORKSPACE_ID, api_requests_stream_key
 
 
 def stream_id_floor(value: datetime) -> str:
@@ -23,7 +23,7 @@ def stream_id_ceil(value: datetime) -> str:
 async def _xrevrange_compat(
     redis_client: Redis,
     *,
-    deployment_id: str,
+    workspace_id: str,
     max_id: str,
     min_id: str,
     count: int,
@@ -36,14 +36,14 @@ async def _xrevrange_compat(
     """
     try:
         rows = await redis_client.xrevrange(
-            api_requests_stream_key(deployment_id=deployment_id),
+            api_requests_stream_key(workspace_id=workspace_id),
             max=max_id,
             min=min_id,
             count=count,
         )
     except TypeError:
         rows = await redis_client.xrevrange(
-            api_requests_stream_key(deployment_id=deployment_id),
+            api_requests_stream_key(workspace_id=workspace_id),
             count=count,
         )
     return rows
@@ -52,7 +52,7 @@ async def _xrevrange_compat(
 async def iter_api_request_rows(
     redis_client: Redis,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     max_id: str,
     min_id: str,
     count: int,
@@ -62,7 +62,7 @@ async def iter_api_request_rows(
     while True:
         rows = await _xrevrange_compat(
             redis_client,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             max_id=cursor,
             min_id=min_id,
             count=count,

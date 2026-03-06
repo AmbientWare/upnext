@@ -14,8 +14,7 @@ from server.runtime_scope import AuthScope, RuntimeModes
 
 def _local_scope() -> AuthScope:
     return AuthScope(
-        deployment_id="local",
-        workspace_id=None,
+        workspace_id="local",
         mode=RuntimeModes.SELF_HOSTED,
         subject="test-admin",
     )

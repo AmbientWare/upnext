@@ -33,7 +33,7 @@ class StatusStreamEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: EventType
-    deployment_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
     job_id: str = Field(min_length=1)
     worker_id: str = Field(min_length=1)
     data: dict[str, Any] = Field(default_factory=dict)
@@ -51,7 +51,7 @@ class ApiRequestStreamEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     type: Literal["api.request"] | None = None
-    deployment_id: str | None = None
+    workspace_id: str | None = None
     id: str | None = None
     at: str | None = None
     api_name: str | None = None
@@ -106,7 +106,7 @@ class WorkerSignalStreamEvent(BaseModel):
         "worker.definition.updated",
         "worker.stopped",
     ]
-    deployment_id: str | None = None
+    workspace_id: str | None = None
     at: str | None = None
     worker_id: str | None = None
     worker_name: str | None = None

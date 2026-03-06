@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from shared.keys import DEFAULT_DEPLOYMENT_ID
+from shared.keys import DEFAULT_WORKSPACE_ID
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +32,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         """Convert ORM ArtifactTable rows into typed repository records."""
         return ArtifactRecord(
             id=artifact.id,
-            deployment_id=artifact.deployment_id,
+            workspace_id=artifact.workspace_id,
             job_id=artifact.job_id,
             name=artifact.name,
             type=artifact.type,
@@ -51,7 +51,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         """Convert ORM PendingArtifactTable rows into typed repository records."""
         return PendingArtifactRecord(
             id=pending.id,
-            deployment_id=pending.deployment_id,
+            workspace_id=pending.workspace_id,
             job_id=pending.job_id,
             name=pending.name,
             type=pending.type,
@@ -79,7 +79,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         storage_key: str = "",
         status: str = "available",
         error: str | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> ArtifactRecord:
         """Create an artifact for a job."""
         size_bytes, content_type = infer_artifact_metadata(
@@ -91,7 +91,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
 
         artifact = ArtifactTable(
             job_id=job_id,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             name=name,
             type=artifact_type,
             size_bytes=size_bytes,
@@ -120,7 +120,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         storage_key: str = "",
         status: str = "queued",
         error: str | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> PendingArtifactRecord:
         """Create a pending artifact when the job row is not yet available."""
         size_bytes, content_type = infer_artifact_metadata(
@@ -132,7 +132,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
 
         pending = PendingArtifactTable(
             job_id=job_id,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             name=name,
             type=artifact_type,
             size_bytes=size_bytes,
@@ -151,7 +151,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         self,
         job_id: str,
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> int:
         """
         Promote pending artifacts into the main artifacts table for a job.
@@ -163,7 +163,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
             select(PendingArtifactTable)
             .where(
                 PendingArtifactTable.job_id == job_id,
-                PendingArtifactTable.deployment_id == deployment_id,
+                PendingArtifactTable.workspace_id == workspace_id,
             )
             .order_by(
                 PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
@@ -175,14 +175,14 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         return await self._promote_pending_rows(pending_rows)
 
     async def promote_pending_for_job_with_artifacts(
-        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, job_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[ArtifactRecord]:
         """Promote pending artifacts for one job and return promoted rows."""
         pending_query = (
             select(PendingArtifactTable)
             .where(
                 PendingArtifactTable.job_id == job_id,
-                PendingArtifactTable.deployment_id == deployment_id,
+                PendingArtifactTable.workspace_id == workspace_id,
             )
             .order_by(
                 PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
@@ -194,7 +194,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         return await self._promote_pending_rows_with_artifacts(pending_rows)
 
     async def promote_ready_pending(
-        self, *, limit: int = 500, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, *, limit: int = 500, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> int:
         """
         Promote pending artifacts whose job rows now exist.
@@ -211,11 +211,11 @@ class PostgresArtifactRepository(BaseArtifactRepository):
                 select(JobHistoryTable.id)
                 .where(
                     JobHistoryTable.id == PendingArtifactTable.job_id,
-                    JobHistoryTable.deployment_id == deployment_id,
+                    JobHistoryTable.workspace_id == workspace_id,
                 )
                 .exists()
             )
-            .where(PendingArtifactTable.deployment_id == deployment_id)
+            .where(PendingArtifactTable.workspace_id == workspace_id)
             .order_by(
                 PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
             )
@@ -239,7 +239,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         return await self._promote_pending_rows(ready_rows)
 
     async def cleanup_stale_pending_with_rows(
-        self, *, retention_hours: int = 24, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, *, retention_hours: int = 24, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[PendingArtifactRecord]:
         """Delete stale pending artifacts and return deleted rows."""
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
@@ -247,7 +247,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
             select(PendingArtifactTable)
             .where(
                 PendingArtifactTable.created_at < cutoff,
-                PendingArtifactTable.deployment_id == deployment_id,
+                PendingArtifactTable.workspace_id == workspace_id,
             )
             .order_by(
                 PendingArtifactTable.created_at.asc(), PendingArtifactTable.id.asc()
@@ -283,7 +283,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         for row in pending_rows:
             artifact = ArtifactTable(
                 job_id=row.job_id,
-                deployment_id=row.deployment_id,
+                workspace_id=row.workspace_id,
                 name=row.name,
                 type=row.type,
                 size_bytes=row.size_bytes,
@@ -305,12 +305,12 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         return [self._to_artifact_record(artifact) for artifact in created]
 
     async def get_by_id(
-        self, artifact_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, artifact_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> ArtifactRecord | None:
         """Get an artifact by ID."""
         query = select(ArtifactTable).where(
             ArtifactTable.id == artifact_id,
-            ArtifactTable.deployment_id == deployment_id,
+            ArtifactTable.workspace_id == workspace_id,
         )
         result = await self._session.execute(query)
         artifact = result.scalar_one_or_none()
@@ -319,14 +319,14 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         return self._to_artifact_record(artifact)
 
     async def list_by_job(
-        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, job_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[ArtifactRecord]:
         """List all artifacts for a job."""
         query = (
             select(ArtifactTable)
             .where(
                 ArtifactTable.job_id == job_id,
-                ArtifactTable.deployment_id == deployment_id,
+                ArtifactTable.workspace_id == workspace_id,
             )
             .order_by(ArtifactTable.created_at.desc())
         )
@@ -336,7 +336,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         ]
 
     async def list_by_job_ids(
-        self, job_ids: list[str], *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, job_ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[ArtifactRecord]:
         """List artifacts for multiple jobs."""
         if not job_ids:
@@ -345,7 +345,7 @@ class PostgresArtifactRepository(BaseArtifactRepository):
             select(ArtifactTable)
             .where(
                 ArtifactTable.job_id.in_(job_ids),
-                ArtifactTable.deployment_id == deployment_id,
+                ArtifactTable.workspace_id == workspace_id,
             )
             .order_by(ArtifactTable.created_at.desc())
         )
@@ -358,12 +358,12 @@ class PostgresArtifactRepository(BaseArtifactRepository):
         self,
         artifact_id: str,
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> bool:
         """Delete an artifact by ID."""
         query = delete(ArtifactTable).where(
             ArtifactTable.id == artifact_id,
-            ArtifactTable.deployment_id == deployment_id,
+            ArtifactTable.workspace_id == workspace_id,
         )
         result = await self._session.execute(query)
         return int(result.rowcount or 0) > 0  # type: ignore

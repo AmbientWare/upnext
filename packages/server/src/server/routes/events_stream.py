@@ -32,7 +32,7 @@ async def stream_events(
         raise HTTPException(status_code=503, detail=str(e)) from e
 
     pubsub = redis_client.pubsub()
-    channel = status_events_pubsub_channel(deployment_id=scope.deployment_id)
+    channel = status_events_pubsub_channel(workspace_id=scope.workspace_id)
     await pubsub.subscribe(channel)
 
     async def event_stream() -> AsyncGenerator[str, None]:

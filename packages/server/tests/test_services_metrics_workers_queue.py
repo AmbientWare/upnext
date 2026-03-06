@@ -11,7 +11,7 @@ from fakeredis.aioredis import FakeRedis
 from shared.contracts import WorkerDefinition
 from shared.domain.jobs import Job
 from shared.keys.api import API_PREFIX
-from shared.keys.namespace import deployment_namespace_prefix
+from shared.keys.namespace import workspace_namespace_prefix
 from shared.keys.queue import (
     dispatch_reasons_key,
     function_scheduled_key,
@@ -234,7 +234,7 @@ async def test_workers_service_parses_and_lists_instances_and_definitions(
 async def test_queue_service_reads_depth_from_stream_groups(
     redis_text_client, monkeypatch
 ) -> None:
-    local_prefix = deployment_namespace_prefix("local")
+    local_prefix = workspace_namespace_prefix("local")
     stream_a = function_stream_key("fn.a", key_prefix=local_prefix)
     stream_b = function_stream_key("fn.b", key_prefix=local_prefix)
     await redis_text_client.xgroup_create(stream_a, "workers", id="0", mkstream=True)
@@ -350,7 +350,7 @@ async def test_queue_service_returns_zero_stats_when_redis_unavailable(
 async def test_queue_service_lists_oldest_queued_jobs(
     redis_text_client, monkeypatch
 ) -> None:
-    local_prefix = deployment_namespace_prefix("local")
+    local_prefix = workspace_namespace_prefix("local")
     now = datetime.now(UTC)
     stream_job = Job(
         id="job-stream-1",
@@ -399,7 +399,7 @@ async def test_oldest_queued_jobs_excludes_claimed_stream_messages(
     redis_text_client,
     monkeypatch,
 ) -> None:
-    local_prefix = deployment_namespace_prefix("local")
+    local_prefix = workspace_namespace_prefix("local")
     stream_key = function_stream_key("fn.stream", key_prefix=local_prefix)
     await redis_text_client.xgroup_create(stream_key, "workers", id="0", mkstream=True)
 
@@ -446,7 +446,7 @@ async def test_oldest_queued_jobs_reads_from_unread_group_head(
     redis_text_client,
     monkeypatch,
 ) -> None:
-    local_prefix = deployment_namespace_prefix("local")
+    local_prefix = workspace_namespace_prefix("local")
     stream_key = function_stream_key("fn.stream", key_prefix=local_prefix)
     await redis_text_client.xgroup_create(stream_key, "workers", id="0", mkstream=True)
 
@@ -505,7 +505,7 @@ async def test_oldest_queued_jobs_reads_from_unread_group_head(
 
 @pytest.mark.asyncio
 async def test_queue_service_parsing_handles_malformed_payloads(monkeypatch) -> None:
-    local_prefix = deployment_namespace_prefix("local")
+    local_prefix = workspace_namespace_prefix("local")
 
     class _MalformedRedis:
         async def scan_iter(self, match: str, count: int = 100):  # noqa: ARG002

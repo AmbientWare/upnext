@@ -95,11 +95,11 @@ upnext run service.py
 
 Once connected, your workers, APIs, jobs, and metrics appear in the dashboard in real-time.
 
-## Deployment scope
+## Workspace scope
 
-Every UpNext runtime now operates inside a deployment namespace.
+Every UpNext runtime operates inside a workspace namespace.
 
-- The server uses `UPNEXT_DEFAULT_DEPLOYMENT_ID` and defaults to `local`.
-- Worker and API processes use `UPNEXT_DEPLOYMENT_ID` and also default to `local`.
+- The server uses `UPNEXT_DEFAULT_WORKSPACE_ID` and defaults to `local`.
+- Worker and API processes use `UPNEXT_WORKSPACE_ID` and also default to `local`.
 
-For hosted or multi-tenant runtimes, set both explicitly so Redis-backed runtime state stays isolated per deployment.
+Set both explicitly when you want Redis-backed runtime state isolated per workspace.

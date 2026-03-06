@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from shared.keys import DEFAULT_DEPLOYMENT_ID
+from shared.keys import DEFAULT_WORKSPACE_ID
 from sqlalchemy import and_, case, delete, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -41,7 +41,7 @@ class PostgresJobRepository(BaseJobRepository):
         row = payload
         return Job(
             id=row.id,
-            deployment_id=row.deployment_id,
+            workspace_id=row.workspace_id,
             function=row.function,
             function_name=row.function_name,
             job_key=row.job_key,
@@ -76,7 +76,7 @@ class PostgresJobRepository(BaseJobRepository):
     @staticmethod
     def _apply_job_to_row(row: JobHistoryTable, job: Job) -> None:
         row.id = job.id
-        row.deployment_id = job.deployment_id
+        row.workspace_id = job.workspace_id
         row.function = job.function
         row.function_name = job.function_name
         row.job_key = job.job_key
@@ -152,12 +152,12 @@ class PostgresJobRepository(BaseJobRepository):
         self,
         id: str,
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Job | None:
         """Get a job by ID."""
         query = select(JobHistoryTable).where(
             JobHistoryTable.id == id,
-            JobHistoryTable.deployment_id == deployment_id,
+            JobHistoryTable.workspace_id == workspace_id,
         )
 
         result = await self._session.execute(query)
@@ -170,7 +170,7 @@ class PostgresJobRepository(BaseJobRepository):
         self,
         id: str,
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[Job]:
         """
         List a job and all recursive descendants by parent_id lineage.
@@ -178,7 +178,7 @@ class PostgresJobRepository(BaseJobRepository):
         Descendants are discovered breadth-first for stable query behavior
         across SQLite/PostgreSQL backends.
         """
-        root = await self.get_by_id(id, deployment_id=deployment_id)
+        root = await self.get_by_id(id, workspace_id=workspace_id)
         if root is None:
             return []
 
@@ -189,7 +189,7 @@ class PostgresJobRepository(BaseJobRepository):
         while frontier:
             query = select(JobHistoryTable).where(
                 parent_id_expr.in_(list(frontier)),
-                JobHistoryTable.deployment_id == deployment_id,
+                JobHistoryTable.workspace_id == workspace_id,
             )
             result = await self._session.execute(query)
             children = list(result.scalars().all())
@@ -219,7 +219,7 @@ class PostgresJobRepository(BaseJobRepository):
     def _apply_job_list_filters(
         query: Select[tuple[object]],
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
         function: str | None = None,
         status: str | list[str] | None = None,
         worker_id: str | None = None,
@@ -227,7 +227,7 @@ class PostgresJobRepository(BaseJobRepository):
         end_date: datetime | None = None,
     ) -> Select[tuple[object]]:
         """Apply common filters for job list/count queries."""
-        query = query.where(JobHistoryTable.deployment_id == deployment_id)
+        query = query.where(JobHistoryTable.workspace_id == workspace_id)
         if function:
             query = query.where(JobHistoryTable.function == function)
         if isinstance(status, str) and status:
@@ -252,7 +252,7 @@ class PostgresJobRepository(BaseJobRepository):
         end_date: datetime | None = None,
         limit: int = 100,
         cursor: str | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[Job]:
         """
         List jobs with optional filtering using cursor-based pagination.
@@ -275,7 +275,7 @@ class PostgresJobRepository(BaseJobRepository):
         )
         query = self._apply_job_list_filters(
             cast(Select[tuple[object]], query),
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             function=function,
             status=status,
             worker_id=worker_id,
@@ -284,7 +284,7 @@ class PostgresJobRepository(BaseJobRepository):
         )
 
         if cursor:
-            cursor_job = await self.get_by_id(cursor, deployment_id=deployment_id)
+            cursor_job = await self.get_by_id(cursor, workspace_id=workspace_id)
             if cursor_job is None:
                 raise InvalidCursorError(
                     f"Cursor job '{cursor}' not found. "
@@ -316,13 +316,13 @@ class PostgresJobRepository(BaseJobRepository):
         worker_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> int:
         """Count jobs with the same filters used by list_jobs."""
         query = select(func.count(JobHistoryTable.id))
         query = self._apply_job_list_filters(
             cast(Select[tuple[object]], query),
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             function=function,
             status=status,
             worker_id=worker_id,
@@ -346,7 +346,7 @@ class PostgresJobRepository(BaseJobRepository):
         function: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> JobStatsSummary:
         """
         Get aggregate statistics for jobs in a single query.
@@ -380,7 +380,7 @@ class PostgresJobRepository(BaseJobRepository):
             ).label("avg_duration_ms"),
         )
 
-        query = query.where(JobHistoryTable.deployment_id == deployment_id)
+        query = query.where(JobHistoryTable.workspace_id == workspace_id)
         if function:
             query = query.where(JobHistoryTable.function == function)
         if start_date:
@@ -416,7 +416,7 @@ class PostgresJobRepository(BaseJobRepository):
         *,
         function: str,
         start_date: datetime,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[float]:
         """Return all completed job durations (ms) for a function since start_date."""
         duration_expr = self._duration_ms_expr()
@@ -424,7 +424,7 @@ class PostgresJobRepository(BaseJobRepository):
         query = (
             select(duration_expr.label("duration_ms"))
             .where(
-                JobHistoryTable.deployment_id == deployment_id,
+                JobHistoryTable.workspace_id == workspace_id,
                 JobHistoryTable.function == function,
                 JobHistoryTable.created_at >= start_date,
                 JobHistoryTable.started_at.isnot(None),
@@ -449,7 +449,7 @@ class PostgresJobRepository(BaseJobRepository):
         end_date: datetime,
         function: str | None = None,
         functions: list[str] | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[JobHourlyTrendRow]:
         """
         Get job counts grouped by hour and status using SQL aggregation.
@@ -469,7 +469,7 @@ class PostgresJobRepository(BaseJobRepository):
                 func.count(JobHistoryTable.id).label("cnt"),
             )
             .where(
-                JobHistoryTable.deployment_id == deployment_id,
+                JobHistoryTable.workspace_id == workspace_id,
                 JobHistoryTable.created_at >= start_date,
                 JobHistoryTable.created_at <= end_date,
             )
@@ -501,7 +501,7 @@ class PostgresJobRepository(BaseJobRepository):
         self,
         *,
         start_date: datetime,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, FunctionJobStats]:
         """
         Get aggregated job stats per function key in a single query.
@@ -557,7 +557,7 @@ class PostgresJobRepository(BaseJobRepository):
             )
             .where(
                 JobHistoryTable.created_at >= start_date,
-                JobHistoryTable.deployment_id == deployment_id,
+                JobHistoryTable.workspace_id == workspace_id,
             )
             .subquery()
         )
@@ -602,13 +602,13 @@ class PostgresJobRepository(BaseJobRepository):
         *,
         start_date: datetime,
         function: str | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, FunctionWaitStats]:
         """
         Compute per-function queue wait metrics from persisted job columns.
         """
         query = select(JobHistoryTable.function, JobHistoryTable.queue_wait_ms).where(
-            JobHistoryTable.deployment_id == deployment_id,
+            JobHistoryTable.workspace_id == workspace_id,
             JobHistoryTable.created_at >= start_date,
             JobHistoryTable.started_at.isnot(None),
             JobHistoryTable.queue_wait_ms.isnot(None),
@@ -645,13 +645,13 @@ class PostgresJobRepository(BaseJobRepository):
         *,
         started_before: datetime,
         limit: int = 10,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[Job]:
         """List active jobs that have been running since before `started_before`."""
         query = (
             select(JobHistoryTable)
             .where(
-                JobHistoryTable.deployment_id == deployment_id,
+                JobHistoryTable.workspace_id == workspace_id,
                 JobHistoryTable.status == "active",
                 JobHistoryTable.started_at.isnot(None),
                 JobHistoryTable.started_at <= started_before,
@@ -663,26 +663,26 @@ class PostgresJobRepository(BaseJobRepository):
         return [self._to_model(row) for row in result.scalars().all()]
 
     async def list_old_ids(
-        self, retention_hours: int = 24, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, retention_hours: int = 24, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[str]:
         """Return job IDs older than retention cutoff."""
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
         query = select(JobHistoryTable.id).where(
             JobHistoryTable.created_at < cutoff,
-            JobHistoryTable.deployment_id == deployment_id,
+            JobHistoryTable.workspace_id == workspace_id,
         )
         result = await self._session.execute(query)
         return list(result.scalars().all())
 
     async def delete_by_ids(
-        self, ids: list[str], *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> int:
         """Delete jobs by explicit ID set."""
         if not ids:
             return 0
         query = delete(JobHistoryTable).where(
             JobHistoryTable.id.in_(ids),
-            JobHistoryTable.deployment_id == deployment_id,
+            JobHistoryTable.workspace_id == workspace_id,
         )
         result = await self._session.execute(query)
         return int(result.rowcount or 0)  # type: ignore

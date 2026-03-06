@@ -14,14 +14,14 @@ from typing import Any
 from shared.contracts import FunctionConfig, WorkerDefinition, WorkerSignalStreamEvent
 from shared.domain import CronSource, Job
 from shared.keys import (
-    DEFAULT_DEPLOYMENT_ID,
+    DEFAULT_WORKSPACE_ID,
     FUNCTION_DEF_TTL,
     WORKER_DEF_TTL,
     WORKER_HEARTBEAT_INTERVAL,
     WORKER_TTL,
     cron_registry_member_key,
     function_definition_key,
-    normalize_deployment_id,
+    normalize_workspace_id,
     worker_events_stream_key,
     worker_definition_key,
     worker_instance_key,
@@ -87,18 +87,18 @@ async def write_worker_heartbeat(
     worker_id: str,
     worker_data: str,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     """Write worker data to Redis with TTL."""
-    normalized_deployment_id = normalize_deployment_id(deployment_id)
-    key = worker_instance_key(worker_id, deployment_id=normalized_deployment_id)
+    normalized_workspace_id = normalize_workspace_id(workspace_id)
+    key = worker_instance_key(worker_id, workspace_id=normalized_workspace_id)
     await redis_client.setex(key, WORKER_TTL, worker_data)
     await publish_worker_signal(
         redis_client,
         worker_id,
         "",
         "worker.heartbeat",
-        deployment_id=normalized_deployment_id,
+        workspace_id=normalized_workspace_id,
     )
 
 
@@ -109,11 +109,11 @@ async def write_worker_definition(
     function_name_map: dict[str, str],
     concurrency: int,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     """Write persistent worker definition to Redis with 30-day TTL."""
-    normalized_deployment_id = normalize_deployment_id(deployment_id)
-    key = worker_definition_key(worker_name, deployment_id=normalized_deployment_id)
+    normalized_workspace_id = normalize_workspace_id(workspace_id)
+    key = worker_definition_key(worker_name, workspace_id=normalized_workspace_id)
     definition = WorkerDefinition(
         name=worker_name,
         functions=registered_functions,
@@ -126,7 +126,7 @@ async def write_worker_definition(
         "",
         worker_name,
         "worker.definition.updated",
-        deployment_id=normalized_deployment_id,
+        workspace_id=normalized_workspace_id,
     )
 
 
@@ -134,12 +134,12 @@ async def write_function_definitions(
     redis_client: Any,
     function_definitions: list[FunctionConfig],
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     """Write function definitions to Redis with a 30-day TTL."""
-    normalized_deployment_id = normalize_deployment_id(deployment_id)
+    normalized_workspace_id = normalize_workspace_id(workspace_id)
     keys = [
-        function_definition_key(func_def.key, deployment_id=normalized_deployment_id)
+        function_definition_key(func_def.key, workspace_id=normalized_workspace_id)
         for func_def in function_definitions
     ]
     existing_rows = await redis_client.mget(keys) if keys else []
@@ -177,18 +177,18 @@ async def publish_worker_signal(
     worker_name: str,
     signal_type: str,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     """Publish worker heartbeat/lifecycle signal for realtime dashboards."""
-    normalized_deployment_id = normalize_deployment_id(deployment_id)
+    normalized_workspace_id = normalize_workspace_id(workspace_id)
     payload = WorkerSignalStreamEvent(
         type=signal_type,
-        deployment_id=normalized_deployment_id,
+        workspace_id=normalized_workspace_id,
         at=datetime.now(UTC).isoformat(),
         worker_id=worker_id or None,
         worker_name=worker_name or None,
     )
-    stream_key = worker_events_stream_key(deployment_id=normalized_deployment_id)
+    stream_key = worker_events_stream_key(workspace_id=normalized_workspace_id)
     try:
         try:
             await redis_client.xadd(
@@ -212,7 +212,7 @@ async def heartbeat_loop(
     worker_id: str,
     get_worker_data: Any,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     """Refresh worker heartbeat TTL in Redis periodically."""
     while True:
@@ -222,7 +222,7 @@ async def heartbeat_loop(
                 redis_client,
                 worker_id,
                 get_worker_data(),
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
             )
         except asyncio.CancelledError:
             break

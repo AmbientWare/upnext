@@ -34,10 +34,10 @@ async def test_process_batch_acks_only_successful_events(
     async def fake_process_event(
         event: object,
         *,
-        deployment_id=None,
+        workspace_id=None,
         session=None,
     ) -> bool:
-        _ = deployment_id
+        _ = workspace_id
         _ = session
         call_log.append(type(event).__name__)
         if isinstance(event, JobFailedEvent):
@@ -51,7 +51,7 @@ async def test_process_batch_acks_only_successful_events(
         config.stream,
         {
             "type": "job.started",
-            "deployment_id": "local",
+            "workspace_id": "local",
             "job_id": "job-ack-1",
             "worker_id": "worker-1",
             "data": json.dumps(
@@ -71,7 +71,7 @@ async def test_process_batch_acks_only_successful_events(
         config.stream,
         {
             "type": "job.failed",
-            "deployment_id": "local",
+            "workspace_id": "local",
             "job_id": "job-ack-2",
             "worker_id": "worker-1",
             "data": json.dumps(
@@ -116,10 +116,10 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
     async def fake_process_event(
         event: object,
         *,
-        deployment_id=None,
+        workspace_id=None,
         session=None,
     ) -> bool:
-        _ = deployment_id
+        _ = workspace_id
         _ = session
         processed_ids.append(str(getattr(event, "job_id")))
         return True
@@ -131,7 +131,7 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
         config.stream,
         {
             "type": "job.started",
-            "deployment_id": "local",
+            "workspace_id": "local",
             "job_id": "job-old",
             "worker_id": "worker-1",
             "data": json.dumps(
@@ -161,7 +161,7 @@ async def test_process_batch_orders_mixed_fresh_and_reclaimed_events(
         config.stream,
         {
             "type": "job.started",
-            "deployment_id": "local",
+            "workspace_id": "local",
             "job_id": "job-new",
             "worker_id": "worker-1",
             "data": json.dumps(
@@ -218,7 +218,7 @@ async def test_publish_event_filters_sensitive_fields(fake_redis) -> None:
             "state": {"token": "nope"},
         },
         "worker-1",
-        deployment_id="local",
+        workspace_id="local",
     )
 
     assert published["channel"] == EVENTS_PUBSUB_CHANNEL
@@ -243,7 +243,7 @@ def test_parse_events_propagates_worker_id_for_started_events(fake_redis) -> Non
             "1-0",
             {
                 "type": "job.started",
-                "deployment_id": "local",
+                "workspace_id": "local",
                 "job_id": "job-started-worker-1",
                 "worker_id": "worker-123",
                 "data": json.dumps(
@@ -282,7 +282,7 @@ def test_parse_events_supports_job_cancelled(fake_redis) -> None:
             "1-0",
             {
                 "type": "job.cancelled",
-                "deployment_id": "local",
+                "workspace_id": "local",
                 "job_id": "job-cancelled-1",
                 "worker_id": "worker-123",
                 "data": json.dumps(
@@ -322,7 +322,7 @@ async def test_invalid_events_are_archived_before_ack(fake_redis) -> None:
         config.stream,
         {
             "type": "job.not-real",
-            "deployment_id": "local",
+            "workspace_id": "local",
             "job_id": "job-invalid-1",
             "worker_id": "worker-1",
             "data": "{}",
@@ -361,7 +361,7 @@ async def test_invalid_events_stay_pending_when_archive_write_fails(
         config.stream,
         {
             "type": "job.not-real",
-            "deployment_id": "local",
+            "workspace_id": "local",
             "job_id": "job-invalid-2",
             "worker_id": "worker-1",
             "data": "{}",
@@ -406,10 +406,10 @@ async def test_reclaim_of_stale_pending_event_processes_once_and_acks(
     async def fake_process_event(
         event: object,
         *,
-        deployment_id=None,
+        workspace_id=None,
         session=None,
     ) -> bool:  # noqa: ARG001
-        _ = deployment_id
+        _ = workspace_id
         _ = session
         nonlocal call_count
         call_count += 1
@@ -422,7 +422,7 @@ async def test_reclaim_of_stale_pending_event_processes_once_and_acks(
         config.stream,
         {
             "type": "job.completed",
-            "deployment_id": "local",
+            "workspace_id": "local",
             "job_id": "job-race-1",
             "worker_id": "worker-1",
             "data": json.dumps(
@@ -589,10 +589,10 @@ async def test_process_batch_returns_processed_when_ack_fails(
     async def fake_process_event(
         event: object,
         *,
-        deployment_id=None,
+        workspace_id=None,
         session=None,
     ) -> bool:  # noqa: ARG001
-        _ = deployment_id
+        _ = workspace_id
         _ = session
         return True
 
@@ -602,7 +602,7 @@ async def test_process_batch_returns_processed_when_ack_fails(
         config.stream,
         {
             "type": "job.started",
-            "deployment_id": "local",
+            "workspace_id": "local",
             "job_id": "job-ack-fail-1",
             "worker_id": "worker-1",
             "data": json.dumps(
@@ -650,10 +650,10 @@ async def test_process_batch_coalesces_duplicate_progress_events(
     async def fake_process_event(
         event: object,
         *,
-        deployment_id=None,
+        workspace_id=None,
         session=None,
     ) -> bool:  # noqa: ARG001
-        _ = deployment_id
+        _ = workspace_id
         _ = session
         if isinstance(event, JobProgressEvent):
             seen_progress.append(float(getattr(event, "progress", 0)))
@@ -667,7 +667,7 @@ async def test_process_batch_coalesces_duplicate_progress_events(
             config.stream,
             {
                 "type": "job.progress",
-                "deployment_id": "local",
+                "workspace_id": "local",
                 "job_id": "job-coalesce-1",
                 "worker_id": "worker-1",
                 "data": json.dumps(
@@ -705,10 +705,10 @@ async def test_coalesced_progress_events_are_not_acked_when_latest_fails(
     async def fake_process_event(
         event: object,
         *,
-        deployment_id=None,
+        workspace_id=None,
         session=None,
     ) -> bool:  # noqa: ARG001
-        _ = deployment_id
+        _ = workspace_id
         _ = session
         raise RuntimeError("boom")
 
@@ -720,7 +720,7 @@ async def test_coalesced_progress_events_are_not_acked_when_latest_fails(
             config.stream,
             {
                 "type": "job.progress",
-                "deployment_id": "local",
+                "workspace_id": "local",
                 "job_id": "job-coalesce-fail-1",
                 "worker_id": "worker-1",
                 "data": json.dumps(

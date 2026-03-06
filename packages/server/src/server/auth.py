@@ -23,8 +23,7 @@ def _self_hosted_scope(
 ) -> AuthScope:
     settings = get_settings()
     return AuthScope(
-        deployment_id=settings.normalized_default_deployment_id,
-        workspace_id=None,
+        workspace_id=settings.normalized_default_workspace_id,
         mode=RuntimeModes.SELF_HOSTED,
         subject=subject,
     )
@@ -81,22 +80,17 @@ async def require_api_key(
         except RuntimeTokenError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-        deployment_id = claims.get("deployment_id")
         workspace_id = claims.get("workspace_id")
         subject = claims.get("sub")
 
-        if not isinstance(deployment_id, str) or not deployment_id:
+        if not isinstance(workspace_id, str) or not workspace_id:
             raise HTTPException(
-                status_code=401, detail="Runtime token missing deployment_id"
+                status_code=401, detail="Runtime token missing workspace_id"
             )
-        if deployment_id != settings.normalized_default_deployment_id:
+        if workspace_id != settings.normalized_default_workspace_id:
             raise HTTPException(
                 status_code=403,
-                detail="Runtime token deployment_id does not match this runtime",
-            )
-        if workspace_id is not None and not isinstance(workspace_id, str):
-            raise HTTPException(
-                status_code=401, detail="Runtime token has invalid workspace_id"
+                detail="Runtime token workspace_id does not match this runtime",
             )
         if subject is not None and not isinstance(subject, str):
             raise HTTPException(
@@ -106,7 +100,6 @@ async def require_api_key(
         return _cache_scope(
             request,
             AuthScope(
-                deployment_id=deployment_id,
                 workspace_id=workspace_id,
                 mode=RuntimeModes.CLOUD_RUNTIME,
                 subject=subject,

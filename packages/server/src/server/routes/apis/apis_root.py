@@ -48,14 +48,14 @@ async def list_apis(
 ) -> ApisListResponse:
     """List all tracked APIs grouped by name, with active instances."""
     try:
-        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
+        reader = await get_metrics_reader(workspace_id=scope.workspace_id)
         raw: list[ApiMetricsByName] = await reader.get_apis()
     except RuntimeError:
         raw = []
 
     # Fetch active instances and group by api_name
     try:
-        all_instances = await list_api_instances(deployment_id=scope.deployment_id)
+        all_instances = await list_api_instances(workspace_id=scope.workspace_id)
     except Exception:
         all_instances = []
 
@@ -102,7 +102,7 @@ async def list_endpoints(
 ) -> EndpointsListResponse:
     """List all tracked API endpoints (per-endpoint detail)."""
     try:
-        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
+        reader = await get_metrics_reader(workspace_id=scope.workspace_id)
         raw: list[ApiEndpointMetrics] = await reader.get_endpoints()
     except RuntimeError:
         raw = []
@@ -134,7 +134,7 @@ async def get_api_trends(
     """Get hourly API response trends for charts."""
     hours_window = hours if isinstance(hours, int) else 24
     try:
-        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
+        reader = await get_metrics_reader(workspace_id=scope.workspace_id)
         raw: list[ApiHourlyTrend] = await reader.get_hourly_trends(hours_window)
     except RuntimeError:
         raw = []
@@ -157,7 +157,7 @@ async def get_api(
 ) -> ApiPageResponse:
     """Get overview + route-level metrics for a single API."""
     try:
-        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
+        reader = await get_metrics_reader(workspace_id=scope.workspace_id)
         endpoint_rows: list[ApiEndpointMetrics] = await reader.get_endpoints(
             api_name=api_name
         )
@@ -165,7 +165,7 @@ async def get_api(
         endpoint_rows = []
 
     try:
-        all_instances = await list_api_instances(deployment_id=scope.deployment_id)
+        all_instances = await list_api_instances(workspace_id=scope.workspace_id)
     except Exception:
         all_instances = []
 
@@ -237,7 +237,7 @@ async def get_endpoint(
 ) -> ApiDetailResponse:
     """Get detailed info for a specific API endpoint."""
     try:
-        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
+        reader = await get_metrics_reader(workspace_id=scope.workspace_id)
         raw: list[ApiEndpointMetrics] = await reader.get_endpoints()
     except RuntimeError:
         raw = []

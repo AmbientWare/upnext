@@ -21,46 +21,44 @@ WORKER_DEF_TTL = 2_592_000  # 30 days
 FUNCTION_DEF_TTL = 2_592_000  # 30 days
 
 
-def worker_instance_key(worker_id: str, *, deployment_id: str | None = None) -> str:
+def worker_instance_key(worker_id: str, *, workspace_id: str | None = None) -> str:
     """Build worker-instance heartbeat key."""
-    return scoped_key("workers", "instances", worker_id, deployment_id=deployment_id)
+    return scoped_key("workers", "instances", worker_id, workspace_id=workspace_id)
 
 
-def worker_instance_pattern(*, deployment_id: str | None = None) -> str:
+def worker_instance_pattern(*, workspace_id: str | None = None) -> str:
     """SCAN pattern for worker-instance heartbeat keys."""
-    return scoped_key("workers", "instances", "*", deployment_id=deployment_id)
+    return scoped_key("workers", "instances", "*", workspace_id=workspace_id)
 
 
 def worker_definition_key(
     worker_name: str,
     *,
-    deployment_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> str:
     """Build worker definition key."""
-    return scoped_key(
-        "workers", "definitions", worker_name, deployment_id=deployment_id
-    )
+    return scoped_key("workers", "definitions", worker_name, workspace_id=workspace_id)
 
 
-def worker_definition_pattern(*, deployment_id: str | None = None) -> str:
+def worker_definition_pattern(*, workspace_id: str | None = None) -> str:
     """SCAN pattern for worker definition keys."""
-    return scoped_key("workers", "definitions", "*", deployment_id=deployment_id)
+    return scoped_key("workers", "definitions", "*", workspace_id=workspace_id)
 
 
 def function_definition_key(
     function_key: str,
     *,
-    deployment_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> str:
     """Build function definition key."""
-    return scoped_key("functions", function_key, deployment_id=deployment_id)
+    return scoped_key("functions", function_key, workspace_id=workspace_id)
 
 
-def function_definition_pattern(*, deployment_id: str | None = None) -> str:
+def function_definition_pattern(*, workspace_id: str | None = None) -> str:
     """SCAN pattern for function definition keys."""
-    return scoped_key("functions", "*", deployment_id=deployment_id)
+    return scoped_key("functions", "*", workspace_id=workspace_id)
 
 
-def worker_events_stream_key(*, deployment_id: str | None = None) -> str:
+def worker_events_stream_key(*, workspace_id: str | None = None) -> str:
     """Build worker heartbeat/lifecycle signal stream key."""
-    return scoped_key("workers", "events", deployment_id=deployment_id)
+    return scoped_key("workers", "events", workspace_id=workspace_id)

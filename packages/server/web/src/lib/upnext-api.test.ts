@@ -73,8 +73,7 @@ describe("auth api", () => {
       json: async () => ({
         ok: true,
         scope: {
-          deployment_id: "local",
-          workspace_id: null,
+          workspace_id: "local",
           mode: "self_hosted",
           subject: "self-hosted-token",
         },
@@ -87,7 +86,7 @@ describe("auth api", () => {
     expect(url).toContain("/auth/verify");
     expect(init.method).toBe("POST");
     expect(result.ok).toBe(true);
-    expect(result.scope.deployment_id).toBe("local");
+    expect(result.scope.workspace_id).toBe("local");
   });
 });
 

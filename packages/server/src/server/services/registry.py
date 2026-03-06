@@ -14,7 +14,7 @@ from shared.contracts import (
     WorkerStats,
 )
 from shared.keys import (
-    DEFAULT_DEPLOYMENT_ID,
+    DEFAULT_WORKSPACE_ID,
     function_definition_pattern,
     worker_definition_pattern,
     worker_instance_key,
@@ -47,11 +47,11 @@ def _parse_worker_instance(data: str) -> WorkerInstance:
 async def get_worker_instance(
     worker_id: str,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> WorkerInstance | None:
     """Get a worker instance by ID."""
     r = await get_redis()
-    key = worker_instance_key(worker_id, deployment_id=deployment_id)
+    key = worker_instance_key(worker_id, workspace_id=workspace_id)
     try:
         data = await r.get(key)
     except Exception:
@@ -68,14 +68,14 @@ async def get_worker_instance(
 
 
 async def list_worker_instances(
-    *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    *, workspace_id: str = DEFAULT_WORKSPACE_ID
 ) -> list[WorkerInstance]:
     """List all active worker instances from Redis."""
     r = await get_redis()
     instances: list[WorkerInstance] = []
 
     async for key in r.scan_iter(
-        match=worker_instance_pattern(deployment_id=deployment_id),
+        match=worker_instance_pattern(workspace_id=workspace_id),
         count=100,
     ):
         try:
@@ -98,14 +98,14 @@ async def list_worker_instances(
 
 async def get_worker_definitions(
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> dict[str, WorkerDefinition]:
     """Get all persistent worker definitions from Redis."""
     r = await get_redis()
     defs: dict[str, WorkerDefinition] = {}
 
     async for key in r.scan_iter(
-        match=worker_definition_pattern(deployment_id=deployment_id),
+        match=worker_definition_pattern(workspace_id=workspace_id),
         count=100,
     ):
         data = await r.get(key)
@@ -121,14 +121,12 @@ async def get_worker_definitions(
     return defs
 
 
-async def get_worker_stats(
-    *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
-) -> WorkerStats:
+async def get_worker_stats(*, workspace_id: str = DEFAULT_WORKSPACE_ID) -> WorkerStats:
     """Get worker statistics."""
     r = await get_redis()
     total = 0
     async for _ in r.scan_iter(
-        match=worker_instance_pattern(deployment_id=deployment_id),
+        match=worker_instance_pattern(workspace_id=workspace_id),
         count=100,
     ):
         total += 1
@@ -137,14 +135,14 @@ async def get_worker_stats(
 
 async def get_function_definitions(
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> dict[str, FunctionConfig]:
     """Get all function definitions from Redis."""
     r = await get_redis()
     functions: dict[str, FunctionConfig] = {}
 
     async for key in r.scan_iter(
-        match=function_definition_pattern(deployment_id=deployment_id),
+        match=function_definition_pattern(workspace_id=workspace_id),
         count=100,
     ):
         data = await r.get(key)

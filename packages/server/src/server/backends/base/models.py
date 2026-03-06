@@ -7,7 +7,7 @@ from datetime import datetime
 
 from shared.contracts import CronJobSource, EventJobSource, JobSource, TaskJobSource
 from shared.domain import JobType
-from shared.keys import DEFAULT_DEPLOYMENT_ID
+from shared.keys import DEFAULT_WORKSPACE_ID
 
 
 @dataclass
@@ -16,7 +16,7 @@ class Job:
     function: str
     function_name: str
     job_key: str
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     job_type: str = JobType.TASK.value
     status: str = "queued"
     created_at: datetime | None = None
@@ -74,7 +74,7 @@ class Job:
 @dataclass
 class Secret:
     id: str
-    deployment_id: str
+    workspace_id: str
     name: str
     encrypted_data: str
     created_at: datetime

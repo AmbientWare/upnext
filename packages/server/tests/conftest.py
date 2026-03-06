@@ -61,8 +61,7 @@ async def sqlite_db(
 @pytest.fixture
 def local_auth_scope() -> AuthScope:
     return AuthScope(
-        deployment_id="local",
-        workspace_id=None,
+        workspace_id="local",
         mode=RuntimeModes.SELF_HOSTED,
         subject="test-admin",
     )

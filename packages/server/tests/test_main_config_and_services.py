@@ -48,13 +48,13 @@ class _SettingsStub:
         return self.runtime_mode == RuntimeModes.CLOUD_RUNTIME
 
     @property
-    def normalized_default_deployment_id(self) -> str:
+    def normalized_default_workspace_id(self) -> str:
         return "local"
 
     @property
     def status_events_stream(self) -> str:
         return status_events_stream_key(
-            deployment_id=self.normalized_default_deployment_id
+            workspace_id=self.normalized_default_workspace_id
         )
 
     @property

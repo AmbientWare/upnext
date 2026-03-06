@@ -86,7 +86,7 @@ async def stream_job_artifacts(
                 result = await redis_client.xread(
                     {
                         artifact_events_stream_key(
-                            deployment_id=scope.deployment_id
+                            workspace_id=scope.workspace_id
                         ): last_id
                     },
                     count=SSE_READ_COUNT,
@@ -103,7 +103,7 @@ async def stream_job_artifacts(
                         parsed = parse_artifact_stream_event(event_id_str, row)
                         if parsed is None:
                             continue
-                        if parsed.deployment_id != scope.deployment_id:
+                        if parsed.workspace_id != scope.workspace_id:
                             continue
                         if parsed.job_id != job_id:
                             continue

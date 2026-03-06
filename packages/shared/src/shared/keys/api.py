@@ -26,14 +26,14 @@ REGISTRY_TTL = 2_592_000  # 30 days
 API_INSTANCE_TTL = 30
 
 
-def api_registry_key(*, deployment_id: str | None = None) -> str:
+def api_registry_key(*, workspace_id: str | None = None) -> str:
     """Build API-name registry key."""
-    return scoped_key("apis", "registry", deployment_id=deployment_id)
+    return scoped_key("apis", "registry", workspace_id=workspace_id)
 
 
-def api_endpoints_key(api_name: str, *, deployment_id: str | None = None) -> str:
+def api_endpoints_key(api_name: str, *, workspace_id: str | None = None) -> str:
     """Build per-API endpoint registry key."""
-    return scoped_key("apis", api_name, "endpoints", deployment_id=deployment_id)
+    return scoped_key("apis", api_name, "endpoints", workspace_id=workspace_id)
 
 
 def api_minute_bucket_key(
@@ -41,7 +41,7 @@ def api_minute_bucket_key(
     endpoint_key: str,
     minute_key: str,
     *,
-    deployment_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> str:
     """Build minute metrics hash key for an API endpoint."""
     return scoped_key(
@@ -50,7 +50,7 @@ def api_minute_bucket_key(
         endpoint_key,
         "m",
         minute_key,
-        deployment_id=deployment_id,
+        workspace_id=workspace_id,
     )
 
 
@@ -59,7 +59,7 @@ def api_hourly_bucket_key(
     endpoint_key: str,
     hour_key: str,
     *,
-    deployment_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> str:
     """Build hourly metrics hash key for an API endpoint."""
     return scoped_key(
@@ -68,15 +68,15 @@ def api_hourly_bucket_key(
         endpoint_key,
         "h",
         hour_key,
-        deployment_id=deployment_id,
+        workspace_id=workspace_id,
     )
 
 
-def api_instance_key(api_id: str, *, deployment_id: str | None = None) -> str:
+def api_instance_key(api_id: str, *, workspace_id: str | None = None) -> str:
     """Build API instance heartbeat key."""
-    return scoped_key("apis", "instances", api_id, deployment_id=deployment_id)
+    return scoped_key("apis", "instances", api_id, workspace_id=workspace_id)
 
 
-def api_instance_pattern(*, deployment_id: str | None = None) -> str:
+def api_instance_pattern(*, workspace_id: str | None = None) -> str:
     """SCAN pattern for API instance heartbeat keys."""
-    return scoped_key("apis", "instances", "*", deployment_id=deployment_id)
+    return scoped_key("apis", "instances", "*", workspace_id=workspace_id)

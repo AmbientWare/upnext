@@ -35,9 +35,9 @@ async def get_queue_metrics(
     Suitable for Prometheus scrapers, Datadog, etc.
     """
     try:
-        totals = await get_queue_depth_stats(deployment_id=scope.deployment_id)
+        totals = await get_queue_depth_stats(workspace_id=scope.workspace_id)
         per_function = await get_function_queue_depth_stats(
-            deployment_id=scope.deployment_id
+            workspace_id=scope.workspace_id
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e

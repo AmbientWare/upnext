@@ -29,7 +29,7 @@ async def list_secrets(
 ):
     """List all secrets (key names only, no values)."""
     async with backend.session() as tx:
-        secrets = await tx.secrets.list_secrets(deployment_id=scope.deployment_id)
+        secrets = await tx.secrets.list_secrets(workspace_id=scope.workspace_id)
 
     items = [
         SecretResponse(
@@ -53,7 +53,7 @@ async def get_secret_by_name(
     """Fetch a secret's decrypted values by name (for SDK usage)."""
     async with backend.session() as tx:
         secret = await tx.secrets.get_secret_by_name(
-            name, deployment_id=scope.deployment_id
+            name, workspace_id=scope.workspace_id
         )
         if secret is None:
             raise HTTPException(status_code=404, detail=f"Secret '{name}' not found")
@@ -71,7 +71,7 @@ async def get_secret(
     """Get a secret with decrypted values."""
     async with backend.session() as tx:
         secret = await tx.secrets.get_secret_by_id(
-            secret_id, deployment_id=scope.deployment_id
+            secret_id, workspace_id=scope.workspace_id
         )
         if secret is None:
             raise HTTPException(status_code=404, detail="Secret not found")
@@ -85,6 +85,7 @@ async def get_secret(
         updated_at=secret.updated_at.isoformat(),
     )
 
+
 @router.post("", response_model=SecretDetailResponse, status_code=201)
 async def create_secret(
     body: CreateSecretRequest,
@@ -97,7 +98,7 @@ async def create_secret(
             secret = await tx.secrets.create_secret(
                 body.name,
                 body.data,
-                deployment_id=scope.deployment_id,
+                workspace_id=scope.workspace_id,
             )
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e))
@@ -109,6 +110,7 @@ async def create_secret(
         created_at=secret.created_at.isoformat(),
         updated_at=secret.updated_at.isoformat(),
     )
+
 
 @router.put("/{secret_id}", response_model=SecretDetailResponse)
 async def update_secret(
@@ -124,7 +126,7 @@ async def update_secret(
                 secret_id,
                 name=body.name,
                 data=body.data,
-                deployment_id=scope.deployment_id,
+                workspace_id=scope.workspace_id,
             )
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e))
@@ -140,6 +142,7 @@ async def update_secret(
         updated_at=secret.updated_at.isoformat(),
     )
 
+
 @router.delete("/{secret_id}", status_code=204)
 async def delete_secret(
     secret_id: str,
@@ -149,7 +152,7 @@ async def delete_secret(
     """Delete a secret."""
     async with backend.session() as tx:
         deleted = await tx.secrets.delete_secret(
-            secret_id, deployment_id=scope.deployment_id
+            secret_id, workspace_id=scope.workspace_id
         )
         if not deleted:
             raise HTTPException(status_code=404, detail="Secret not found")

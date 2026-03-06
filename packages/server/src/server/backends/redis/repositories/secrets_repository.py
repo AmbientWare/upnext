@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
-from shared.keys import DEFAULT_DEPLOYMENT_ID
+from shared.keys import DEFAULT_WORKSPACE_ID
 
 from server.backends.base.models import Secret
 from server.backends.base.repositories import BaseSecretsRepository
@@ -31,7 +31,7 @@ def _secret_key(secret_id: str) -> str:
 def _encode_secret(secret: Secret) -> dict[str, str]:
     return {
         "id": secret.id,
-        "deployment_id": secret.deployment_id,
+        "workspace_id": secret.workspace_id,
         "name": secret.name,
         "encrypted_data": secret.encrypted_data,
         "created_at": secret.created_at.isoformat(),
@@ -62,30 +62,30 @@ class RedisSecretsRepository(BaseSecretsRepository):
     async def list_secrets(
         self,
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[Secret]:
         ids = await self._redis.smembers(_SECRETS_SET)
         out: list[Secret] = []
         for raw_secret_id in ids:
             secret = await self._read_secret(decode_text(raw_secret_id))
-            if secret is not None and secret.deployment_id == deployment_id:
+            if secret is not None and secret.workspace_id == workspace_id:
                 out.append(secret)
         out.sort(key=lambda row: row.created_at, reverse=True)
         return out
 
     async def get_secret_by_name(
-        self, name: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, name: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> Secret | None:
-        for secret in await self.list_secrets(deployment_id=deployment_id):
+        for secret in await self.list_secrets(workspace_id=workspace_id):
             if secret.name == name:
                 return secret
         return None
 
     async def get_secret_by_id(
-        self, secret_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, secret_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> Secret | None:
         secret = await self._read_secret(secret_id)
-        if secret is None or secret.deployment_id != deployment_id:
+        if secret is None or secret.workspace_id != workspace_id:
             return None
         return secret
 
@@ -94,15 +94,15 @@ class RedisSecretsRepository(BaseSecretsRepository):
         name: str,
         data: dict[str, str],
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Secret:
-        existing = await self.get_secret_by_name(name, deployment_id=deployment_id)
+        existing = await self.get_secret_by_name(name, workspace_id=workspace_id)
         if existing is not None:
             raise ValueError(f"Secret '{name}' already exists")
         now = utcnow()
         secret = Secret(
             id=str(uuid4()),
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             name=name,
             encrypted_data=encrypt_data(data),
             created_at=now,
@@ -117,13 +117,13 @@ class RedisSecretsRepository(BaseSecretsRepository):
         *,
         name: str | None = None,
         data: dict[str, str] | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Secret | None:
-        secret = await self.get_secret_by_id(secret_id, deployment_id=deployment_id)
+        secret = await self.get_secret_by_id(secret_id, workspace_id=workspace_id)
         if secret is None:
             return None
         if name is not None and name != secret.name:
-            existing = await self.get_secret_by_name(name, deployment_id=deployment_id)
+            existing = await self.get_secret_by_name(name, workspace_id=workspace_id)
             if existing is not None and existing.id != secret_id:
                 raise ValueError(f"Secret '{name}' already exists")
             await self._redis.hdel(_SECRETS_BY_NAME, secret.name)
@@ -135,9 +135,9 @@ class RedisSecretsRepository(BaseSecretsRepository):
         return secret
 
     async def delete_secret(
-        self, secret_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, secret_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> bool:
-        secret = await self.get_secret_by_id(secret_id, deployment_id=deployment_id)
+        secret = await self.get_secret_by_id(secret_id, workspace_id=workspace_id)
         if secret is None:
             return False
         await self._redis.delete(_secret_key(secret_id))

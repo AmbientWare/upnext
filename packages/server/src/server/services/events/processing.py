@@ -21,7 +21,7 @@ from shared.contracts import (
     JobStartedEvent,
 )
 from shared.domain import JobType
-from shared.keys import DEFAULT_DEPLOYMENT_ID, artifact_events_stream_key
+from shared.keys import DEFAULT_WORKSPACE_ID, artifact_events_stream_key
 
 from server.backends.base import JobRecordCreate
 from server.backends.session_context import RepositorySession
@@ -132,50 +132,50 @@ def _source_columns(source: JobSource) -> _SourceColumns:
 async def process_event(
     event: JobLifecycleEvent,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     session: RepositorySession | None = None,
 ) -> bool:
     """Dispatch one typed lifecycle event and return whether it changed persisted state."""
     if isinstance(event, JobStartedEvent):
         return await _handle_job_started(
             event,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             session=session,
         )
     if isinstance(event, JobCompletedEvent):
         return await _handle_job_completed(
             event,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             session=session,
         )
     if isinstance(event, JobFailedEvent):
         return await _handle_job_failed(
             event,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             session=session,
         )
     if isinstance(event, JobCancelledEvent):
         return await _handle_job_cancelled(
             event,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             session=session,
         )
     if isinstance(event, JobRetryingEvent):
         return await _handle_job_retrying(
             event,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             session=session,
         )
     if isinstance(event, JobProgressEvent):
         return await _handle_job_progress(
             event,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             session=session,
         )
     if isinstance(event, JobCheckpointEvent):
         return await _handle_job_checkpoint(
             event,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             session=session,
         )
     logger.warning("Unsupported lifecycle event type: %s", type(event).__name__)
@@ -186,13 +186,13 @@ async def _promote_pending_artifacts(
     session: RepositorySession,
     job_id: str,
     *,
-    deployment_id: str,
+    workspace_id: str,
 ) -> None:
     """Promote queued artifacts once the job row exists."""
     artifact_repo = session.artifacts
     promoted = await artifact_repo.promote_pending_for_job_with_artifacts(
         job_id,
-        deployment_id=deployment_id,
+        workspace_id=workspace_id,
     )
     if promoted:
         logger.debug(
@@ -202,7 +202,7 @@ async def _promote_pending_artifacts(
         await _publish_artifact_event(
             ArtifactStreamEvent(
                 type="artifact.promoted",
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
                 at=datetime.now(UTC).isoformat(),
                 job_id=artifact.job_id,
                 artifact_id=artifact.id,
@@ -220,7 +220,7 @@ async def _publish_artifact_event(event: ArtifactStreamEvent) -> None:
         return
     try:
         await redis_client.xadd(
-            artifact_events_stream_key(deployment_id=event.deployment_id),
+            artifact_events_stream_key(workspace_id=event.workspace_id),
             {"data": event.model_dump_json()},
             maxlen=10_000,
             approximate=True,
@@ -232,7 +232,7 @@ async def _publish_artifact_event(event: ArtifactStreamEvent) -> None:
 async def _handle_job_started(
     event: JobStartedEvent,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.started event - create or refresh job record."""
@@ -249,12 +249,12 @@ async def _handle_job_started(
         async with db.session() as managed_session:
             return await _handle_job_started(
                 event,
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
                 session=managed_session,
             )
 
     repo = session.jobs
-    existing = await repo.get_by_id(event.job_id, deployment_id=deployment_id)
+    existing = await repo.get_by_id(event.job_id, workspace_id=workspace_id)
     parent_id = event.parent_id
     root_id = event.root_id
     queue_wait_ms = event.queue_wait_ms
@@ -313,7 +313,7 @@ async def _handle_job_started(
         await repo.record_job(
             JobRecordCreate(
                 id=event.job_id,
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
                 job_key=event.job_key,
                 function=event.function,
                 function_name=event.function_name,
@@ -346,7 +346,7 @@ async def _handle_job_started(
     await _promote_pending_artifacts(
         session,
         event.job_id,
-        deployment_id=deployment_id,
+        workspace_id=workspace_id,
     )
     _record_progress_write(event.job_id, 0.0)
     return True
@@ -355,7 +355,7 @@ async def _handle_job_started(
 async def _handle_job_completed(
     event: JobCompletedEvent,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.completed event - update job with success."""
@@ -371,12 +371,12 @@ async def _handle_job_completed(
         async with db.session() as managed_session:
             return await _handle_job_completed(
                 event,
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
                 session=managed_session,
             )
 
     repo = session.jobs
-    existing = await repo.get_by_id(event.job_id, deployment_id=deployment_id)
+    existing = await repo.get_by_id(event.job_id, workspace_id=workspace_id)
     if existing:
         existing_attempts = existing.attempts or 0
         existing_completed_at = as_utc_aware(existing.completed_at)
@@ -405,7 +405,7 @@ async def _handle_job_completed(
         await repo.record_job(
             JobRecordCreate(
                 id=event.job_id,
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
                 function=event.function,
                 function_name=event.function_name,
                 status="complete",
@@ -425,7 +425,7 @@ async def _handle_job_completed(
     await _promote_pending_artifacts(
         session,
         event.job_id,
-        deployment_id=deployment_id,
+        workspace_id=workspace_id,
     )
     _progress_write_state.pop(event.job_id, None)
     return True
@@ -434,7 +434,7 @@ async def _handle_job_completed(
 async def _handle_job_failed(
     event: JobFailedEvent,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.failed event - update job with failure."""
@@ -453,12 +453,12 @@ async def _handle_job_failed(
             async with db.session() as managed_session:
                 return await _handle_job_failed(
                     event,
-                    deployment_id=deployment_id,
+                    workspace_id=workspace_id,
                     session=managed_session,
                 )
 
         repo = session.jobs
-        existing = await repo.get_by_id(event.job_id, deployment_id=deployment_id)
+        existing = await repo.get_by_id(event.job_id, workspace_id=workspace_id)
         if existing:
             existing_attempts = existing.attempts or 0
             existing_completed_at = as_utc_aware(existing.completed_at)
@@ -488,7 +488,7 @@ async def _handle_job_failed(
             await repo.record_job(
                 JobRecordCreate(
                     id=event.job_id,
-                    deployment_id=deployment_id,
+                    workspace_id=workspace_id,
                     function=event.function,
                     function_name=event.function_name,
                     status="failed",
@@ -509,7 +509,7 @@ async def _handle_job_failed(
         await _promote_pending_artifacts(
             session,
             event.job_id,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         return True
     finally:
@@ -520,7 +520,7 @@ async def _handle_job_failed(
 async def _handle_job_cancelled(
     event: JobCancelledEvent,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.cancelled event - update job with cancellation."""
@@ -538,12 +538,12 @@ async def _handle_job_cancelled(
             async with db.session() as managed_session:
                 return await _handle_job_cancelled(
                     event,
-                    deployment_id=deployment_id,
+                    workspace_id=workspace_id,
                     session=managed_session,
                 )
 
         repo = session.jobs
-        existing = await repo.get_by_id(event.job_id, deployment_id=deployment_id)
+        existing = await repo.get_by_id(event.job_id, workspace_id=workspace_id)
         if existing:
             existing_attempts = existing.attempts or 0
             existing_completed_at = as_utc_aware(existing.completed_at)
@@ -572,7 +572,7 @@ async def _handle_job_cancelled(
             await repo.record_job(
                 JobRecordCreate(
                     id=event.job_id,
-                    deployment_id=deployment_id,
+                    workspace_id=workspace_id,
                     function=event.function,
                     function_name=event.function_name,
                     status="cancelled",
@@ -592,7 +592,7 @@ async def _handle_job_cancelled(
         await _promote_pending_artifacts(
             session,
             event.job_id,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         return True
     finally:
@@ -603,7 +603,7 @@ async def _handle_job_cancelled(
 async def _handle_job_retrying(
     event: JobRetryingEvent,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.retrying event - update job with retry status."""
@@ -621,12 +621,12 @@ async def _handle_job_retrying(
         async with db.session() as managed_session:
             return await _handle_job_retrying(
                 event,
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
                 session=managed_session,
             )
 
     repo = session.jobs
-    existing = await repo.get_by_id(event.job_id, deployment_id=deployment_id)
+    existing = await repo.get_by_id(event.job_id, workspace_id=workspace_id)
     if existing:
         existing_attempts = existing.attempts or 0
         existing_completed_at = as_utc_aware(existing.completed_at)
@@ -660,7 +660,7 @@ async def _handle_job_retrying(
 async def _handle_job_progress(
     event: JobProgressEvent,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.progress event - update progress."""
@@ -685,12 +685,12 @@ async def _handle_job_progress(
         async with db.session() as managed_session:
             return await _handle_job_progress(
                 event,
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
                 session=managed_session,
             )
 
     repo = session.jobs
-    existing = await repo.get_by_id(event.job_id, deployment_id=deployment_id)
+    existing = await repo.get_by_id(event.job_id, workspace_id=workspace_id)
     if existing:
         if existing.status in TERMINAL_STATUSES:
             logger.debug(
@@ -719,7 +719,7 @@ async def _handle_job_progress(
 async def _handle_job_checkpoint(
     event: JobCheckpointEvent,
     *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
     session: RepositorySession | None = None,
 ) -> bool:
     """Handle job.checkpoint event - store checkpoint state."""
@@ -732,12 +732,12 @@ async def _handle_job_checkpoint(
         async with db.session() as managed_session:
             return await _handle_job_checkpoint(
                 event,
-                deployment_id=deployment_id,
+                workspace_id=workspace_id,
                 session=managed_session,
             )
 
     repo = session.jobs
-    existing = await repo.get_by_id(event.job_id, deployment_id=deployment_id)
+    existing = await repo.get_by_id(event.job_id, workspace_id=workspace_id)
     if existing:
         existing.checkpoint = event.state
         existing.checkpoint_at = event.checkpointed_at.isoformat()

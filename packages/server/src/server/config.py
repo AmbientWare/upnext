@@ -9,8 +9,8 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared._version import __version__
 from shared.keys import (
-    DEFAULT_DEPLOYMENT_ID,
-    normalize_deployment_id,
+    DEFAULT_WORKSPACE_ID,
+    normalize_workspace_id,
     status_events_pubsub_channel,
     status_events_stream_key,
 )
@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     api_key: str | None = None
     runtime_mode: RuntimeModes = RuntimeModes.SELF_HOSTED
-    default_deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    default_workspace_id: str = DEFAULT_WORKSPACE_ID
     runtime_token_secret: str | None = None
     runtime_token_issuer: str = "upnext-saas"
     runtime_token_audience: str = "upnext-runtime"
@@ -213,19 +213,19 @@ class Settings(BaseSettings):
         return self.runtime_mode == RuntimeModes.SELF_HOSTED
 
     @property
-    def normalized_default_deployment_id(self) -> str:
-        return normalize_deployment_id(self.default_deployment_id)
+    def normalized_default_workspace_id(self) -> str:
+        return normalize_workspace_id(self.default_workspace_id)
 
     @property
     def status_events_stream(self) -> str:
         return status_events_stream_key(
-            deployment_id=self.normalized_default_deployment_id
+            workspace_id=self.normalized_default_workspace_id
         )
 
     @property
     def status_events_pubsub_channel(self) -> str:
         return status_events_pubsub_channel(
-            deployment_id=self.normalized_default_deployment_id
+            workspace_id=self.normalized_default_workspace_id
         )
 
     @property

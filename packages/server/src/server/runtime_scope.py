@@ -15,7 +15,6 @@ class RuntimeModes(StrEnum):
 class AuthScope:
     """Resolved auth scope for a runtime request."""
 
-    deployment_id: str
-    workspace_id: str | None
+    workspace_id: str
     mode: RuntimeModes
     subject: str | None = None

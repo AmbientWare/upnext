@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from shared.keys import DEFAULT_DEPLOYMENT_ID
+from shared.keys import DEFAULT_WORKSPACE_ID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,23 +21,23 @@ class PostgresSecretsRepository(BaseSecretsRepository):
         self._session = session
 
     async def _get_secret_row_by_id(
-        self, secret_id: str, *, deployment_id: str
+        self, secret_id: str, *, workspace_id: str
     ) -> SecretTable | None:
         result = await self._session.execute(
             select(SecretTable).where(
                 SecretTable.id == secret_id,
-                SecretTable.deployment_id == deployment_id,
+                SecretTable.workspace_id == workspace_id,
             )
         )
         return result.scalar_one_or_none()
 
     async def _get_secret_row_by_name(
-        self, name: str, *, deployment_id: str
+        self, name: str, *, workspace_id: str
     ) -> SecretTable | None:
         result = await self._session.execute(
             select(SecretTable).where(
                 SecretTable.name == name,
-                SecretTable.deployment_id == deployment_id,
+                SecretTable.workspace_id == workspace_id,
             )
         )
         return result.scalar_one_or_none()
@@ -45,27 +45,27 @@ class PostgresSecretsRepository(BaseSecretsRepository):
     async def list_secrets(
         self,
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[Secret]:
         result = await self._session.execute(
             select(SecretTable)
-            .where(SecretTable.deployment_id == deployment_id)
+            .where(SecretTable.workspace_id == workspace_id)
             .order_by(SecretTable.created_at.desc())
         )
         return [self._to_model(row) for row in result.scalars().all()]
 
     async def get_secret_by_name(
-        self, name: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, name: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> Secret | None:
-        row = await self._get_secret_row_by_name(name, deployment_id=deployment_id)
+        row = await self._get_secret_row_by_name(name, workspace_id=workspace_id)
         if row is None:
             return None
         return self._to_model(row)
 
     async def get_secret_by_id(
-        self, secret_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, secret_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> Secret | None:
-        row = await self._get_secret_row_by_id(secret_id, deployment_id=deployment_id)
+        row = await self._get_secret_row_by_id(secret_id, workspace_id=workspace_id)
         if row is None:
             return None
         return self._to_model(row)
@@ -75,13 +75,13 @@ class PostgresSecretsRepository(BaseSecretsRepository):
         name: str,
         data: dict[str, str],
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Secret:
-        existing = await self._get_secret_row_by_name(name, deployment_id=deployment_id)
+        existing = await self._get_secret_row_by_name(name, workspace_id=workspace_id)
         if existing is not None:
             raise ValueError(f"Secret '{name}' already exists")
         secret = SecretTable(
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             name=name,
             encrypted_data=encrypt_data(data),
         )
@@ -95,16 +95,14 @@ class PostgresSecretsRepository(BaseSecretsRepository):
         *,
         name: str | None = None,
         data: dict[str, str] | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Secret | None:
-        secret = await self._get_secret_row_by_id(
-            secret_id, deployment_id=deployment_id
-        )
+        secret = await self._get_secret_row_by_id(secret_id, workspace_id=workspace_id)
         if secret is None:
             return None
         if name is not None and name != secret.name:
             existing = await self._get_secret_row_by_name(
-                name, deployment_id=deployment_id
+                name, workspace_id=workspace_id
             )
             if existing is not None and existing.id != secret_id:
                 raise ValueError(f"Secret '{name}' already exists")
@@ -116,11 +114,9 @@ class PostgresSecretsRepository(BaseSecretsRepository):
         return self._to_model(secret)
 
     async def delete_secret(
-        self, secret_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, secret_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> bool:
-        secret = await self._get_secret_row_by_id(
-            secret_id, deployment_id=deployment_id
-        )
+        secret = await self._get_secret_row_by_id(secret_id, workspace_id=workspace_id)
         if secret is None:
             return False
         await self._session.delete(secret)

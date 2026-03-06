@@ -282,8 +282,8 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             }
         )
 
-    async def _defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _defs(*, workspace_id: str = "local") -> dict[str, FunctionConfig]:
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "fn.task": FunctionConfig(
                 key="fn.task",
@@ -302,8 +302,8 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             ),
         }
 
-    async def _workers(*, deployment_id: str = "local") -> list[WorkerInstance]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _workers(*, workspace_id: str = "local") -> list[WorkerInstance]:
+        assert workspace_id == local_auth_scope.workspace_id
         return [
             _worker(worker_id="worker-a-1", worker_name="alpha", functions=["fn.task"]),
             _worker(worker_id="worker-a-2", worker_name="alpha", functions=["fn.task"]),
@@ -322,9 +322,9 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
         ]
 
     async def _queue_depth(
-        *, deployment_id: str = "local"
+        *, workspace_id: str = "local"
     ) -> dict[str, FunctionQueueDepthStats]:
-        assert deployment_id == local_auth_scope.deployment_id
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "fn.task": FunctionQueueDepthStats(
                 function="fn.task",
@@ -339,9 +339,9 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
         }
 
     async def _dispatch_reasons(
-        *, deployment_id: str = "local"
+        *, workspace_id: str = "local"
     ) -> dict[str, DispatchReasonMetrics]:
-        assert deployment_id == local_auth_scope.deployment_id
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "fn.task": DispatchReasonMetrics(
                 paused=1,
@@ -404,8 +404,8 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
 async def test_list_functions_has_no_alert_delivery_side_effect(
     sqlite_db, monkeypatch, local_auth_scope
 ) -> None:
-    async def _defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _defs(*, workspace_id: str = "local") -> dict[str, FunctionConfig]:
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "fn.task": FunctionConfig(
                 key="fn.task",
@@ -414,20 +414,20 @@ async def test_list_functions_has_no_alert_delivery_side_effect(
             )
         }
 
-    async def _workers(*, deployment_id: str = "local") -> list[WorkerInstance]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _workers(*, workspace_id: str = "local") -> list[WorkerInstance]:
+        assert workspace_id == local_auth_scope.workspace_id
         return []
 
     async def _queue_depth(
-        *, deployment_id: str = "local"
+        *, workspace_id: str = "local"
     ) -> dict[str, FunctionQueueDepthStats]:
-        assert deployment_id == local_auth_scope.deployment_id
+        assert workspace_id == local_auth_scope.workspace_id
         return {}
 
     async def _dispatch_reasons(
-        *, deployment_id: str = "local"
+        *, workspace_id: str = "local"
     ) -> dict[str, DispatchReasonMetrics]:
-        assert deployment_id == local_auth_scope.deployment_id
+        assert workspace_id == local_auth_scope.workspace_id
         return {}
 
     async def _emit_raises(_functions):  # type: ignore[no-untyped-def]
@@ -499,8 +499,8 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             }
         )
 
-    async def _defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _defs(*, workspace_id: str = "local") -> dict[str, FunctionConfig]:
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "fn.detail": FunctionConfig(
                 key="fn.detail",
@@ -510,8 +510,8 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             )
         }
 
-    async def _workers(*, deployment_id: str = "local") -> list[WorkerInstance]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _workers(*, workspace_id: str = "local") -> list[WorkerInstance]:
+        assert workspace_id == local_auth_scope.workspace_id
         return [
             _worker(
                 worker_id="worker-1",
@@ -526,9 +526,9 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
         ]
 
     async def _queue_depth(
-        *, deployment_id: str = "local"
+        *, workspace_id: str = "local"
     ) -> dict[str, FunctionQueueDepthStats]:
-        assert deployment_id == local_auth_scope.deployment_id
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "fn.detail": FunctionQueueDepthStats(
                 function="fn.detail",
@@ -538,9 +538,9 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
         }
 
     async def _dispatch_reasons(
-        *, deployment_id: str = "local"
+        *, workspace_id: str = "local"
     ) -> dict[str, DispatchReasonMetrics]:
-        assert deployment_id == local_auth_scope.deployment_id
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "fn.detail": DispatchReasonMetrics(
                 paused=0,
@@ -640,12 +640,12 @@ async def test_apis_routes_list_detail_and_trends(
                 )
             ]
 
-    async def _reader(*, deployment_id: str = "local") -> _Reader:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _reader(*, workspace_id: str = "local") -> _Reader:
+        assert workspace_id == local_auth_scope.workspace_id
         return _Reader()
 
-    async def _instances(*, deployment_id: str = "local") -> list[ApiInstance]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _instances(*, workspace_id: str = "local") -> list[ApiInstance]:
+        assert workspace_id == local_auth_scope.workspace_id
         now = datetime.now(UTC).isoformat()
         return [
             ApiInstance(
@@ -730,12 +730,12 @@ async def test_apis_routes_fallback_to_empty_when_sources_fail(
     monkeypatch,
     local_auth_scope,
 ) -> None:
-    async def _fail_reader(*, deployment_id: str = "local"):
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _fail_reader(*, workspace_id: str = "local"):
+        assert workspace_id == local_auth_scope.workspace_id
         raise RuntimeError("metrics unavailable")
 
-    async def _fail_instances(*, deployment_id: str = "local"):
-        assert deployment_id == local_auth_scope.deployment_id
+    async def _fail_instances(*, workspace_id: str = "local"):
+        assert workspace_id == local_auth_scope.workspace_id
         raise RuntimeError("instances unavailable")
 
     monkeypatch.setattr(apis_root_route, "get_metrics_reader", _fail_reader)

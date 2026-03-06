@@ -84,9 +84,7 @@ async def get_dashboard_stats(
 
     function_name_map: dict[str, str] = {}
     try:
-        function_defs = await get_function_definitions(
-            deployment_id=scope.deployment_id
-        )
+        function_defs = await get_function_definitions(workspace_id=scope.workspace_id)
         function_name_map = {key: cfg.name for key, cfg in function_defs.items()}
     except RuntimeError:
         function_name_map = {}
@@ -96,7 +94,7 @@ async def get_dashboard_stats(
 
         stats_window = await repo.get_stats(
             start_date=window_ago,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
 
         run_stats = RunStats(
@@ -108,7 +106,7 @@ async def get_dashboard_stats(
 
         function_stats = await repo.get_function_job_stats(
             start_date=window_ago,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
         top_candidates: list[TopFailingFunction] = []
         for function_key, item in function_stats.items():
@@ -143,7 +141,7 @@ async def get_dashboard_stats(
             started_before=now
             - timedelta(seconds=max(0, settings.dashboard_stuck_active_seconds)),
             limit=max(0, settings.dashboard_stuck_active_limit),
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
         for stuck in stuck_rows:
             started_at = as_utc_aware(stuck.started_at)
@@ -162,7 +160,7 @@ async def get_dashboard_stats(
             )
 
         # Get recent runs (last 10)
-        recent_jobs = await repo.list_jobs(limit=10, deployment_id=scope.deployment_id)
+        recent_jobs = await repo.list_jobs(limit=10, workspace_id=scope.workspace_id)
         for job in recent_jobs:
             duration_ms = None
             if job.started_at and job.completed_at:
@@ -190,7 +188,7 @@ async def get_dashboard_stats(
         failed_jobs = await repo.list_jobs(
             status="failed",
             limit=10,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
         for job in failed_jobs:
             duration_ms = None
@@ -221,7 +219,7 @@ async def get_dashboard_stats(
         avg_latency_ms=0.0,
         error_rate=0.0,
     )
-    queue_depth = await get_queue_depth_stats(deployment_id=scope.deployment_id)
+    queue_depth = await get_queue_depth_stats(workspace_id=scope.workspace_id)
     queue_stats = QueueStats(
         running=queue_depth.running,
         waiting=queue_depth.waiting,
@@ -234,7 +232,7 @@ async def get_dashboard_stats(
     )
     oldest_queued = await get_oldest_queued_jobs(
         limit=max(0, settings.dashboard_oldest_queued_limit),
-        deployment_id=scope.deployment_id,
+        workspace_id=scope.workspace_id,
     )
     oldest_queued_jobs = [
         OldestQueuedJob(
@@ -247,9 +245,9 @@ async def get_dashboard_stats(
         )
         for item in oldest_queued
     ]
-    worker_stats = await get_worker_stats(deployment_id=scope.deployment_id)
+    worker_stats = await get_worker_stats(workspace_id=scope.workspace_id)
     try:
-        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
+        reader = await get_metrics_reader(workspace_id=scope.workspace_id)
         api_summary = await reader.get_summary_window(minutes=window_minutes)
     except RuntimeError:
         api_summary = ApiMetricsSummary(

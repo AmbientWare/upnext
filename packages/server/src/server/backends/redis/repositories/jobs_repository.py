@@ -9,7 +9,7 @@ from typing import cast
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
-from shared.keys import DEFAULT_DEPLOYMENT_ID
+from shared.keys import DEFAULT_WORKSPACE_ID
 
 from server.backends.base.exceptions import InvalidCursorError
 from server.backends.base.models import Job
@@ -39,7 +39,7 @@ def _job_key(job_id: str) -> str:
 def _encode_job(job: Job) -> dict[str, object]:
     return {
         "id": job.id,
-        "deployment_id": job.deployment_id,
+        "workspace_id": job.workspace_id,
         "job_key": job.job_key,
         "function": job.function,
         "function_name": job.function_name,
@@ -118,7 +118,7 @@ class RedisJobRepository(BaseJobRepository):
         now = utcnow()
         job = Job(
             id=payload.id,
-            deployment_id=payload.deployment_id,
+            workspace_id=payload.workspace_id,
             job_key=payload.job_key or payload.id,
             function=payload.function,
             function_name=payload.function_name or payload.function,
@@ -157,21 +157,21 @@ class RedisJobRepository(BaseJobRepository):
         self,
         id: str,
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Job | None:
         job = await self._read_job(id)
-        if job is None or job.deployment_id != deployment_id:
+        if job is None or job.workspace_id != workspace_id:
             return None
         return job
 
     async def list_job_subtree(
-        self, id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[Job]:
-        root = await self.get_by_id(id, deployment_id=deployment_id)
+        root = await self.get_by_id(id, workspace_id=workspace_id)
         if root is None:
             return []
         all_jobs = [
-            job for job in await self._all_jobs() if job.deployment_id == deployment_id
+            job for job in await self._all_jobs() if job.workspace_id == workspace_id
         ]
         by_parent: dict[str, list[Job]] = defaultdict(list)
         for job in all_jobs:
@@ -215,10 +215,10 @@ class RedisJobRepository(BaseJobRepository):
         end_date: datetime | None = None,
         limit: int = 100,
         cursor: str | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[Job]:
         jobs = [
-            job for job in await self._all_jobs() if job.deployment_id == deployment_id
+            job for job in await self._all_jobs() if job.workspace_id == workspace_id
         ]
         if function:
             jobs = [job for job in jobs if job.function == function]
@@ -247,7 +247,7 @@ class RedisJobRepository(BaseJobRepository):
         )
 
         if cursor:
-            cursor_job = await self.get_by_id(cursor, deployment_id=deployment_id)
+            cursor_job = await self.get_by_id(cursor, workspace_id=workspace_id)
             if cursor_job is None:
                 raise InvalidCursorError(
                     f"Cursor job '{cursor}' not found. "
@@ -277,7 +277,7 @@ class RedisJobRepository(BaseJobRepository):
         worker_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> int:
         rows = await self.list_jobs(
             function=function,
@@ -287,7 +287,7 @@ class RedisJobRepository(BaseJobRepository):
             end_date=end_date,
             limit=10_000_000,
             cursor=None,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         return len(rows)
 
@@ -296,14 +296,14 @@ class RedisJobRepository(BaseJobRepository):
         function: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> JobStatsSummary:
         rows = await self.list_jobs(
             function=function,
             start_date=start_date,
             end_date=end_date,
             limit=10_000_000,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         total = len(rows)
         success_count = len([row for row in rows if row.status == "complete"])
@@ -334,13 +334,13 @@ class RedisJobRepository(BaseJobRepository):
         *,
         function: str,
         start_date: datetime,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[float]:
         rows = await self.list_jobs(
             function=function,
             start_date=start_date,
             limit=10_000_000,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         durations = [
             float(row.duration_ms)
@@ -359,14 +359,14 @@ class RedisJobRepository(BaseJobRepository):
         end_date: datetime,
         function: str | None = None,
         functions: list[str] | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[JobHourlyTrendRow]:
         rows = await self.list_jobs(
             function=function,
             start_date=start_date,
             end_date=end_date,
             limit=10_000_000,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         if function is None and functions is not None:
             allowed = set(functions)
@@ -392,12 +392,12 @@ class RedisJobRepository(BaseJobRepository):
         self,
         *,
         start_date: datetime,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, FunctionJobStats]:
         rows = await self.list_jobs(
             start_date=start_date,
             limit=10_000_000,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         grouped: dict[str, list[Job]] = defaultdict(list)
         for row in rows:
@@ -437,13 +437,13 @@ class RedisJobRepository(BaseJobRepository):
         *,
         start_date: datetime,
         function: str | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, FunctionWaitStats]:
         rows = await self.list_jobs(
             function=function,
             start_date=start_date,
             limit=10_000_000,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         waits_by_fn: dict[str, list[float]] = defaultdict(list)
         for row in rows:
@@ -471,12 +471,12 @@ class RedisJobRepository(BaseJobRepository):
         *,
         started_before: datetime,
         limit: int = 10,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[Job]:
         rows = await self.list_jobs(
             status="active",
             limit=10_000_000,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         active = [
             row
@@ -487,20 +487,20 @@ class RedisJobRepository(BaseJobRepository):
         return active[:limit]
 
     async def list_old_ids(
-        self, retention_hours: int = 24, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, retention_hours: int = 24, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[str]:
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
-        rows = await self.list_jobs(limit=10_000_000, deployment_id=deployment_id)
+        rows = await self.list_jobs(limit=10_000_000, workspace_id=workspace_id)
         return [row.id for row in rows if row.created_at and row.created_at < cutoff]
 
     async def delete_by_ids(
-        self, ids: list[str], *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> int:
         if not ids:
             return 0
         deleted = 0
         for job_id in ids:
-            job = await self.get_by_id(job_id, deployment_id=deployment_id)
+            job = await self.get_by_id(job_id, workspace_id=workspace_id)
             if job is None:
                 continue
             removed = await self._redis.delete(_job_key(job_id))

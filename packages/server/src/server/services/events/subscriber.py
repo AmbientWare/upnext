@@ -58,7 +58,7 @@ JobLifecycleEvent: TypeAlias = (
 @dataclass(frozen=True)
 class _ParsedEvent:
     event_id: str
-    deployment_id: str
+    workspace_id: str
     event_type: EventType
     event: JobLifecycleEvent
     worker_id: str
@@ -352,7 +352,7 @@ class StreamSubscriber:
                         async with self._nested_transaction(session):
                             applied = await process_event(
                                 event=parsed_event.event,
-                                deployment_id=parsed_event.deployment_id,
+                                workspace_id=parsed_event.workspace_id,
                                 session=session,
                             )
                         processed += 1
@@ -369,7 +369,7 @@ class StreamSubscriber:
                 try:
                     applied = await process_event(
                         event=parsed_event.event,
-                        deployment_id=parsed_event.deployment_id,
+                        workspace_id=parsed_event.workspace_id,
                     )
                     processed += 1
                     ack_ids.append(event_id)
@@ -507,7 +507,7 @@ class StreamSubscriber:
             parsed_events.append(
                 _ParsedEvent(
                     event_id=event_id,
-                    deployment_id=stream_event.deployment_id,
+                    workspace_id=stream_event.workspace_id,
                     event_type=stream_event.type,
                     event=parsed_event_model,
                     worker_id=stream_event.worker_id,
@@ -659,7 +659,7 @@ class StreamSubscriber:
             parsed_event.event_type.value,
             event_data,
             parsed_event.worker_id,
-            deployment_id=parsed_event.deployment_id,
+            workspace_id=parsed_event.workspace_id,
         )
 
     async def _publish_event(
@@ -668,7 +668,7 @@ class StreamSubscriber:
         data: dict[str, object],
         worker_id: str,
         *,
-        deployment_id: str,
+        workspace_id: str,
     ) -> None:
         """Publish event data for SSE consumers.
 
@@ -683,7 +683,7 @@ class StreamSubscriber:
             }
             event = SSEJobEvent.model_validate(payload)
             await self._redis.publish(
-                status_events_pubsub_channel(deployment_id=deployment_id),
+                status_events_pubsub_channel(workspace_id=workspace_id),
                 event.model_dump_json(exclude_none=True),
             )
         except Exception as e:

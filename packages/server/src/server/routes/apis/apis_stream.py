@@ -64,11 +64,7 @@ async def stream_api_trends(
                     break
 
                 result = await redis_client.xread(
-                    {
-                        api_requests_stream_key(
-                            deployment_id=scope.deployment_id
-                        ): last_id
-                    },
+                    {api_requests_stream_key(workspace_id=scope.workspace_id): last_id},
                     count=SSE_READ_COUNT,
                     block=SSE_BLOCK_MS,
                 )
@@ -154,7 +150,7 @@ async def list_api_request_events(
 
     async for event_id, row in iter_api_request_rows(
         redis_client,
-        deployment_id=scope.deployment_id,
+        workspace_id=scope.workspace_id,
         max_id=max_id,
         min_id=min_id,
         count=read_count,
@@ -212,11 +208,7 @@ async def stream_api_request_events(
                     break
 
                 result = await redis_client.xread(
-                    {
-                        api_requests_stream_key(
-                            deployment_id=scope.deployment_id
-                        ): last_id
-                    },
+                    {api_requests_stream_key(workspace_id=scope.workspace_id): last_id},
                     count=100,
                     block=SSE_BLOCK_MS,
                 )
@@ -277,11 +269,7 @@ async def stream_apis(
                     break
 
                 result = await redis_client.xread(
-                    {
-                        api_requests_stream_key(
-                            deployment_id=scope.deployment_id
-                        ): last_id
-                    },
+                    {api_requests_stream_key(workspace_id=scope.workspace_id): last_id},
                     count=SSE_READ_COUNT,
                     block=SSE_BLOCK_MS,
                 )
@@ -348,11 +336,7 @@ async def stream_api(
                     break
 
                 result = await redis_client.xread(
-                    {
-                        api_requests_stream_key(
-                            deployment_id=scope.deployment_id
-                        ): last_id
-                    },
+                    {api_requests_stream_key(workspace_id=scope.workspace_id): last_id},
                     count=SSE_READ_COUNT,
                     block=SSE_BLOCK_MS,
                 )

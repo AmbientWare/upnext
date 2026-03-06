@@ -118,8 +118,8 @@ class Worker:
     _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
     _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
     _status_flush_timeout_seconds: float = field(default=2.0, init=False)
-    _deployment_id: str = field(
-        default_factory=lambda: get_settings().normalized_deployment_id,
+    _workspace_id: str = field(
+        default_factory=lambda: get_settings().normalized_workspace_id,
         init=False,
     )
 
@@ -361,7 +361,7 @@ class Worker:
             self._redis_client,
             worker_id,
             config=StatusPublisherConfig(
-                deployment_id=settings.normalized_deployment_id,
+                workspace_id=settings.normalized_workspace_id,
                 stream=settings.status_events_stream,
                 max_stream_len=settings.status_stream_max_len,
                 retry_attempts=settings.status_publish_retry_attempts,
@@ -466,7 +466,7 @@ class Worker:
             self._redis_client,
             worker_id,
             self._worker_data(),
-            deployment_id=self._deployment_id,
+            workspace_id=self._workspace_id,
         )
         await write_worker_definition(
             self._redis_client,
@@ -474,19 +474,19 @@ class Worker:
             self._registered_functions,
             self._function_name_map,
             self.concurrency,
-            deployment_id=self._deployment_id,
+            workspace_id=self._workspace_id,
         )
         await write_function_definitions(
             self._redis_client,
             self._function_definitions,
-            deployment_id=self._deployment_id,
+            workspace_id=self._workspace_id,
         )
         self._heartbeat_task = asyncio.create_task(
             heartbeat_loop(
                 self._redis_client,
                 worker_id,
                 self._worker_data,
-                deployment_id=self._deployment_id,
+                workspace_id=self._workspace_id,
             )
         )
         logger.debug(f"Worker instance registered: {worker_id}")
@@ -647,7 +647,7 @@ class Worker:
                 await self._redis_client.delete(
                     worker_instance_key(
                         self._worker_id,
-                        deployment_id=self._deployment_id,
+                        workspace_id=self._workspace_id,
                     )
                 )
                 await publish_worker_signal(
@@ -655,7 +655,7 @@ class Worker:
                     self._worker_id,
                     self.name,
                     "worker.stopped",
-                    deployment_id=self._deployment_id,
+                    workspace_id=self._workspace_id,
                 )
             except Exception:
                 pass

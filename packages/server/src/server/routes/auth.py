@@ -16,8 +16,7 @@ class AuthStatusResponse(BaseModel):
 
 
 class AuthVerifyScopeResponse(BaseModel):
-    deployment_id: str
-    workspace_id: str | None
+    workspace_id: str
     mode: str
     subject: str | None
 
@@ -43,7 +42,6 @@ async def auth_verify(
     return AuthVerifyResponse(
         ok=True,
         scope=AuthVerifyScopeResponse(
-            deployment_id=scope.deployment_id,
             workspace_id=scope.workspace_id,
             mode=scope.mode.value,
             subject=scope.subject,

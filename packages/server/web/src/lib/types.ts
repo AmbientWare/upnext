@@ -380,8 +380,7 @@ export interface ApiRequestSnapshotEvent {
 export interface AuthVerifyResponse {
   ok: boolean;
   scope: {
-    deployment_id: string;
-    workspace_id: string | null;
+    workspace_id: string;
     mode: "self_hosted" | "cloud_runtime";
     subject: string | null;
   };

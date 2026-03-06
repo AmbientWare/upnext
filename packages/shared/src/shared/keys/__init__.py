@@ -1,10 +1,10 @@
 """Redis key builders and key-space constants."""
 
 from shared.keys.namespace import (
-    DEFAULT_DEPLOYMENT_ID,
-    DEPLOYMENT_NAMESPACE_PREFIX,
-    deployment_namespace_prefix,
-    normalize_deployment_id,
+    DEFAULT_WORKSPACE_ID,
+    WORKSPACE_NAMESPACE_PREFIX,
+    workspace_namespace_prefix,
+    normalize_workspace_id,
     scoped_key,
 )
 from shared.keys.api import (
@@ -75,10 +75,10 @@ from shared.keys.workers import (
 __all__ = [
     "API_PREFIX",
     "API_INSTANCE_PREFIX",
-    "DEFAULT_DEPLOYMENT_ID",
-    "DEPLOYMENT_NAMESPACE_PREFIX",
-    "deployment_namespace_prefix",
-    "normalize_deployment_id",
+    "DEFAULT_WORKSPACE_ID",
+    "WORKSPACE_NAMESPACE_PREFIX",
+    "workspace_namespace_prefix",
+    "normalize_workspace_id",
     "scoped_key",
     "MINUTE_BUCKET_TTL",
     "HOURLY_BUCKET_TTL",

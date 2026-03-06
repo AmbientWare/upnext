@@ -5,9 +5,9 @@ from __future__ import annotations
 from functools import lru_cache
 
 from shared.keys import (
-    DEFAULT_DEPLOYMENT_ID,
-    deployment_namespace_prefix,
-    normalize_deployment_id,
+    DEFAULT_WORKSPACE_ID,
+    workspace_namespace_prefix,
+    normalize_workspace_id,
     status_events_stream_key,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     queue_batch_size: int = 4
     queue_inbox_size: int = 4
     queue_outbox_size: int = 10_000
@@ -91,23 +91,23 @@ class Settings(BaseSettings):
         return not self.is_production
 
     @property
-    def normalized_deployment_id(self) -> str:
-        """Deployment identifier for all Redis-backed runtime state."""
-        return normalize_deployment_id(self.deployment_id)
+    def normalized_workspace_id(self) -> str:
+        """Workspace identifier for all Redis-backed runtime state."""
+        return normalize_workspace_id(self.workspace_id)
 
     @property
     def runtime_key_prefix(self) -> str:
-        """Redis key prefix for this runtime deployment namespace."""
-        return deployment_namespace_prefix(self.normalized_deployment_id)
+        """Redis key prefix for this runtime workspace namespace."""
+        return workspace_namespace_prefix(self.normalized_workspace_id)
 
     @property
     def status_events_stream(self) -> str:
         """Redis stream key for job lifecycle events."""
-        return status_events_stream_key(deployment_id=self.normalized_deployment_id)
+        return status_events_stream_key(workspace_id=self.normalized_workspace_id)
 
     @property
     def effective_status_durable_buffer_key(self) -> str:
-        """Resolve the durable pending buffer key inside the deployment namespace."""
+        """Resolve the durable pending buffer key inside the workspace namespace."""
         if self.status_durable_buffer_key:
             return self.status_durable_buffer_key
         return f"{self.runtime_key_prefix}:status:pending"

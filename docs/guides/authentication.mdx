@@ -60,7 +60,7 @@ curl -X POST http://localhost:8080/api/v1/auth/verify \
   -H "Authorization: Bearer your-key"
 ```
 
-Returns `200` with the resolved runtime scope if valid, `401` if invalid.
+Returns `200` with the resolved workspace scope if valid, `401` if invalid.
 
 ## Check auth status
 
@@ -71,7 +71,7 @@ curl http://localhost:8080/api/v1/auth/status
 ```
 
 ```json
-{"auth_enabled": true}
+{"auth_enabled": true, "runtime_mode": "self_hosted"}
 ```
 
 ## Environment variables

@@ -24,8 +24,8 @@ async def list_workers_route(
 ) -> WorkersListResponse:
     """List all workers with active instances, matching API pattern."""
     try:
-        worker_defs = await get_worker_definitions(deployment_id=scope.deployment_id)
-        all_instances = await list_worker_instances(deployment_id=scope.deployment_id)
+        worker_defs = await get_worker_definitions(workspace_id=scope.workspace_id)
+        all_instances = await list_worker_instances(workspace_id=scope.workspace_id)
     except RuntimeError:
         return WorkersListResponse(workers=[], total=0)
 
@@ -78,7 +78,7 @@ async def get_worker_route(
     try:
         instance = await get_worker_instance(
             worker_id,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e

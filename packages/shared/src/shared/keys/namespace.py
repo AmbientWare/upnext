@@ -1,24 +1,24 @@
-"""Deployment-scoped Redis namespace helpers."""
+"""Workspace-scoped Redis namespace helpers."""
 
 from __future__ import annotations
 
-DEFAULT_DEPLOYMENT_ID = "local"
-DEPLOYMENT_NAMESPACE_PREFIX = "upnext:deployments"
+DEFAULT_WORKSPACE_ID = "local"
+WORKSPACE_NAMESPACE_PREFIX = "upnext:workspaces"
 
 
-def normalize_deployment_id(deployment_id: str | None) -> str:
-    """Normalize deployment scope into a non-empty Redis-safe identifier."""
-    normalized = (deployment_id or DEFAULT_DEPLOYMENT_ID).strip()
+def normalize_workspace_id(workspace_id: str | None) -> str:
+    """Normalize workspace scope into a non-empty Redis-safe identifier."""
+    normalized = (workspace_id or DEFAULT_WORKSPACE_ID).strip()
     if not normalized:
-        return DEFAULT_DEPLOYMENT_ID
+        return DEFAULT_WORKSPACE_ID
     return normalized
 
 
-def deployment_namespace_prefix(deployment_id: str | None = None) -> str:
-    """Build the root Redis key prefix for one deployment namespace."""
-    return f"{DEPLOYMENT_NAMESPACE_PREFIX}:{normalize_deployment_id(deployment_id)}"
+def workspace_namespace_prefix(workspace_id: str | None = None) -> str:
+    """Build the root Redis key prefix for one workspace namespace."""
+    return f"{WORKSPACE_NAMESPACE_PREFIX}:{normalize_workspace_id(workspace_id)}"
 
 
-def scoped_key(*parts: str, deployment_id: str | None = None) -> str:
-    """Build a Redis key under a deployment namespace."""
-    return ":".join([deployment_namespace_prefix(deployment_id), *parts])
+def scoped_key(*parts: str, workspace_id: str | None = None) -> str:
+    """Build a Redis key under a workspace namespace."""
+    return ":".join([workspace_namespace_prefix(workspace_id), *parts])

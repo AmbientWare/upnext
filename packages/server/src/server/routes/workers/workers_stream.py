@@ -87,7 +87,7 @@ async def stream_workers(
                 result = await redis_client.xread(
                     {
                         worker_events_stream_key(
-                            deployment_id=scope.deployment_id
+                            workspace_id=scope.workspace_id
                         ): last_id
                     },
                     count=SSE_READ_COUNT,

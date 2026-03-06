@@ -110,7 +110,7 @@ async def _get_cached_job_trends_snapshot(
         hours,
         function,
         func_type_filter.value if func_type_filter else None,
-        scope.deployment_id,
+        scope.workspace_id,
     )
     now = time.monotonic()
     cached = _trends_snapshot_cache.get(key)
@@ -180,7 +180,7 @@ async def stream_job_trends(
                 result = await redis_client.xread(
                     {
                         status_events_stream_key(
-                            deployment_id=scope.deployment_id
+                            workspace_id=scope.workspace_id
                         ): last_id
                     },
                     count=SSE_READ_COUNT,

@@ -124,7 +124,7 @@ async def list_jobs(
                 end_date=before,
                 limit=limit + 1,
                 cursor=cursor,
-                deployment_id=scope.deployment_id,
+                workspace_id=scope.workspace_id,
             )
         except InvalidCursorError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -135,7 +135,7 @@ async def list_jobs(
             worker_id=worker_id,
             start_date=after,
             end_date=before,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
 
         has_more = len(jobs) > limit
@@ -169,7 +169,7 @@ async def get_job_stats(
             function=function,
             start_date=after,
             end_date=before,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
 
         return JobStatsResponse(
@@ -198,9 +198,7 @@ async def get_job_trends(
     allowed_functions: list[str] | None = None
     if type is not None:
         try:
-            func_defs = await get_function_definitions(
-                deployment_id=scope.deployment_id
-            )
+            func_defs = await get_function_definitions(workspace_id=scope.workspace_id)
         except RuntimeError:
             return _empty_trends(hours)
 
@@ -223,7 +221,7 @@ async def get_job_trends(
             end_date=now,
             function=function,
             functions=allowed_functions,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
 
         # Initialize all hours
@@ -277,14 +275,14 @@ async def _publish_cancelled_status_event(
     redis_client: Redis,
     job: Job,
     *,
-    deployment_id: str,
+    workspace_id: str,
     reason: str | None = None,
 ) -> None:
     """Emit job.cancelled so event ingestion and DB history stay in sync."""
     cancelled_at = datetime.now(UTC).isoformat()
     payload = {
         "type": "job.cancelled",
-        "deployment_id": deployment_id,
+        "workspace_id": workspace_id,
         "job_id": job.id,
         "worker_id": job.worker_id or "server",
         "ts": str(time.time()),
@@ -303,14 +301,14 @@ async def _publish_cancelled_status_event(
     }
     try:
         await redis_client.xadd(
-            status_events_stream_key(deployment_id=deployment_id),
+            status_events_stream_key(workspace_id=workspace_id),
             payload,  # type: ignore[arg-type]
             maxlen=STATUS_STREAM_MAXLEN,
             approximate=True,
         )
     except TypeError:
         await redis_client.xadd(
-            status_events_stream_key(deployment_id=deployment_id),
+            status_events_stream_key(workspace_id=workspace_id),
             payload,  # type: ignore[arg-type]
             maxlen=STATUS_STREAM_MAXLEN,
         )
@@ -332,7 +330,7 @@ async def get_job_timeline(
     """
     async with backend.session() as tx:
         repo = tx.jobs
-        jobs = await repo.list_job_subtree(job_id, deployment_id=scope.deployment_id)
+        jobs = await repo.list_job_subtree(job_id, workspace_id=scope.workspace_id)
         if not jobs:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -352,7 +350,7 @@ async def get_job(
     """Get a specific job by ID."""
     async with backend.session() as tx:
         repo = tx.jobs
-        job = await repo.get_by_id(job_id, deployment_id=scope.deployment_id)
+        job = await repo.get_by_id(job_id, workspace_id=scope.workspace_id)
 
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -405,7 +403,7 @@ async def cancel_job_route(
     await _publish_cancelled_status_event(
         redis_client,
         job,
-        deployment_id=scope.deployment_id,
+        workspace_id=scope.workspace_id,
         reason="Cancelled via API",
     )
 
@@ -435,7 +433,7 @@ async def retry_job(
 
     async with backend.session() as tx:
         repo = tx.jobs
-        row = await repo.get_by_id(job_id, deployment_id=scope.deployment_id)
+        row = await repo.get_by_id(job_id, workspace_id=scope.workspace_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 

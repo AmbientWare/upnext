@@ -94,7 +94,7 @@ async def list_functions(
     """
     functions = await collect_functions_snapshot(
         backend=backend,
-        deployment_id=scope.deployment_id,
+        workspace_id=scope.workspace_id,
         type=type,
     )
     return FunctionsListResponse(functions=functions, total=len(functions))
@@ -103,7 +103,7 @@ async def list_functions(
 async def collect_functions_snapshot(
     *,
     backend: BackendService,
-    deployment_id: str,
+    workspace_id: str,
     type: FunctionType | None = None,
 ) -> list[FunctionInfo]:
     """Collect function snapshot rows for API responses/background alerting."""
@@ -112,20 +112,20 @@ async def collect_functions_snapshot(
     day_ago = now - timedelta(hours=24)
 
     try:
-        func_defs = await get_function_definitions(deployment_id=deployment_id)
-        active_workers = await list_worker_instances(deployment_id=deployment_id)
+        func_defs = await get_function_definitions(workspace_id=workspace_id)
+        active_workers = await list_worker_instances(workspace_id=workspace_id)
     except RuntimeError:
         func_defs = {}
         active_workers = []
     try:
         queue_depth_by_function = await get_function_queue_depth_stats(
-            deployment_id=deployment_id
+            workspace_id=workspace_id
         )
     except RuntimeError:
         queue_depth_by_function = {}
     try:
         dispatch_reasons_by_function = await get_function_dispatch_reason_stats(
-            deployment_id=deployment_id
+            workspace_id=workspace_id
         )
     except RuntimeError:
         dispatch_reasons_by_function = {}
@@ -154,11 +154,11 @@ async def collect_functions_snapshot(
         repo = tx.jobs
         func_stats = await repo.get_function_job_stats(
             start_date=day_ago,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
         wait_stats = await repo.get_function_wait_stats(
             start_date=day_ago,
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
         )
 
     all_keys = set(func_defs.keys()) | set(func_stats.keys())
@@ -230,20 +230,20 @@ async def get_function(
     function_key = name
 
     try:
-        func_defs = await get_function_definitions(deployment_id=scope.deployment_id)
-        active_workers = await list_worker_instances(deployment_id=scope.deployment_id)
+        func_defs = await get_function_definitions(workspace_id=scope.workspace_id)
+        active_workers = await list_worker_instances(workspace_id=scope.workspace_id)
     except RuntimeError:
         func_defs = {}
         active_workers = []
     try:
         queue_depth_by_function = await get_function_queue_depth_stats(
-            deployment_id=scope.deployment_id
+            workspace_id=scope.workspace_id
         )
     except RuntimeError:
         queue_depth_by_function = {}
     try:
         dispatch_reasons_by_function = await get_function_dispatch_reason_stats(
-            deployment_id=scope.deployment_id
+            workspace_id=scope.workspace_id
         )
     except RuntimeError:
         dispatch_reasons_by_function = {}
@@ -282,14 +282,14 @@ async def get_function(
         stats = await repo.get_stats(
             function=function_key,
             start_date=day_ago,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
         runs_24h = stats.total
         success_rate = round(stats.success_rate, 1)
         wait_stats = await repo.get_function_wait_stats(
             start_date=day_ago,
             function=function_key,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
         function_wait = wait_stats.get(function_key)
         if function_wait:
@@ -299,7 +299,7 @@ async def get_function(
         durations = await repo.get_durations(
             function=function_key,
             start_date=day_ago,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
         if durations:
             avg_duration_ms = round(sum(durations) / len(durations), 2)
@@ -309,7 +309,7 @@ async def get_function(
         jobs = await repo.list_jobs(
             function=function_key,
             limit=20,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
         )
         if jobs:
             first = jobs[0]
@@ -387,7 +387,7 @@ async def pause_function(
     try:
         payload = await set_function_pause_state(
             name,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
             paused=True,
         )
     except ValueError as exc:
@@ -408,7 +408,7 @@ async def resume_function(
     try:
         payload = await set_function_pause_state(
             name,
-            deployment_id=scope.deployment_id,
+            workspace_id=scope.workspace_id,
             paused=False,
         )
     except ValueError as exc:

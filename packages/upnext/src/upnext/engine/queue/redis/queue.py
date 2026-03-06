@@ -43,7 +43,7 @@ from shared.keys import (
     function_definition_pattern,
     job_match_pattern,
     job_status_channel,
-    normalize_deployment_id,
+    normalize_workspace_id,
     queue_key,
 )
 from shared.keys import (
@@ -173,7 +173,7 @@ class RedisQueue(BaseQueue):
 
         self._redis_url = redis_url
         self._key_prefix = key_prefix
-        self._deployment_id = normalize_deployment_id(settings.deployment_id)
+        self._workspace_id = normalize_workspace_id(settings.workspace_id)
         self._consumer_group = consumer_group
         self._claim_timeout_ms = max(
             1,
@@ -452,7 +452,7 @@ class RedisQueue(BaseQueue):
         return shared_job_cancelled_key(job_id, key_prefix=self._key_prefix)
 
     def _function_def_key(self, function: str) -> str:
-        return function_definition_key(function, deployment_id=self._deployment_id)
+        return function_definition_key(function, workspace_id=self._workspace_id)
 
     def _rate_limit_key(self, function: str) -> str:
         return shared_function_rate_limit_key(function, key_prefix=self._key_prefix)
@@ -766,7 +766,7 @@ class RedisQueue(BaseQueue):
         while True:
             cursor, keys = await client.scan(
                 cursor=cursor,
-                match=function_definition_pattern(deployment_id=self._deployment_id),
+                match=function_definition_pattern(workspace_id=self._workspace_id),
                 count=100,
             )
             rows = await client.mget(keys) if keys else []
@@ -2735,7 +2735,7 @@ class RedisQueue(BaseQueue):
         """Update the function definition in Redis with the next scheduled run time."""
         func_key = function_definition_key(
             function_name,
-            deployment_id=self._deployment_id,
+            workspace_id=self._workspace_id,
         )
         data = await client.get(func_key)
         config = self._parse_function_config(data, key_hint=func_key)

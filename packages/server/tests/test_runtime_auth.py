@@ -46,12 +46,12 @@ class _SelfHostedSettings:
     runtime_token_secret: str | None = None
     runtime_token_issuer: str = "upnext-saas"
     runtime_token_audience: str = "upnext-runtime"
-    default_deployment_id: str = "local"
+    default_workspace_id: str = "local"
     is_cloud_runtime: bool = False
 
     @property
-    def normalized_default_deployment_id(self) -> str:
-        return self.default_deployment_id
+    def normalized_default_workspace_id(self) -> str:
+        return self.default_workspace_id
 
 
 @dataclass
@@ -60,12 +60,12 @@ class _CloudRuntimeSettings:
     runtime_token_secret: str = "cloud-secret"
     runtime_token_issuer: str = "upnext-saas"
     runtime_token_audience: str = "upnext-runtime"
-    default_deployment_id: str = "dep_orders_api"
+    default_workspace_id: str = "ws_orders_api"
     is_cloud_runtime: bool = True
 
     @property
-    def normalized_default_deployment_id(self) -> str:
-        return self.default_deployment_id
+    def normalized_default_workspace_id(self) -> str:
+        return self.default_workspace_id
 
 
 @pytest.mark.asyncio
@@ -76,7 +76,7 @@ async def test_require_api_key_returns_local_admin_scope_when_self_hosted_auth_d
 
     scope = await auth_module.require_api_key(_make_request())
 
-    assert scope.deployment_id == "local"
+    assert scope.workspace_id == "local"
     assert scope.mode == RuntimeModes.SELF_HOSTED
 
 
@@ -92,7 +92,7 @@ async def test_require_api_key_validates_static_self_hosted_token(
 
     scope = await auth_module.require_api_key(_make_request("local-secret"))
 
-    assert scope.deployment_id == "local"
+    assert scope.workspace_id == "local"
     assert scope.mode == RuntimeModes.SELF_HOSTED
     assert scope.subject == "self-hosted-token"
 
@@ -109,17 +109,14 @@ async def test_require_api_key_decodes_cloud_runtime_token_scope(
         {
             "iss": settings.runtime_token_issuer,
             "aud": settings.runtime_token_audience,
-            "sub": "dep_orders_api:user_demo_01",
-            "workspace_id": "ws_demo_01",
-            "deployment_id": "dep_orders_api",
-            "role": "admin",
+            "sub": "ws_orders_api:user_demo_01",
+            "workspace_id": "ws_orders_api",
             "exp": int(time()) + 300,
         },
     )
 
     scope = await auth_module.require_api_key(_make_request(token))
 
-    assert scope.deployment_id == "dep_orders_api"
-    assert scope.workspace_id == "ws_demo_01"
+    assert scope.workspace_id == "ws_orders_api"
     assert scope.mode == RuntimeModes.CLOUD_RUNTIME
-    assert scope.subject == "dep_orders_api:user_demo_01"
+    assert scope.subject == "ws_orders_api:user_demo_01"

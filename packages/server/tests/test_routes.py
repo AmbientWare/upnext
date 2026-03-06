@@ -597,8 +597,8 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
             }
         )
 
-    async def fake_defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_defs(*, workspace_id: str = "local") -> dict[str, FunctionConfig]:
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "task_key": FunctionConfig(
                 key="task_key",
@@ -610,8 +610,8 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
             )
         }
 
-    async def fake_workers(*, deployment_id: str = "local") -> list[WorkerInstance]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_workers(*, workspace_id: str = "local") -> list[WorkerInstance]:
+        assert workspace_id == local_auth_scope.workspace_id
         return [
             WorkerInstance(
                 id="worker-1",
@@ -711,8 +711,8 @@ async def test_workers_route_includes_defs_and_instance_only_workers(
     monkeypatch,
     local_auth_scope,
 ) -> None:
-    async def fake_defs(*, deployment_id: str = "local") -> dict[str, WorkerDefinition]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_defs(*, workspace_id: str = "local") -> dict[str, WorkerDefinition]:
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "defined-worker": WorkerDefinition(
                 name="defined-worker",
@@ -722,8 +722,8 @@ async def test_workers_route_includes_defs_and_instance_only_workers(
             )
         }
 
-    async def fake_instances(*, deployment_id: str = "local") -> list[WorkerInstance]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_instances(*, workspace_id: str = "local") -> list[WorkerInstance]:
+        assert workspace_id == local_auth_scope.workspace_id
         return [
             WorkerInstance(
                 id="w-1",
@@ -906,12 +906,12 @@ async def test_dashboard_includes_queue_depth_when_database_available(
         capacity = 8
         total = 13
 
-    async def fake_queue_depth(*, deployment_id: str = "local") -> _QueueDepth:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_queue_depth(*, workspace_id: str = "local") -> _QueueDepth:
+        assert workspace_id == local_auth_scope.workspace_id
         return _QueueDepth()
 
-    async def fake_worker_stats(*, deployment_id: str = "local") -> WorkerStats:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_worker_stats(*, workspace_id: str = "local") -> WorkerStats:
+        assert workspace_id == local_auth_scope.workspace_id
         return WorkerStats(total=1)
 
     class FakeReader:
@@ -925,8 +925,8 @@ async def test_dashboard_includes_queue_depth_when_database_available(
                 error_rate=0.0,
             )
 
-    async def fake_reader(*, deployment_id: str = "local") -> FakeReader:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_reader(*, workspace_id: str = "local") -> FakeReader:
+        assert workspace_id == local_auth_scope.workspace_id
         return FakeReader()
 
     monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
@@ -960,12 +960,12 @@ async def test_dashboard_window_stats_use_requested_minutes(
         capacity = 10
         total = 2
 
-    async def fake_queue_depth(*, deployment_id: str = "local") -> _QueueDepth:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_queue_depth(*, workspace_id: str = "local") -> _QueueDepth:
+        assert workspace_id == local_auth_scope.workspace_id
         return _QueueDepth()
 
-    async def fake_worker_stats(*, deployment_id: str = "local") -> WorkerStats:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_worker_stats(*, workspace_id: str = "local") -> WorkerStats:
+        assert workspace_id == local_auth_scope.workspace_id
         return WorkerStats(total=1)
 
     class FakeReader:
@@ -984,8 +984,8 @@ async def test_dashboard_window_stats_use_requested_minutes(
                 error_rate=1.5,
             )
 
-    async def fake_reader(*, deployment_id: str = "local") -> FakeReader:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_reader(*, workspace_id: str = "local") -> FakeReader:
+        assert workspace_id == local_auth_scope.workspace_id
         return FakeReader()
 
     monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
@@ -1079,12 +1079,12 @@ async def test_dashboard_includes_runbook_sections(
         dashboard_stuck_active_limit = 5
         dashboard_stuck_active_seconds = 900
 
-    async def fake_queue_depth(*, deployment_id: str = "local") -> _QueueDepth:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_queue_depth(*, workspace_id: str = "local") -> _QueueDepth:
+        assert workspace_id == local_auth_scope.workspace_id
         return _QueueDepth()
 
-    async def fake_worker_stats(*, deployment_id: str = "local") -> WorkerStats:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_worker_stats(*, workspace_id: str = "local") -> WorkerStats:
+        assert workspace_id == local_auth_scope.workspace_id
         return WorkerStats(total=2)
 
     class FakeReader:
@@ -1098,12 +1098,12 @@ async def test_dashboard_includes_runbook_sections(
                 error_rate=0.0,
             )
 
-    async def fake_reader(*, deployment_id: str = "local") -> FakeReader:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_reader(*, workspace_id: str = "local") -> FakeReader:
+        assert workspace_id == local_auth_scope.workspace_id
         return FakeReader()
 
-    async def fake_defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_defs(*, workspace_id: str = "local") -> dict[str, FunctionConfig]:
+        assert workspace_id == local_auth_scope.workspace_id
         return {
             "fn.fail": FunctionConfig(
                 key="fn.fail",
@@ -1120,9 +1120,9 @@ async def test_dashboard_includes_runbook_sections(
     async def fake_oldest(
         limit: int = 10,
         *,
-        deployment_id: str = "local",
+        workspace_id: str = "local",
     ) -> list[QueuedJobSnapshot]:
-        assert deployment_id == local_auth_scope.deployment_id
+        assert workspace_id == local_auth_scope.workspace_id
         _ = limit
         return [
             QueuedJobSnapshot(
@@ -1219,7 +1219,7 @@ async def test_job_artifact_stream_filters_to_requested_job(
                                 "data": json.dumps(
                                     {
                                         "type": "artifact.created",
-                                        "deployment_id": "local",
+                                        "workspace_id": "local",
                                         "at": "2026-02-09T12:00:00Z",
                                         "job_id": "job-a",
                                         "artifact_id": "artifact-1",
@@ -1248,7 +1248,7 @@ async def test_job_artifact_stream_filters_to_requested_job(
                                 "data": json.dumps(
                                     {
                                         "type": "artifact.created",
-                                        "deployment_id": "local",
+                                        "workspace_id": "local",
                                         "at": "2026-02-09T12:00:01Z",
                                         "job_id": "job-b",
                                         "artifact_id": "artifact-2",
@@ -1322,12 +1322,12 @@ async def test_apis_route_merges_tracked_and_active_instances(
                 )
             ]
 
-    async def fake_reader(*, deployment_id: str = "local") -> FakeMetricsReader:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_reader(*, workspace_id: str = "local") -> FakeMetricsReader:
+        assert workspace_id == local_auth_scope.workspace_id
         return FakeMetricsReader()
 
-    async def fake_instances(*, deployment_id: str = "local") -> list[ApiInstance]:
-        assert deployment_id == local_auth_scope.deployment_id
+    async def fake_instances(*, workspace_id: str = "local") -> list[ApiInstance]:
+        assert workspace_id == local_auth_scope.workspace_id
         return [
             ApiInstance(
                 id="api-1",

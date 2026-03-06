@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
-from shared.keys import DEFAULT_DEPLOYMENT_ID
+from shared.keys import DEFAULT_WORKSPACE_ID
 
 from server.backends.base.repositories import BaseArtifactRepository
 from server.backends.base.repository_models import ArtifactRecord, PendingArtifactRecord
@@ -48,7 +48,7 @@ def _pending_job_key(job_id: str) -> str:
 def _encode_artifact(record: ArtifactRecord) -> dict[str, object]:
     return {
         "id": record.id,
-        "deployment_id": record.deployment_id,
+        "workspace_id": record.workspace_id,
         "job_id": record.job_id,
         "name": record.name,
         "type": record.type,
@@ -73,7 +73,7 @@ def _decode_artifact(payload: dict[str, object]) -> ArtifactRecord | None:
 def _encode_pending(record: PendingArtifactRecord) -> dict[str, object]:
     return {
         "id": record.id,
-        "deployment_id": record.deployment_id,
+        "workspace_id": record.workspace_id,
         "job_id": record.job_id,
         "name": record.name,
         "type": record.type,
@@ -131,7 +131,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         storage_key: str = "",
         status: str = "available",
         error: str | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> ArtifactRecord:
         size_bytes, content_type = infer_artifact_metadata(
             data=data,
@@ -141,7 +141,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         )
         record = ArtifactRecord(
             id=str(uuid4()),
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             job_id=job_id,
             name=name,
             type=artifact_type,
@@ -171,7 +171,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         storage_key: str = "",
         status: str = "queued",
         error: str | None = None,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> PendingArtifactRecord:
         size_bytes, content_type = infer_artifact_metadata(
             data=data,
@@ -181,7 +181,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         )
         record = PendingArtifactRecord(
             id=str(uuid4()),
-            deployment_id=deployment_id,
+            workspace_id=workspace_id,
             job_id=job_id,
             name=name,
             type=artifact_type,
@@ -198,22 +198,22 @@ class RedisArtifactRepository(BaseArtifactRepository):
         return record
 
     async def promote_pending_for_job(
-        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, job_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> int:
         return len(
             await self.promote_pending_for_job_with_artifacts(
-                job_id, deployment_id=deployment_id
+                job_id, workspace_id=workspace_id
             )
         )
 
     async def promote_pending_for_job_with_artifacts(
-        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, job_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[ArtifactRecord]:
         pending_ids = await self._redis.smembers(_pending_job_key(job_id))
         pending_rows: list[PendingArtifactRecord] = []
         for raw_pending_id in pending_ids:
             row = await self._read_pending(decode_text(raw_pending_id))
-            if row is not None and row.deployment_id == deployment_id:
+            if row is not None and row.workspace_id == workspace_id:
                 pending_rows.append(row)
         pending_rows.sort(key=lambda row: (row.created_at, row.id))
         return await self._promote_pending_rows(pending_rows)
@@ -225,7 +225,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         for pending in pending_rows:
             artifact = ArtifactRecord(
                 id=str(uuid4()),
-                deployment_id=pending.deployment_id,
+                workspace_id=pending.workspace_id,
                 job_id=pending.job_id,
                 name=pending.name,
                 type=pending.type,
@@ -246,7 +246,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         return out
 
     async def promote_ready_pending(
-        self, *, limit: int = 500, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, *, limit: int = 500, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> int:
         if limit <= 0:
             return 0
@@ -257,7 +257,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
             row = await self._read_pending(pending_id)
             if row is None:
                 continue
-            if row.deployment_id != deployment_id:
+            if row.workspace_id != workspace_id:
                 continue
             if await self._redis.exists(_job_key(row.job_id)):
                 pending_rows.append(row)
@@ -266,7 +266,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         return len(promoted)
 
     async def cleanup_stale_pending_with_rows(
-        self, *, retention_hours: int = 24, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, *, retention_hours: int = 24, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[PendingArtifactRecord]:
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
         pending_ids = await self._redis.smembers(_PENDING_SET)
@@ -276,7 +276,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
             row = await self._read_pending(pending_id)
             if row is None:
                 continue
-            if row.deployment_id != deployment_id:
+            if row.workspace_id != workspace_id:
                 continue
             if row.created_at < cutoff:
                 stale.append(row)
@@ -288,33 +288,33 @@ class RedisArtifactRepository(BaseArtifactRepository):
         return stale
 
     async def get_by_id(
-        self, artifact_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, artifact_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> ArtifactRecord | None:
         record = await self._read_artifact(artifact_id)
-        if record is None or record.deployment_id != deployment_id:
+        if record is None or record.workspace_id != workspace_id:
             return None
         return record
 
     async def list_by_job(
-        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, job_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[ArtifactRecord]:
         artifact_ids = await self._redis.smembers(_artifact_job_key(job_id))
         out: list[ArtifactRecord] = []
         for raw_artifact_id in artifact_ids:
             record = await self._read_artifact(decode_text(raw_artifact_id))
-            if record is not None and record.deployment_id == deployment_id:
+            if record is not None and record.workspace_id == workspace_id:
                 out.append(record)
         out.sort(key=lambda row: (row.created_at, row.id), reverse=True)
         return out
 
     async def list_by_job_ids(
-        self, job_ids: list[str], *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+        self, job_ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> list[ArtifactRecord]:
         if not job_ids:
             return []
         out: list[ArtifactRecord] = []
         for job_id in job_ids:
-            out.extend(await self.list_by_job(job_id, deployment_id=deployment_id))
+            out.extend(await self.list_by_job(job_id, workspace_id=workspace_id))
         out.sort(key=lambda row: (row.created_at, row.id), reverse=True)
         return out
 
@@ -322,9 +322,9 @@ class RedisArtifactRepository(BaseArtifactRepository):
         self,
         artifact_id: str,
         *,
-        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> bool:
-        record = await self.get_by_id(artifact_id, deployment_id=deployment_id)
+        record = await self.get_by_id(artifact_id, workspace_id=workspace_id)
         if record is None:
             return False
         await self._redis.delete(_artifact_key(artifact_id))

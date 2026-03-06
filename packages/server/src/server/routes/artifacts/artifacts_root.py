@@ -85,7 +85,7 @@ async def create_artifact(
         repo = tx.artifacts
 
         try:
-            if await job_repo.get_by_id(job_id, deployment_id=scope.deployment_id):
+            if await job_repo.get_by_id(job_id, workspace_id=scope.workspace_id):
                 try:
                     artifact = await repo.create(
                         job_id=job_id,
@@ -97,7 +97,7 @@ async def create_artifact(
                         storage_backend=storage_backend,
                         storage_key=storage_key,
                         status="available",
-                        deployment_id=scope.deployment_id,
+                        workspace_id=scope.workspace_id,
                     )
 
                     logger.debug(
@@ -107,7 +107,7 @@ async def create_artifact(
                     await publish_artifact_event(
                         ArtifactStreamEvent(
                             type="artifact.created",
-                            deployment_id=scope.deployment_id,
+                            workspace_id=scope.workspace_id,
                             at=datetime.now(UTC).isoformat(),
                             job_id=artifact.job_id,
                             artifact_id=artifact.id,
@@ -127,7 +127,7 @@ async def create_artifact(
                         sha256=content_hash,
                         storage_backend=storage_backend,
                         storage_key=storage_key,
-                        deployment_id=scope.deployment_id,
+                        workspace_id=scope.workspace_id,
                     )
                     logger.debug(
                         "Queued artifact '%s' after insert race for job %s (pending_id=%s)",
@@ -144,7 +144,7 @@ async def create_artifact(
                     await publish_artifact_event(
                         ArtifactStreamEvent(
                             type="artifact.queued",
-                            deployment_id=scope.deployment_id,
+                            workspace_id=scope.workspace_id,
                             at=datetime.now(UTC).isoformat(),
                             job_id=job_id,
                             artifact_id=None,
@@ -163,7 +163,7 @@ async def create_artifact(
                 sha256=content_hash,
                 storage_backend=storage_backend,
                 storage_key=storage_key,
-                deployment_id=scope.deployment_id,
+                workspace_id=scope.workspace_id,
             )
             logger.debug(
                 "Queued artifact '%s' for job %s (pending_id=%s)",
@@ -181,7 +181,7 @@ async def create_artifact(
             await publish_artifact_event(
                 ArtifactStreamEvent(
                     type="artifact.queued",
-                    deployment_id=scope.deployment_id,
+                    workspace_id=scope.workspace_id,
                     at=datetime.now(UTC).isoformat(),
                     job_id=job_id,
                     artifact_id=None,
@@ -211,7 +211,7 @@ async def list_artifacts(
     """List all artifacts for a job."""
     async with backend.session() as tx:
         repo = tx.artifacts
-        artifacts = await repo.list_by_job(job_id, deployment_id=scope.deployment_id)
+        artifacts = await repo.list_by_job(job_id, workspace_id=scope.workspace_id)
 
         return ArtifactListResponse(
             artifacts=[ArtifactResponse.model_validate(a) for a in artifacts],
@@ -235,7 +235,7 @@ async def get_artifact(
     """Get an artifact by ID."""
     async with backend.session() as tx:
         repo = tx.artifacts
-        artifact = await repo.get_by_id(artifact_id, deployment_id=scope.deployment_id)
+        artifact = await repo.get_by_id(artifact_id, workspace_id=scope.workspace_id)
 
         if not artifact:
             raise HTTPException(status_code=404, detail="Artifact not found")
@@ -262,7 +262,7 @@ async def get_artifact_content(
     """Get raw artifact content bytes."""
     async with backend.session() as tx:
         repo = tx.artifacts
-        artifact = await repo.get_by_id(artifact_id, deployment_id=scope.deployment_id)
+        artifact = await repo.get_by_id(artifact_id, workspace_id=scope.workspace_id)
 
         if not artifact:
             raise HTTPException(status_code=404, detail="Artifact not found")
@@ -303,7 +303,7 @@ async def delete_artifact(
     """Delete an artifact."""
     async with backend.session() as tx:
         repo = tx.artifacts
-        artifact = await repo.get_by_id(artifact_id, deployment_id=scope.deployment_id)
+        artifact = await repo.get_by_id(artifact_id, workspace_id=scope.workspace_id)
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
 
@@ -314,7 +314,7 @@ async def delete_artifact(
             # Best effort: still delete DB row.
             pass
 
-        deleted = await repo.delete(artifact_id, deployment_id=scope.deployment_id)
+        deleted = await repo.delete(artifact_id, workspace_id=scope.workspace_id)
 
         if not deleted:
             raise HTTPException(status_code=404, detail="Artifact not found")
@@ -322,7 +322,7 @@ async def delete_artifact(
         await publish_artifact_event(
             ArtifactStreamEvent(
                 type="artifact.deleted",
-                deployment_id=scope.deployment_id,
+                workspace_id=scope.workspace_id,
                 at=datetime.now(UTC).isoformat(),
                 job_id=artifact.job_id,
                 artifact_id=artifact_id,

@@ -35,18 +35,18 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.func.now(),
         ),
-        sa.Column("deployment_id", sa.String(255), nullable=False, server_default="local"),
+        sa.Column("workspace_id", sa.String(255), nullable=False, server_default="local"),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("encrypted_data", sa.Text, nullable=False),
-        sa.Index("ix_secrets_deployment_id", "deployment_id"),
-        sa.Index("ix_secrets_deployment_name", "deployment_id", "name", unique=True),
+        sa.Index("ix_secrets_workspace_id", "workspace_id"),
+        sa.Index("ix_secrets_deployment_name", "workspace_id", "name", unique=True),
     )
 
     # Job tables
     op.create_table(
         "job_history",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("deployment_id", sa.String(255), nullable=False, server_default="local"),
+        sa.Column("workspace_id", sa.String(255), nullable=False, server_default="local"),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -94,7 +94,7 @@ def upgrade() -> None:
         sa.Column("error", sa.Text, nullable=True),
         # Single-column indexes
         sa.Index("ix_job_history_function", "function"),
-        sa.Index("ix_job_history_deployment_id", "deployment_id"),
+        sa.Index("ix_job_history_workspace_id", "workspace_id"),
         sa.Index("ix_job_history_function_name", "function_name"),
         sa.Index("ix_job_history_job_key", "job_key"),
         sa.Index("ix_job_history_job_type", "job_type"),
@@ -104,8 +104,8 @@ def upgrade() -> None:
         sa.Index("ix_job_history_parent_id", "parent_id"),
         sa.Index("ix_job_history_root_id", "root_id"),
         # Compound indexes
-        sa.Index("ix_job_history_deployment_created_at", "deployment_id", "created_at"),
-        sa.Index("ix_job_history_deployment_status", "deployment_id", "status"),
+        sa.Index("ix_job_history_deployment_created_at", "workspace_id", "created_at"),
+        sa.Index("ix_job_history_deployment_status", "workspace_id", "status"),
         sa.Index("ix_job_history_function_status", "function", "status"),
         sa.Index("ix_job_history_created_at_status", "created_at", "status"),
         # Status CHECK constraint (inline = SQLite-safe)
@@ -137,7 +137,7 @@ def upgrade() -> None:
             sa.ForeignKey("job_history.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("deployment_id", sa.String(255), nullable=False, server_default="local"),
+        sa.Column("workspace_id", sa.String(255), nullable=False, server_default="local"),
         # Artifact identity
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("type", sa.String(50), nullable=False),
@@ -150,7 +150,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(20), nullable=False, server_default="available"),
         sa.Column("error", sa.Text, nullable=True),
         # Indexes
-        sa.Index("ix_artifacts_deployment_id", "deployment_id"),
+        sa.Index("ix_artifacts_workspace_id", "workspace_id"),
         sa.Index("ix_artifacts_job_id", "job_id"),
         sa.Index("ix_artifacts_name", "name"),
         sa.Index("ix_artifacts_storage", "storage_backend", "storage_key"),
@@ -173,7 +173,7 @@ def upgrade() -> None:
         ),
         # Job linkage (no FK — allows pre-job buffering)
         sa.Column("job_id", sa.String(36), nullable=False),
-        sa.Column("deployment_id", sa.String(255), nullable=False, server_default="local"),
+        sa.Column("workspace_id", sa.String(255), nullable=False, server_default="local"),
         # Artifact identity
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("type", sa.String(50), nullable=False),
@@ -186,7 +186,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(20), nullable=False, server_default="queued"),
         sa.Column("error", sa.Text, nullable=True),
         # Indexes
-        sa.Index("ix_pending_artifacts_deployment_id", "deployment_id"),
+        sa.Index("ix_pending_artifacts_workspace_id", "workspace_id"),
         sa.Index("ix_pending_artifacts_job_id", "job_id"),
         sa.Index("ix_pending_artifacts_created_at", "created_at"),
     )

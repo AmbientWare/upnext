@@ -48,15 +48,15 @@ class SecretTable(Base):
 
     __tablename__ = "secrets"
 
-    deployment_id: Mapped[str] = mapped_column(
+    workspace_id: Mapped[str] = mapped_column(
         String(255), nullable=False, default="local"
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     encrypted_data: Mapped[str] = mapped_column(Text, nullable=False)
 
     __table_args__ = (
-        Index("ix_secrets_deployment_id", "deployment_id"),
-        Index("ix_secrets_deployment_name", "deployment_id", "name", unique=True),
+        Index("ix_secrets_workspace_id", "workspace_id"),
+        Index("ix_secrets_deployment_name", "workspace_id", "name", unique=True),
     )
 
     def __repr__(self) -> str:
@@ -75,7 +75,7 @@ class JobHistoryTable(Base):
 
     # Job IDs come from the runtime/queue; do not auto-generate in DB.
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    deployment_id: Mapped[str] = mapped_column(
+    workspace_id: Mapped[str] = mapped_column(
         String(255), nullable=False, default="local"
     )
 
@@ -134,7 +134,7 @@ class JobHistoryTable(Base):
     # Indexes for common queries
     __table_args__ = (
         Index("ix_job_history_function", "function"),
-        Index("ix_job_history_deployment_id", "deployment_id"),
+        Index("ix_job_history_workspace_id", "workspace_id"),
         Index("ix_job_history_function_name", "function_name"),
         Index("ix_job_history_job_key", "job_key"),
         Index("ix_job_history_job_type", "job_type"),
@@ -144,8 +144,8 @@ class JobHistoryTable(Base):
         Index("ix_job_history_parent_id", "parent_id"),
         Index("ix_job_history_root_id", "root_id"),
         # Compound indexes for dashboard and trend queries
-        Index("ix_job_history_deployment_created_at", "deployment_id", "created_at"),
-        Index("ix_job_history_deployment_status", "deployment_id", "status"),
+        Index("ix_job_history_deployment_created_at", "workspace_id", "created_at"),
+        Index("ix_job_history_deployment_status", "workspace_id", "status"),
         Index("ix_job_history_function_status", "function", "status"),
         Index("ix_job_history_created_at_status", "created_at", "status"),
         # Enforce valid status values
@@ -207,7 +207,7 @@ class ArtifactTable(Base):
     job_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("job_history.id", ondelete="CASCADE"), nullable=False
     )
-    deployment_id: Mapped[str] = mapped_column(
+    workspace_id: Mapped[str] = mapped_column(
         String(255), nullable=False, default="local"
     )
 
@@ -233,7 +233,7 @@ class ArtifactTable(Base):
 
     # Indexes
     __table_args__ = (
-        Index("ix_artifacts_deployment_id", "deployment_id"),
+        Index("ix_artifacts_workspace_id", "workspace_id"),
         Index("ix_artifacts_job_id", "job_id"),
         Index("ix_artifacts_name", "name"),
         Index("ix_artifacts_storage", "storage_backend", "storage_key"),
@@ -257,7 +257,7 @@ class PendingArtifactTable(Base):
 
     # Job linkage (no FK by design to allow pre-job buffering)
     job_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    deployment_id: Mapped[str] = mapped_column(
+    workspace_id: Mapped[str] = mapped_column(
         String(255), nullable=False, default="local"
     )
 
@@ -276,7 +276,7 @@ class PendingArtifactTable(Base):
 
     # Indexes
     __table_args__ = (
-        Index("ix_pending_artifacts_deployment_id", "deployment_id"),
+        Index("ix_pending_artifacts_workspace_id", "workspace_id"),
         Index("ix_pending_artifacts_job_id", "job_id"),
         Index("ix_pending_artifacts_created_at", "created_at"),
     )
