@@ -43,6 +43,7 @@ def _encode_runtime_token(secret: str, payload: dict[str, object]) -> str:
 @dataclass
 class _SelfHostedSettings:
     auth_enabled: bool = False
+    api_key: str | None = None
     runtime_token_secret: str | None = None
     runtime_token_issuer: str = "upnext-saas"
     runtime_token_audience: str = "upnext-runtime"
@@ -82,6 +83,24 @@ async def test_require_api_key_returns_local_admin_scope_when_self_hosted_auth_d
 
 
 @pytest.mark.asyncio
+async def test_require_api_key_validates_static_self_hosted_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        auth_module,
+        "get_settings",
+        lambda: _SelfHostedSettings(auth_enabled=True, api_key="local-secret"),
+    )
+
+    scope = await auth_module.require_api_key(_make_request("local-secret"))
+
+    assert scope.deployment_id == "local"
+    assert scope.mode == RuntimeModes.SELF_HOSTED
+    assert scope.role == RuntimeRoles.ADMIN
+    assert scope.subject == "self-hosted-token"
+
+
+@pytest.mark.asyncio
 async def test_require_api_key_decodes_cloud_runtime_token_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -111,7 +130,7 @@ async def test_require_api_key_decodes_cloud_runtime_token_scope(
 
 
 @pytest.mark.asyncio
-async def test_require_admin_rejects_cloud_runtime_even_with_admin_role(
+async def test_require_admin_allows_cloud_runtime_admin_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _CloudRuntimeSettings()
@@ -130,9 +149,36 @@ async def test_require_admin_rejects_cloud_runtime_even_with_admin_role(
         },
     )
 
-    with pytest.raises(HTTPException, match="Admin routes unavailable") as exc:
+    scope = await auth_module.require_admin(
+        await auth_module.require_api_key(_make_request(token))
+    )
+
+    assert scope.role == RuntimeRoles.ADMIN
+
+
+@pytest.mark.asyncio
+async def test_require_admin_rejects_non_admin_cloud_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _CloudRuntimeSettings()
+    monkeypatch.setattr(auth_module, "get_settings", lambda: settings)
+
+    token = _encode_runtime_token(
+        settings.runtime_token_secret,
+        {
+            "iss": settings.runtime_token_issuer,
+            "aud": settings.runtime_token_audience,
+            "sub": "dep_orders_api:user_demo_01",
+            "workspace_id": "ws_demo_01",
+            "deployment_id": "dep_orders_api",
+            "role": "viewer",
+            "exp": int(time()) + 300,
+        },
+    )
+
+    with pytest.raises(HTTPException, match="Admin access required") as exc:
         await auth_module.require_admin(
             await auth_module.require_api_key(_make_request(token))
         )
 
-    assert exc.value.status_code == 404
+    assert exc.value.status_code == 403

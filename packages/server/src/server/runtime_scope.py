@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from server.backends.base.models import User
-
 
 class RuntimeModes(StrEnum):
     SELF_HOSTED = "self_hosted"
@@ -28,7 +26,6 @@ class AuthScope:
     role: RuntimeRoles
     mode: RuntimeModes
     subject: str | None = None
-    user: User | None = None
 
     @property
     def is_admin(self) -> bool:

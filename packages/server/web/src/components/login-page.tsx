@@ -9,7 +9,7 @@ type LoginPageProps = {
 };
 
 export function LoginPage({ runtimeMode = "self_hosted" }: LoginPageProps) {
-  const { login, setIsAdmin } = useAuth();
+  const { login } = useAuth();
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -37,11 +37,8 @@ export function LoginPage({ runtimeMode = "self_hosted" }: LoginPageProps) {
       });
 
       if (res.ok) {
-        const data = await res.json();
+        await res.json();
         login(trimmed);
-        if (data.user?.is_admin) {
-          setIsAdmin(true);
-        }
       } else if (res.status === 401 || res.status === 403) {
         setError("Invalid API key");
       } else {

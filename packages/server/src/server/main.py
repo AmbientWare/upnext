@@ -39,8 +39,6 @@ _REQUIRED_SQL_TABLES = {
     "job_history",
     "artifacts",
     "pending_artifacts",
-    "users",
-    "api_keys",
     "secrets",
 }
 
@@ -79,16 +77,11 @@ async def lifespan(_app: FastAPI):
                 "Protected routes will reject all requests until "
                 "UPNEXT_RUNTIME_TOKEN_SECRET is configured."
             )
-    # Seed admin user + API key when self-hosted auth is enabled
     elif settings.auth_enabled:
         logger.info("Self-hosted authentication enabled")
-        if settings.api_key:
-            async with backend.session() as tx:
-                await tx.auth.seed_admin_api_key(settings.api_key)
-        else:
-            logger.warning(
-                "UPNEXT_AUTH_ENABLED=true but no UPNEXT_API_KEY set. "
-                "No seed key created — all /api/v1 requests will require a valid key."
+        if not settings.api_key:
+            raise RuntimeError(
+                "UPNEXT_AUTH_ENABLED=true requires UPNEXT_API_KEY to be configured"
             )
     else:
         logger.info("Authentication disabled (set UPNEXT_AUTH_ENABLED=true to enable)")

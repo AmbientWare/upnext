@@ -19,7 +19,6 @@ def _local_scope() -> AuthScope:
         role=RuntimeRoles.ADMIN,
         mode=RuntimeModes.SELF_HOSTED,
         subject="test-admin",
-        user=None,
     )
 
 

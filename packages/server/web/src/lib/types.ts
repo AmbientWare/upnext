@@ -447,51 +447,6 @@ export interface DashboardStats {
 }
 
 // =============================================================================
-// Admin Schemas
-// =============================================================================
-
-export interface AdminUser {
-  id: string;
-  username: string;
-  is_admin: boolean;
-  api_key_count: number;
-  created_at: string;
-}
-
-export interface AdminUserCreated extends AdminUser {
-  api_key: AdminApiKeyCreated;
-}
-
-export interface AdminUsersListResponse {
-  users: AdminUser[];
-  total: number;
-}
-
-export interface AdminApiKey {
-  id: string;
-  user_id: string;
-  key_prefix: string;
-  name: string;
-  is_active: boolean;
-  last_used_at: string | null;
-  created_at: string;
-}
-
-export interface AdminApiKeyCreated {
-  id: string;
-  user_id: string;
-  key_prefix: string;
-  name: string;
-  is_active: boolean;
-  raw_key: string;
-}
-
-export interface AdminApiKeysListResponse {
-  api_keys: AdminApiKey[];
-  total: number;
-}
-
-// =============================================================================
 // Secrets Schemas
 // =============================================================================
 
@@ -518,9 +473,11 @@ export interface SecretsListResponse {
 
 export interface AuthVerifyResponse {
   ok: boolean;
-  user: {
-    id: string;
-    username: string;
-    is_admin: boolean;
-  } | null;
+  scope: {
+    deployment_id: string;
+    workspace_id: string | null;
+    role: "viewer" | "operator" | "admin";
+    mode: "self_hosted" | "cloud_runtime";
+    subject: string | null;
+  };
 }

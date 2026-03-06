@@ -71,28 +71,6 @@ class Job:
         return TaskJobSource()
 
 
-@dataclass(frozen=True)
-class User:
-    id: str
-    username: str
-    is_admin: bool
-    created_at: datetime
-    updated_at: datetime
-
-
-@dataclass
-class ApiKey:
-    id: str
-    user_id: str
-    key_hash: str
-    key_prefix: str
-    name: str
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-    last_used_at: datetime | None = None
-
-
 @dataclass
 class Secret:
     id: str

@@ -11,13 +11,11 @@ import redis.asyncio as redis
 from server.backends.base import BaseBackend
 from server.backends.base.repositories import (
     BaseArtifactRepository,
-    BaseAuthRepository,
     BaseJobRepository,
     BaseSecretsRepository,
 )
 from server.backends.redis.repositories import (
     RedisArtifactRepository,
-    RedisAuthRepository,
     RedisJobRepository,
     RedisSecretsRepository,
 )
@@ -102,7 +100,6 @@ class RedisBackend(BaseBackend):
             raw_session=raw_session,
             jobs=self.job_repository(raw_session),
             artifacts=self.artifact_repository(raw_session),
-            auth=self.auth_repository(raw_session),
             secrets=self.secrets_repository(raw_session),
         )
 
@@ -111,9 +108,6 @@ class RedisBackend(BaseBackend):
 
     def artifact_repository(self, session: object) -> BaseArtifactRepository:
         return RedisArtifactRepository(require_redis_client(session))
-
-    def auth_repository(self, session: object) -> BaseAuthRepository:
-        return RedisAuthRepository(require_redis_client(session))
 
     def secrets_repository(self, session: object) -> BaseSecretsRepository:
         return RedisSecretsRepository(require_redis_client(session))

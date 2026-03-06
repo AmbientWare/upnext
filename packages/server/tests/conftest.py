@@ -43,7 +43,6 @@ async def sqlite_db(
     db = BaseSqlBackend(f"sqlite+aiosqlite:///{db_path}")
     await db.connect()
     await db.create_tables()
-    import server.auth as auth_module
     import server.routes.jobs.jobs_stream as jobs_stream_module
     import server.services.events.processing as event_processing_module
     import server.services.events.subscriber as event_subscriber_module
@@ -53,7 +52,6 @@ async def sqlite_db(
     monkeypatch.setattr(event_subscriber_module, "get_backend", lambda: db)
     monkeypatch.setattr(jobs_stream_module, "get_backend", lambda: db)
     monkeypatch.setattr(cleanup_module, "get_backend", lambda: db)
-    monkeypatch.setattr(auth_module, "get_backend", lambda: db)
     try:
         yield db
     finally:
@@ -68,5 +66,4 @@ def local_auth_scope() -> AuthScope:
         role=RuntimeRoles.ADMIN,
         mode=RuntimeModes.SELF_HOSTED,
         subject="test-admin",
-        user=None,
     )

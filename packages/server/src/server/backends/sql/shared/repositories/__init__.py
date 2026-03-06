@@ -6,12 +6,8 @@ from server.backends.base.repository_models import (
     JobRecordCreate,
     PendingArtifactRecord,
 )
-from server.backends.base.utils import hash_api_key
 from server.backends.sql.shared.repositories.artifacts_repository import (
     PostgresArtifactRepository,
-)
-from server.backends.sql.shared.repositories.auth_repository import (
-    PostgresAuthRepository,
 )
 from server.backends.sql.shared.repositories.jobs_repository import (
     InvalidCursorError,
@@ -24,12 +20,9 @@ from server.backends.sql.shared.repositories.secrets_repository import (
 # Backward-compatible aliases for callers that used generic names.
 JobRepository = PostgresJobRepository
 ArtifactRepository = PostgresArtifactRepository
-AuthRepository = PostgresAuthRepository
 SecretsRepository = PostgresSecretsRepository
 
 __all__ = [
-    "PostgresAuthRepository",
-    "hash_api_key",
     "PostgresArtifactRepository",
     "ArtifactRepository",
     "ArtifactRecord",
@@ -42,6 +35,5 @@ __all__ = [
     "PendingArtifactRecord",
     "PostgresSecretsRepository",
     "SecretsRepository",
-    "AuthRepository",
     "InvalidCursorError",
 ]

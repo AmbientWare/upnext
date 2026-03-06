@@ -7,7 +7,6 @@ from contextlib import AbstractAsyncContextManager
 
 from server.backends.base.repositories import (
     BaseArtifactRepository,
-    BaseAuthRepository,
     BaseJobRepository,
     BaseSecretsRepository,
 )
@@ -52,9 +51,6 @@ class BaseBackend(ABC):
 
     @abstractmethod
     def artifact_repository(self, session: object) -> BaseArtifactRepository: ...
-
-    @abstractmethod
-    def auth_repository(self, session: object) -> BaseAuthRepository: ...
 
     @abstractmethod
     def secrets_repository(self, session: object) -> BaseSecretsRepository: ...

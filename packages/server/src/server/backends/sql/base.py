@@ -11,14 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.backends.base import BaseBackend
 from server.backends.base.repositories import (
     BaseArtifactRepository,
-    BaseAuthRepository,
     BaseJobRepository,
     BaseSecretsRepository,
 )
 from server.backends.session_context import RepositorySession
 from server.backends.sql.shared.repositories import (
     PostgresArtifactRepository,
-    PostgresAuthRepository,
     PostgresJobRepository,
     PostgresSecretsRepository,
 )
@@ -88,7 +86,6 @@ class BaseSqlBackend(BaseBackend):
                 raw_session=raw_session,
                 jobs=self.job_repository(raw_session),
                 artifacts=self.artifact_repository(raw_session),
-                auth=self.auth_repository(raw_session),
                 secrets=self.secrets_repository(raw_session),
             )
 
@@ -97,9 +94,6 @@ class BaseSqlBackend(BaseBackend):
 
     def artifact_repository(self, session: object) -> BaseArtifactRepository:
         return PostgresArtifactRepository(require_sql_session(session))
-
-    def auth_repository(self, session: object) -> BaseAuthRepository:
-        return PostgresAuthRepository(require_sql_session(session))
 
     def secrets_repository(self, session: object) -> BaseSecretsRepository:
         return PostgresSecretsRepository(require_sql_session(session))

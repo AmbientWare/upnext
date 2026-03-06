@@ -7,7 +7,6 @@ from typing import Any, cast
 
 import pytest
 import pytest_asyncio
-from server.backends.base.utils import hash_api_key
 from server.backends.redis.session import RedisBackend
 from server.backends.session_context import RepositorySession
 from server.backends.sql.base import BaseSqlBackend
@@ -260,45 +259,6 @@ async def test_artifacts_contract_promote_ready_pending_requires_job_row(
 
     promoted_after = await tx.artifacts.promote_ready_pending(limit=100)
     assert promoted_after == 1, backend_name
-
-
-@pytest.mark.asyncio
-async def test_auth_contract_user_api_keys_and_seed(
-    repo_session: tuple[str, RepositorySession[object]],
-) -> None:
-    backend_name, tx = repo_session
-
-    user = await tx.auth.create_user("alice", is_admin=False)
-    with pytest.raises(ValueError):
-        await tx.auth.create_user("alice", is_admin=False)
-
-    created_key, raw_key = await tx.auth.create_api_key(user.id, "ci")
-    found_by_hash = await tx.auth.get_api_key_by_hash(hash_api_key(raw_key))
-    assert found_by_hash is not None, backend_name
-    assert found_by_hash.id == created_key.id, backend_name
-
-    toggled = await tx.auth.toggle_api_key(created_key.id, False)
-    assert toggled is not None, backend_name
-    assert toggled.is_active is False, backend_name
-
-    rotated_key, rotated_raw = await tx.auth.rotate_api_key(user.id)
-    assert rotated_key.id != created_key.id, backend_name
-    assert await tx.auth.get_api_key_by_hash(hash_api_key(rotated_raw)) is not None
-
-    await tx.auth.seed_admin_api_key("upnxt_contract_seed_key")
-    await tx.auth.seed_admin_api_key("upnxt_contract_seed_key")
-    admin = await tx.auth.get_user_by_username("admin")
-    assert admin is not None and admin.is_admin is True, backend_name
-
-    users_with_counts = await tx.auth.list_users()
-    users_by_name = {u.username: count for u, count in users_with_counts}
-    assert "alice" in users_by_name, backend_name
-    assert "admin" in users_by_name, backend_name
-
-    deleted = await tx.auth.delete_user(user.id)
-    deleted_again = await tx.auth.delete_user(user.id)
-    assert deleted is True, backend_name
-    assert deleted_again is False, backend_name
 
 
 @pytest.mark.asyncio

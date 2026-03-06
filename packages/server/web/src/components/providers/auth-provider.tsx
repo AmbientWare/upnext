@@ -13,7 +13,6 @@ import { AuthContext, type AuthContextValue } from "./auth-context";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [apiKey, setApiKey] = useState<string | null>(getStoredApiKey);
-  const [isAdmin, setIsAdmin] = useState(false);
 
   const login = useCallback((key: string) => {
     setStoredApiKey(key);
@@ -23,19 +22,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     clearStoredApiKey();
     setApiKey(null);
-    setIsAdmin(false);
   }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       apiKey,
       isAuthenticated: apiKey !== null,
-      isAdmin,
       login,
       logout,
-      setIsAdmin,
     }),
-    [apiKey, isAdmin, login, logout]
+    [apiKey, login, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,13 +1,10 @@
 """Authentication dependencies for UpNext API."""
 
 import logging
-from datetime import UTC, datetime
+from secrets import compare_digest
 
 from fastapi import Depends, HTTPException, Request
 
-from server.backends import get_backend
-from server.backends.base.models import User
-from server.backends.base.utils import hash_api_key
 from server.config import get_settings
 from server.runtime_scope import AuthScope, RuntimeModes, RuntimeRoles
 from server.runtime_tokens import RuntimeTokenError, decode_runtime_token
@@ -22,24 +19,15 @@ def _cache_scope(request: Request, scope: AuthScope) -> AuthScope:
 
 def _self_hosted_scope(
     *,
-    user: User | None,
     subject: str | None,
 ) -> AuthScope:
     settings = get_settings()
-    role = RuntimeRoles.VIEWER
-    if user is None:
-        role = RuntimeRoles.ADMIN
-    elif user.is_admin:
-        role = RuntimeRoles.ADMIN
-    else:
-        role = RuntimeRoles.OPERATOR
     return AuthScope(
         deployment_id=settings.normalized_default_deployment_id,
         workspace_id=None,
-        role=role,
+        role=RuntimeRoles.ADMIN,
         mode=RuntimeModes.SELF_HOSTED,
         subject=subject,
-        user=user,
     )
 
 
@@ -51,7 +39,7 @@ def get_request_scope(request: Request | None = None) -> AuthScope:
         if isinstance(cached, AuthScope):
             return cached
 
-    return _self_hosted_scope(user=None, subject="local-admin")
+    return _self_hosted_scope(subject="local-admin")
 
 
 async def require_api_key(
@@ -75,18 +63,18 @@ async def require_api_key(
                 detail="Cloud runtime token secret is not configured",
             )
 
-        raw_token: str | None = None
+        runtime_token: str | None = None
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
-            raw_token = auth_header.removeprefix("Bearer ").strip()
-        if not raw_token:
+            runtime_token = auth_header.removeprefix("Bearer ").strip()
+        if not runtime_token:
             raise HTTPException(
                 status_code=401, detail="Missing or invalid Authorization header"
             )
 
         try:
             claims = decode_runtime_token(
-                raw_token,
+                runtime_token,
                 secret=settings.runtime_token_secret,
                 expected_issuer=settings.runtime_token_issuer,
                 expected_audience=settings.runtime_token_audience,
@@ -129,48 +117,31 @@ async def require_api_key(
                 role=RuntimeRoles(role),
                 mode=RuntimeModes.CLOUD_RUNTIME,
                 subject=subject,
-                user=None,
             ),
         )
 
     if not settings.auth_enabled:
-        return _cache_scope(
-            request, _self_hosted_scope(user=None, subject="local-admin")
-        )
+        return _cache_scope(request, _self_hosted_scope(subject="local-admin"))
 
-    # Extract key from Authorization header
-    raw_key: str | None = None
+    raw_token: str | None = None
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
-        raw_key = auth_header.removeprefix("Bearer ").strip()
+        raw_token = auth_header.removeprefix("Bearer ").strip()
 
-    if not raw_key:
+    if not raw_token:
         raise HTTPException(
             status_code=401, detail="Missing or invalid Authorization header"
         )
+    configured_token = settings.api_key
+    if not configured_token:
+        raise HTTPException(
+            status_code=500,
+            detail="Self-hosted authentication is enabled but no API key is configured",
+        )
+    if not compare_digest(raw_token, configured_token):
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
-    key_hash = hash_api_key(raw_key)
-
-    backend = get_backend()
-    async with backend.session() as tx:
-        api_key = await tx.auth.get_api_key_by_hash(key_hash)
-
-        if api_key is None:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-
-        if not api_key.is_active:
-            raise HTTPException(status_code=403, detail="API key is disabled")
-
-        now = datetime.now(UTC)
-        api_key.last_used_at = now
-        api_key.updated_at = now
-        await tx.auth.save_api_key(api_key)
-
-        user = await tx.auth.get_user_by_id(api_key.user_id)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-
-    return _cache_scope(request, _self_hosted_scope(user=user, subject=user.username))
+    return _cache_scope(request, _self_hosted_scope(subject="self-hosted-token"))
 
 
 async def require_auth_scope(
@@ -189,10 +160,6 @@ async def require_admin(
     Chains through ``require_api_key`` internally so routers only need
     ``dependencies=[Depends(require_admin)]``.
     """
-    settings = get_settings()
-    if settings.is_cloud_runtime:
-        raise HTTPException(status_code=404, detail="Admin routes unavailable")
-
     if not scope.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
 

@@ -261,8 +261,10 @@ async def test_job_trends_stream_emits_initial_and_update_frames(
         hours: int = 24,
         function: str | None = None,
         type: str | None = None,
+        scope=None,
         backend=None,
     ) -> JobTrendsResponse:
+        assert scope == local_auth_scope
         _ = hours, function, type, backend
         call_count["value"] += 1
         return JobTrendsResponse(
@@ -360,8 +362,10 @@ async def test_job_trends_stream_ignores_progress_events(
         hours: int = 24,
         function: str | None = None,
         type: str | None = None,
+        scope=None,
         backend=None,
     ) -> JobTrendsResponse:
+        assert scope == local_auth_scope
         _ = hours, function, type, backend
         call_count["value"] += 1
         return JobTrendsResponse(

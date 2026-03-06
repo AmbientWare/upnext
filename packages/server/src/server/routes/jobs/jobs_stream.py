@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 jobs_stream_router = APIRouter(tags=["jobs"])
 _TRENDS_CACHE_LOCK = asyncio.Lock()
 _trends_snapshot_cache: dict[
-    tuple[int, str | None, str | None],
+    tuple[int, str | None, str | None, str],
     tuple[float, str | None, JobTrendsResponse],
 ] = {}
 
@@ -80,12 +80,14 @@ async def _fetch_job_trends_snapshot(
     hours: int,
     function: str | None,
     func_type: FunctionType | None,
+    scope: AuthScope,
 ) -> JobTrendsResponse:
     try:
         return await get_job_trends(
             hours=hours,
             function=function,
             type=func_type,
+            scope=scope,
             backend=get_backend(),
         )
     except RuntimeError:
@@ -100,6 +102,7 @@ async def _get_cached_job_trends_snapshot(
     hours: int,
     function: str | None,
     func_type: FunctionType | None,
+    scope: AuthScope,
     event_token: str | None = None,
 ) -> JobTrendsResponse:
     func_type_filter = func_type if isinstance(func_type, FunctionType) else None
@@ -107,6 +110,7 @@ async def _get_cached_job_trends_snapshot(
         hours,
         function,
         func_type_filter.value if func_type_filter else None,
+        scope.deployment_id,
     )
     now = time.monotonic()
     cached = _trends_snapshot_cache.get(key)
@@ -124,6 +128,7 @@ async def _get_cached_job_trends_snapshot(
             hours=hours,
             function=function,
             func_type=func_type_filter,
+            scope=scope,
         )
         _trends_snapshot_cache[key] = (
             now + SSE_CACHE_TTL_SECONDS,
@@ -160,6 +165,7 @@ async def stream_job_trends(
                 hours=hours_window,
                 function=function_filter,
                 func_type=func_type_filter,
+                scope=scope,
             )
             initial_event = JobTrendsSnapshotEvent(
                 at=datetime.now(UTC).isoformat(),
@@ -208,6 +214,7 @@ async def stream_job_trends(
                     hours=hours_window,
                     function=function_filter,
                     func_type=func_type_filter,
+                    scope=scope,
                     event_token=latest_relevant_event_id,
                 )
                 event = JobTrendsSnapshotEvent(

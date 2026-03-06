@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { createRootRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   EventStreamProvider,
@@ -7,20 +6,18 @@ import {
 } from "@/components/providers/event-stream-provider";
 import { useAuth } from "@/components/providers/use-auth";
 import { LoginPage } from "@/components/login-page";
-import { verifyAuth } from "@/lib/upnext-api";
 import { env } from "@/lib/env";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/components/layout";
 import { ErrorBoundary } from "@/components/shared";
-import { CircleUserIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
+import { CircleUserIcon, LogOutIcon } from "lucide-react";
 
 type AuthStatus = {
   auth_enabled: boolean;
@@ -44,7 +41,7 @@ async function fetchAuthStatus(): Promise<AuthStatus> {
 function RootLayout() {
   const router = useRouterState();
   const path = router.location.pathname;
-  const { isAuthenticated, isAdmin, logout, setIsAdmin } = useAuth();
+  const { isAuthenticated, logout } = useAuth();
 
   const { data: authStatus, isLoading: authLoading } = useQuery({
     queryKey: ["auth", "status"],
@@ -53,24 +50,8 @@ function RootLayout() {
     retry: 1,
   });
 
-  // Fetch user info (including isAdmin) when authenticated
-  const { data: verifyData } = useQuery({
-    queryKey: ["auth", "verify"],
-    queryFn: verifyAuth,
-    enabled: isAuthenticated,
-    staleTime: 5 * 60_000,
-    retry: 1,
-  });
-
-  useEffect(() => {
-    if (verifyData?.user) {
-      setIsAdmin(verifyData.user.is_admin);
-    }
-  }, [verifyData, setIsAdmin]);
-
   const authEnabled = authStatus?.auth_enabled ?? true;
   const runtimeMode = authStatus?.runtime_mode ?? "self_hosted";
-  const isCloudRuntime = runtimeMode === "cloud_runtime";
 
   // Show login page if auth is enabled and user is not authenticated
   if (authLoading) {
@@ -104,17 +85,6 @@ function RootLayout() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {isAdmin && !isCloudRuntime && (
-                    <>
-                      <DropdownMenuItem asChild>
-                        <Link to="/admin">
-                          <ShieldCheckIcon className="mr-2 h-4 w-4" />
-                          Admin
-                        </Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                    </>
-                  )}
                   <DropdownMenuItem onClick={logout}>
                     <LogOutIcon className="mr-2 h-4 w-4" />
                     Logout
@@ -162,9 +132,6 @@ function getStreamSubscriptions(path: string): EventStreamSubscriptions {
   if (path.startsWith("/secrets")) {
     return { jobs: false, apis: false, apiEvents: false, workers: false };
   }
-  if (path.startsWith("/admin")) {
-    return { jobs: false, apis: false, apiEvents: false, workers: false };
-  }
   return { jobs: false, apis: false, apiEvents: false, workers: false };
 }
 
@@ -176,6 +143,5 @@ function getPageTitle(path: string): string {
   if (path.startsWith("/functions")) return "Functions";
   if (path.startsWith("/jobs")) return "Jobs";
   if (path.startsWith("/secrets")) return "Secrets";
-  if (path.startsWith("/admin")) return "Admin";
   return "Dashboard";
 }

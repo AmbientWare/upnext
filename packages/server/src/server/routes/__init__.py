@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Depends
 
 from server.auth import require_api_key
-from server.routes.admin import router as admin_router
 from server.routes.apis import router as apis_router
 from server.routes.artifacts import router as artifacts_router
 from server.routes.auth import router as auth_router
@@ -33,7 +32,6 @@ v1_router.include_router(dashboard_router)
 v1_router.include_router(metrics_router)
 v1_router.include_router(apis_router)
 v1_router.include_router(secrets_router)
-v1_router.include_router(admin_router)
 
 __all__ = [
     "v1_public_router",

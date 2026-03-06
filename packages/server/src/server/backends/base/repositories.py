@@ -9,7 +9,7 @@ from datetime import datetime
 from pydantic import TypeAdapter
 from shared.keys import DEFAULT_DEPLOYMENT_ID
 
-from server.backends.base.models import ApiKey, Job, Secret, User
+from server.backends.base.models import Job, Secret
 from server.backends.base.repository_models import (
     ArtifactRecord,
     FunctionJobStats,
@@ -21,8 +21,6 @@ from server.backends.base.repository_models import (
 )
 
 _JOB_ADAPTER: TypeAdapter[Job] = TypeAdapter(Job)
-_USER_ADAPTER: TypeAdapter[User] = TypeAdapter(User)
-_API_KEY_ADAPTER: TypeAdapter[ApiKey] = TypeAdapter(ApiKey)
 _SECRET_ADAPTER: TypeAdapter[Secret] = TypeAdapter(Secret)
 _ARTIFACT_ADAPTER: TypeAdapter[ArtifactRecord] = TypeAdapter(ArtifactRecord)
 _PENDING_ARTIFACT_ADAPTER: TypeAdapter[PendingArtifactRecord] = TypeAdapter(
@@ -259,86 +257,6 @@ class BaseArtifactRepository(ABC):
     async def delete(
         self, artifact_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
     ) -> bool: ...
-
-
-class BaseAuthRepository(ABC):
-    @staticmethod
-    def _to_model_user(payload: object) -> User:
-        if isinstance(payload, User):
-            return payload
-        if not isinstance(payload, Mapping):
-            payload = {
-                "id": getattr(payload, "id"),
-                "username": getattr(payload, "username"),
-                "is_admin": getattr(payload, "is_admin"),
-                "created_at": getattr(payload, "created_at"),
-                "updated_at": getattr(payload, "updated_at"),
-            }
-        return _USER_ADAPTER.validate_python(payload)
-
-    @staticmethod
-    def _to_model_api_key(payload: object) -> ApiKey:
-        if isinstance(payload, ApiKey):
-            return payload
-        if not isinstance(payload, Mapping):
-            payload = {
-                "id": getattr(payload, "id"),
-                "user_id": getattr(payload, "user_id"),
-                "key_hash": getattr(payload, "key_hash"),
-                "key_prefix": getattr(payload, "key_prefix"),
-                "name": getattr(payload, "name"),
-                "is_active": getattr(payload, "is_active"),
-                "created_at": getattr(payload, "created_at"),
-                "updated_at": getattr(payload, "updated_at"),
-                "last_used_at": getattr(payload, "last_used_at"),
-            }
-        return _API_KEY_ADAPTER.validate_python(payload)
-
-    @abstractmethod
-    async def get_user_by_username(self, username: str) -> User | None: ...
-
-    @abstractmethod
-    async def get_api_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
-
-    @abstractmethod
-    async def get_user_by_id(self, user_id: str) -> User | None: ...
-
-    @abstractmethod
-    async def seed_admin_api_key(self, raw_key: str) -> None: ...
-
-    @abstractmethod
-    async def list_users(self) -> list[tuple[User, int]]: ...
-
-    @abstractmethod
-    async def create_user(self, username: str, is_admin: bool = False) -> User: ...
-
-    @abstractmethod
-    async def delete_user(self, user_id: str) -> bool: ...
-
-    @abstractmethod
-    async def update_user(
-        self, user_id: str, *, is_admin: bool | None = None
-    ) -> User | None: ...
-
-    @abstractmethod
-    async def list_api_keys_for_user(self, user_id: str) -> list[ApiKey]: ...
-
-    @abstractmethod
-    async def create_api_key(
-        self, user_id: str, name: str = "default"
-    ) -> tuple[ApiKey, str]: ...
-
-    @abstractmethod
-    async def delete_api_key(self, key_id: str) -> bool: ...
-
-    @abstractmethod
-    async def rotate_api_key(self, user_id: str) -> tuple[ApiKey, str]: ...
-
-    @abstractmethod
-    async def toggle_api_key(self, key_id: str, is_active: bool) -> ApiKey | None: ...
-
-    @abstractmethod
-    async def save_api_key(self, api_key: ApiKey) -> None: ...
 
 
 class BaseSecretsRepository(ABC):

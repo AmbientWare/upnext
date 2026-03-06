@@ -28,7 +28,7 @@ class _SettingsStub:
     event_subscriber_batch_size: int = 100
     event_subscriber_poll_interval_ms: int = 2000
     event_subscriber_stale_claim_ms: int = 30000
-    event_subscriber_invalid_stream: str = "upnext:status:events:invalid"
+    event_subscriber_invalid_stream: str | None = None
     event_subscriber_invalid_stream_maxlen: int = 10_000
     cleanup_interval_hours: int = 1
     cleanup_pending_retention_hours: int = 24
@@ -91,8 +91,6 @@ class _FakeDatabase:
             "job_history",
             "artifacts",
             "pending_artifacts",
-            "users",
-            "api_keys",
             "secrets",
         }
         return list(self.missing_tables)
@@ -109,14 +107,7 @@ class _FakeDatabase:
 
     @asynccontextmanager
     async def session(self):
-        class _Tx:
-            class _Auth:
-                async def seed_admin_api_key(self, _raw_key: str) -> None:
-                    return None
-
-            auth = _Auth()
-
-        yield _Tx()
+        yield object()
 
 
 class _FakeCleanupService:
