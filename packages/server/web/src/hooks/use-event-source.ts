@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getStoredApiKey } from "@/lib/auth";
+import { getStoredAuthToken } from "@/lib/auth";
 
 export type EventSourceConnectionState =
   | "connecting"
@@ -168,9 +168,9 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
       const headers: Record<string, string> = {
         Accept: "text/event-stream",
       };
-      const apiKey = getStoredApiKey();
-      if (apiKey) {
-        headers["Authorization"] = `Bearer ${apiKey}`;
+      const authToken = getStoredAuthToken();
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
       }
 
       let response: Response;

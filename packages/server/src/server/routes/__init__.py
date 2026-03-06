@@ -15,7 +15,6 @@ from server.routes.metrics import router as metrics_router
 from server.routes.secrets import router as secrets_router
 from server.routes.workers import router as workers_router
 
-# Public routes (no auth required)
 v1_public_router = APIRouter(prefix="/api/v1")
 v1_public_router.include_router(auth_router)
 

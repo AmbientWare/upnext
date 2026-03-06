@@ -2,14 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import mimetypes
-
-
-def hash_api_key(raw_key: str) -> str:
-    """SHA-256 hash of a raw API key."""
-    return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
 def infer_artifact_metadata(

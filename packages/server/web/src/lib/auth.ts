@@ -1,21 +1,13 @@
-/**
- * Lightweight auth store backed by localStorage.
- *
- * The API key is stored in localStorage and exposed via getter/setter.
- * Components react to changes through the AuthProvider context.
- */
+const STORAGE_KEY = "upnext_auth_token";
 
-const STORAGE_KEY = "upnext_api_key";
-
-export function getStoredApiKey(): string | null {
+export function getStoredAuthToken(): string | null {
   return localStorage.getItem(STORAGE_KEY);
 }
 
-export function setStoredApiKey(key: string): void {
-  localStorage.setItem(STORAGE_KEY, key);
+export function setStoredAuthToken(token: string): void {
+  localStorage.setItem(STORAGE_KEY, token);
 }
 
-export function clearStoredApiKey(): void {
+export function clearStoredAuthToken(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
-

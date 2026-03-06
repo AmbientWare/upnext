@@ -1,11 +1,4 @@
-"""Secrets routes.
-
-- List (names/keys only): any authenticated user
-- Get by name (SDK fetch, returns values): any authenticated user by default,
-  optionally admin-only via UPNEXT_SECRETS_REQUIRE_ADMIN_READS=true
-- Get by ID (returns values, dashboard use): admin only
-- Create / Update / Delete: admin only
-"""
+"""Secrets routes."""
 
 import logging
 
@@ -19,9 +12,8 @@ from shared.contracts.secrets import (
     UpdateSecretRequest,
 )
 
-from server.auth import require_admin, require_auth_scope
+from server.auth import require_auth_scope
 from server.backends.service import BackendService
-from server.config import get_settings
 from server.routes.depends import require_backend
 from server.runtime_scope import AuthScope
 
@@ -59,11 +51,6 @@ async def get_secret_by_name(
     backend: BackendService = Depends(require_backend),
 ):
     """Fetch a secret's decrypted values by name (for SDK usage)."""
-    settings = get_settings()
-    if settings.effective_secrets_require_admin_reads:
-        if not scope.is_admin:
-            raise HTTPException(status_code=403, detail="Admin access required")
-
     async with backend.session() as tx:
         secret = await tx.secrets.get_secret_by_name(
             name, deployment_id=scope.deployment_id
@@ -75,14 +62,10 @@ async def get_secret_by_name(
     return SecretValuesResponse(name=secret.name, data=data)
 
 
-@router.get(
-    "/{secret_id}",
-    response_model=SecretDetailResponse,
-    dependencies=[Depends(require_admin)],
-)
+@router.get("/{secret_id}", response_model=SecretDetailResponse)
 async def get_secret(
     secret_id: str,
-    scope: AuthScope = Depends(require_admin),
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ):
     """Get a secret with decrypted values."""
@@ -102,19 +85,10 @@ async def get_secret(
         updated_at=secret.updated_at.isoformat(),
     )
 
-
-# ---- Admin-only write operations ----
-
-
-@router.post(
-    "",
-    response_model=SecretDetailResponse,
-    status_code=201,
-    dependencies=[Depends(require_admin)],
-)
+@router.post("", response_model=SecretDetailResponse, status_code=201)
 async def create_secret(
     body: CreateSecretRequest,
-    scope: AuthScope = Depends(require_admin),
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ):
     """Create a new named secret."""
@@ -136,16 +110,11 @@ async def create_secret(
         updated_at=secret.updated_at.isoformat(),
     )
 
-
-@router.put(
-    "/{secret_id}",
-    response_model=SecretDetailResponse,
-    dependencies=[Depends(require_admin)],
-)
+@router.put("/{secret_id}", response_model=SecretDetailResponse)
 async def update_secret(
     secret_id: str,
     body: UpdateSecretRequest,
-    scope: AuthScope = Depends(require_admin),
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ):
     """Update a secret's name and/or data."""
@@ -171,11 +140,10 @@ async def update_secret(
         updated_at=secret.updated_at.isoformat(),
     )
 
-
-@router.delete("/{secret_id}", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{secret_id}", status_code=204)
 async def delete_secret(
     secret_id: str,
-    scope: AuthScope = Depends(require_admin),
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ):
     """Delete a secret."""

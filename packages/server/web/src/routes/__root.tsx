@@ -6,18 +6,11 @@ import {
 } from "@/components/providers/event-stream-provider";
 import { useAuth } from "@/components/providers/use-auth";
 import { LoginPage } from "@/components/login-page";
-import { env } from "@/lib/env";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/components/layout";
 import { ErrorBoundary } from "@/components/shared";
-import { CircleUserIcon, LogOutIcon } from "lucide-react";
+import { env } from "@/lib/env";
 
 type AuthStatus = {
   auth_enabled: boolean;
@@ -28,21 +21,18 @@ export const Route = createRootRoute({
   component: RootLayout,
 });
 
-/** Check whether the server has auth enabled (unauthenticated endpoint). */
 async function fetchAuthStatus(): Promise<AuthStatus> {
-  const res = await fetch(`${env.VITE_API_BASE_URL}/auth/status`);
-  if (!res.ok) {
-    // If endpoint doesn't exist yet or server is down, assume auth enabled
+  const response = await fetch(`${env.VITE_API_BASE_URL}/auth/status`);
+  if (!response.ok) {
     return { auth_enabled: true, runtime_mode: "self_hosted" };
   }
-  return res.json();
+  return response.json();
 }
 
 function RootLayout() {
   const router = useRouterState();
   const path = router.location.pathname;
   const { isAuthenticated, logout } = useAuth();
-
   const { data: authStatus, isLoading: authLoading } = useQuery({
     queryKey: ["auth", "status"],
     queryFn: fetchAuthStatus,
@@ -53,7 +43,6 @@ function RootLayout() {
   const authEnabled = authStatus?.auth_enabled ?? true;
   const runtimeMode = authStatus?.runtime_mode ?? "self_hosted";
 
-  // Show login page if auth is enabled and user is not authenticated
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -62,8 +51,8 @@ function RootLayout() {
     );
   }
 
-  if (authEnabled && !isAuthenticated) {
-    return <LoginPage runtimeMode={runtimeMode} />;
+  if (authEnabled && runtimeMode === "self_hosted" && !isAuthenticated) {
+    return <LoginPage />;
   }
 
   const streamSubscriptions = getStreamSubscriptions(path);
@@ -74,27 +63,15 @@ function RootLayout() {
         <Sidebar />
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Top Header */}
           <header className="h-14 border-b border-border flex items-center px-6 shrink-0">
             <h1 className="text-lg font-semibold text-foreground">{getPageTitle(path)}</h1>
-            <div className="ml-auto">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="rounded-full">
-                    <CircleUserIcon className="h-5 w-5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={logout}>
-                    <LogOutIcon className="mr-2 h-4 w-4" />
-                    Logout
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+            {authEnabled && runtimeMode === "self_hosted" && isAuthenticated ? (
+              <Button variant="ghost" size="sm" className="ml-auto" onClick={logout}>
+                Sign out
+              </Button>
+            ) : null}
           </header>
 
-          {/* Main Content */}
           <main className="flex-1 overflow-hidden">
             <ErrorBoundary>
               <EventStreamProvider streams={streamSubscriptions} pauseWhenHidden>

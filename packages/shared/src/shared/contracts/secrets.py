@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class SecretResponse(BaseModel):
-    """Secret as returned by admin list endpoint (key names only, no values)."""
+    """Secret summary (key names only, no values)."""
 
     id: str
     name: str
@@ -14,7 +14,7 @@ class SecretResponse(BaseModel):
 
 
 class SecretDetailResponse(BaseModel):
-    """Secret with decrypted values (admin get/create/update)."""
+    """Secret with decrypted values."""
 
     id: str
     name: str
@@ -24,7 +24,7 @@ class SecretDetailResponse(BaseModel):
 
 
 class SecretsListResponse(BaseModel):
-    """Secrets list response for admin."""
+    """Secrets list response."""
 
     secrets: list[SecretResponse]
     total: int

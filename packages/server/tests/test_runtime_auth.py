@@ -8,11 +8,10 @@ from dataclasses import dataclass
 from time import time
 
 import pytest
-from fastapi import HTTPException
 from starlette.requests import Request
 
 import server.auth as auth_module
-from server.runtime_scope import RuntimeModes, RuntimeRoles
+from server.runtime_scope import RuntimeModes
 
 
 def _make_request(token: str | None = None) -> Request:
@@ -79,7 +78,6 @@ async def test_require_api_key_returns_local_admin_scope_when_self_hosted_auth_d
 
     assert scope.deployment_id == "local"
     assert scope.mode == RuntimeModes.SELF_HOSTED
-    assert scope.role == RuntimeRoles.ADMIN
 
 
 @pytest.mark.asyncio
@@ -96,7 +94,6 @@ async def test_require_api_key_validates_static_self_hosted_token(
 
     assert scope.deployment_id == "local"
     assert scope.mode == RuntimeModes.SELF_HOSTED
-    assert scope.role == RuntimeRoles.ADMIN
     assert scope.subject == "self-hosted-token"
 
 
@@ -125,60 +122,4 @@ async def test_require_api_key_decodes_cloud_runtime_token_scope(
     assert scope.deployment_id == "dep_orders_api"
     assert scope.workspace_id == "ws_demo_01"
     assert scope.mode == RuntimeModes.CLOUD_RUNTIME
-    assert scope.role == RuntimeRoles.ADMIN
     assert scope.subject == "dep_orders_api:user_demo_01"
-
-
-@pytest.mark.asyncio
-async def test_require_admin_allows_cloud_runtime_admin_scope(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = _CloudRuntimeSettings()
-    monkeypatch.setattr(auth_module, "get_settings", lambda: settings)
-
-    token = _encode_runtime_token(
-        settings.runtime_token_secret,
-        {
-            "iss": settings.runtime_token_issuer,
-            "aud": settings.runtime_token_audience,
-            "sub": "dep_orders_api:user_demo_01",
-            "workspace_id": "ws_demo_01",
-            "deployment_id": "dep_orders_api",
-            "role": "admin",
-            "exp": int(time()) + 300,
-        },
-    )
-
-    scope = await auth_module.require_admin(
-        await auth_module.require_api_key(_make_request(token))
-    )
-
-    assert scope.role == RuntimeRoles.ADMIN
-
-
-@pytest.mark.asyncio
-async def test_require_admin_rejects_non_admin_cloud_scope(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = _CloudRuntimeSettings()
-    monkeypatch.setattr(auth_module, "get_settings", lambda: settings)
-
-    token = _encode_runtime_token(
-        settings.runtime_token_secret,
-        {
-            "iss": settings.runtime_token_issuer,
-            "aud": settings.runtime_token_audience,
-            "sub": "dep_orders_api:user_demo_01",
-            "workspace_id": "ws_demo_01",
-            "deployment_id": "dep_orders_api",
-            "role": "viewer",
-            "exp": int(time()) + 300,
-        },
-    )
-
-    with pytest.raises(HTTPException, match="Admin access required") as exc:
-        await auth_module.require_admin(
-            await auth_module.require_api_key(_make_request(token))
-        )
-
-    assert exc.value.status_code == 403

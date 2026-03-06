@@ -6,7 +6,7 @@ from secrets import compare_digest
 from fastapi import Depends, HTTPException, Request
 
 from server.config import get_settings
-from server.runtime_scope import AuthScope, RuntimeModes, RuntimeRoles
+from server.runtime_scope import AuthScope, RuntimeModes
 from server.runtime_tokens import RuntimeTokenError, decode_runtime_token
 
 logger = logging.getLogger(__name__)
@@ -25,30 +25,29 @@ def _self_hosted_scope(
     return AuthScope(
         deployment_id=settings.normalized_default_deployment_id,
         workspace_id=None,
-        role=RuntimeRoles.ADMIN,
         mode=RuntimeModes.SELF_HOSTED,
         subject=subject,
     )
 
 
 def get_request_scope(request: Request | None = None) -> AuthScope:
-    """Return the resolved request scope or a local self-hosted fallback."""
+    """Return the resolved request scope or a self-hosted local fallback."""
 
     if request is not None:
         cached = getattr(request.state, "auth_scope", None)
         if isinstance(cached, AuthScope):
             return cached
 
-    return _self_hosted_scope(subject="local-admin")
+    return _self_hosted_scope(subject="self-hosted")
 
 
 async def require_api_key(
     request: Request,
 ) -> AuthScope:
-    """FastAPI dependency that enforces API key auth when enabled.
+    """FastAPI dependency that enforces bearer-token auth when enabled.
 
     When ``UPNEXT_AUTH_ENABLED`` is False the dependency is a no-op and
-    returns a local admin scope so routes work without authentication.
+    returns a self-hosted local scope so routes work without authentication.
 
     When enabled, expects an ``Authorization: Bearer <key>`` header.
 
@@ -84,7 +83,6 @@ async def require_api_key(
 
         deployment_id = claims.get("deployment_id")
         workspace_id = claims.get("workspace_id")
-        role = claims.get("role")
         subject = claims.get("sub")
 
         if not isinstance(deployment_id, str) or not deployment_id:
@@ -100,10 +98,6 @@ async def require_api_key(
             raise HTTPException(
                 status_code=401, detail="Runtime token has invalid workspace_id"
             )
-        if role not in {"viewer", "operator", "admin"}:
-            raise HTTPException(
-                status_code=401, detail="Runtime token has invalid role"
-            )
         if subject is not None and not isinstance(subject, str):
             raise HTTPException(
                 status_code=401, detail="Runtime token has invalid subject"
@@ -114,14 +108,13 @@ async def require_api_key(
             AuthScope(
                 deployment_id=deployment_id,
                 workspace_id=workspace_id,
-                role=RuntimeRoles(role),
                 mode=RuntimeModes.CLOUD_RUNTIME,
                 subject=subject,
             ),
         )
 
     if not settings.auth_enabled:
-        return _cache_scope(request, _self_hosted_scope(subject="local-admin"))
+        return _cache_scope(request, _self_hosted_scope(subject="self-hosted"))
 
     raw_token: str | None = None
     auth_header = request.headers.get("Authorization")
@@ -136,10 +129,10 @@ async def require_api_key(
     if not configured_token:
         raise HTTPException(
             status_code=500,
-            detail="Self-hosted authentication is enabled but no API key is configured",
+            detail="Self-hosted authentication is enabled but no bearer token is configured (set UPNEXT_API_KEY)",
         )
     if not compare_digest(raw_token, configured_token):
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
 
     return _cache_scope(request, _self_hosted_scope(subject="self-hosted-token"))
 
@@ -150,17 +143,3 @@ async def require_auth_scope(
 ) -> AuthScope:
     """Typed auth dependency for protected routes."""
     return _cache_scope(request, scope)
-
-
-async def require_admin(
-    scope: AuthScope = Depends(require_api_key),
-) -> AuthScope:
-    """FastAPI dependency that enforces admin access.
-
-    Chains through ``require_api_key`` internally so routers only need
-    ``dependencies=[Depends(require_admin)]``.
-    """
-    if not scope.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    return scope

@@ -246,25 +246,6 @@ def test_server_settings_env_aliases_are_accepted(monkeypatch) -> None:
     assert settings.is_production is True
 
 
-def test_server_settings_effective_secret_read_policy(monkeypatch) -> None:
-    monkeypatch.setenv("UPNEXT_ENV", "dev")
-    monkeypatch.delenv("UPNEXT_SECRETS_REQUIRE_ADMIN_READS", raising=False)
-    settings = config_module.get_settings()
-    assert settings.effective_secrets_require_admin_reads is False
-
-    config_module.get_settings.cache_clear()
-    monkeypatch.setenv("UPNEXT_ENV", "prod")
-    monkeypatch.setenv("UPNEXT_SECRET_KEY", "test-secret-key")
-    monkeypatch.delenv("UPNEXT_SECRETS_REQUIRE_ADMIN_READS", raising=False)
-    settings = config_module.get_settings()
-    assert settings.effective_secrets_require_admin_reads is False
-
-    config_module.get_settings.cache_clear()
-    monkeypatch.setenv("UPNEXT_SECRETS_REQUIRE_ADMIN_READS", "true")
-    settings = config_module.get_settings()
-    assert settings.effective_secrets_require_admin_reads is True
-
-
 def test_cleanup_retention_defaults_by_backend(monkeypatch) -> None:
     monkeypatch.setenv("UPNEXT_BACKEND", "redis")
     monkeypatch.delenv("UPNEXT_CLEANUP_RETENTION_HOURS", raising=False)

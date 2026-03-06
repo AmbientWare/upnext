@@ -9,14 +9,13 @@ import pytest
 import server.routes.events_stream as events_stream_route
 from fastapi import HTTPException
 from shared.keys import EVENTS_PUBSUB_CHANNEL
-from server.runtime_scope import AuthScope, RuntimeModes, RuntimeRoles
+from server.runtime_scope import AuthScope, RuntimeModes
 
 
 def _local_scope() -> AuthScope:
     return AuthScope(
         deployment_id="local",
         workspace_id=None,
-        role=RuntimeRoles.ADMIN,
         mode=RuntimeModes.SELF_HOSTED,
         subject="test-admin",
     )

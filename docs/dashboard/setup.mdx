@@ -72,7 +72,7 @@ The dashboard is available at **http://localhost:8080**.
 
 ## Authentication
 
-By default, authentication is disabled. To secure the dashboard and API, add `UPNEXT_AUTH_ENABLED=true` and `UPNEXT_API_KEY` when starting the server. See the [Authentication guide](/guides/authentication) for full details on enabling auth, managing users, and rotating keys.
+By default, authentication is disabled. To secure a self-hosted dashboard and API, add `UPNEXT_AUTH_ENABLED=true` and `UPNEXT_API_KEY` when starting the server. Self-hosted authentication uses one configured bearer token for dashboard and API access. See the [Authentication guide](/guides/authentication) for details.
 
 ## Connect your services
 
@@ -94,3 +94,12 @@ upnext run service.py
 ```
 
 Once connected, your workers, APIs, jobs, and metrics appear in the dashboard in real-time.
+
+## Deployment scope
+
+Every UpNext runtime now operates inside a deployment namespace.
+
+- The server uses `UPNEXT_DEFAULT_DEPLOYMENT_ID` and defaults to `local`.
+- Worker and API processes use `UPNEXT_DEPLOYMENT_ID` and also default to `local`.
+
+For hosted or multi-tenant runtimes, set both explicitly so Redis-backed runtime state stays isolated per deployment.

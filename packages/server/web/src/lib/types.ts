@@ -377,6 +377,16 @@ export interface ApiRequestSnapshotEvent {
   request: ApiRequestEvent;
 }
 
+export interface AuthVerifyResponse {
+  ok: boolean;
+  scope: {
+    deployment_id: string;
+    workspace_id: string | null;
+    mode: "self_hosted" | "cloud_runtime";
+    subject: string | null;
+  };
+}
+
 // =============================================================================
 // Dashboard Schemas
 // =============================================================================
@@ -469,15 +479,4 @@ export interface SecretDetail {
 export interface SecretsListResponse {
   secrets: SecretInfo[];
   total: number;
-}
-
-export interface AuthVerifyResponse {
-  ok: boolean;
-  scope: {
-    deployment_id: string;
-    workspace_id: string | null;
-    role: "viewer" | "operator" | "admin";
-    mode: "self_hosted" | "cloud_runtime";
-    subject: string | null;
-  };
 }

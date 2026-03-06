@@ -20,7 +20,7 @@ import type {
   SecretsListResponse,
   WorkersListResponse,
 } from "./types";
-import { getStoredApiKey } from "./auth";
+import { getStoredAuthToken } from "./auth";
 import { env } from "./env";
 
 const API_BASE = env.VITE_API_BASE_URL;
@@ -59,9 +59,9 @@ async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   }, API_REQUEST_TIMEOUT_MS);
 
   const headers = new Headers(init?.headers);
-  const apiKey = getStoredApiKey();
-  if (apiKey) {
-    headers.set("Authorization", `Bearer ${apiKey}`);
+  const authToken = getStoredAuthToken();
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
   }
 
   try {
@@ -376,8 +376,15 @@ export async function getApiRequestEvents(
 // Auth
 // =============================================================================
 
-export async function verifyAuth(): Promise<AuthVerifyResponse> {
-  const response = await apiFetch(`${API_BASE}/auth/verify`, { method: "POST" });
+export async function verifyToken(token?: string): Promise<AuthVerifyResponse> {
+  const headers = new Headers();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await apiFetch(`${API_BASE}/auth/verify`, {
+    method: "POST",
+    headers,
+  });
   return handleResponse<AuthVerifyResponse>(response);
 }
 

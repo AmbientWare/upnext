@@ -10,7 +10,7 @@ from fakeredis.aioredis import FakeRedis
 from server.backends import reset_backend_runtime, reset_backend_service
 from server.backends.sql.base import BaseSqlBackend
 from server.routes.jobs.jobs_stream import clear_trends_cache
-from server.runtime_scope import AuthScope, RuntimeModes, RuntimeRoles
+from server.runtime_scope import AuthScope, RuntimeModes
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +63,6 @@ def local_auth_scope() -> AuthScope:
     return AuthScope(
         deployment_id="local",
         workspace_id=None,
-        role=RuntimeRoles.ADMIN,
         mode=RuntimeModes.SELF_HOSTED,
         subject="test-admin",
     )

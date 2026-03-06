@@ -53,7 +53,7 @@ docker compose up -d
 ```
 
 <Tip>
-If you use `UPNEXT_BACKEND=redis` (default) or `UPNEXT_BACKEND=sqlite`, you can skip the `postgres` service.
+If you use `UPNEXT_BACKEND=redis` or `UPNEXT_BACKEND=sqlite`, you can skip the `postgres` service.
 </Tip>
 
 ## Start UpNext
@@ -77,6 +77,7 @@ With infrastructure running, start the server and your services using the CLI:
       <Tab title="Redis backend (default)">
         ```bash
         UPNEXT_BACKEND=redis \
+        UPNEXT_DEFAULT_DEPLOYMENT_ID=local \
         UPNEXT_REDIS_URL=redis://localhost:6379 \
         UPNEXT_AUTH_ENABLED=true \
         UPNEXT_API_KEY=changeme \
@@ -87,6 +88,7 @@ With infrastructure running, start the server and your services using the CLI:
         ```bash
         UPNEXT_BACKEND=sqlite \
         UPNEXT_DATABASE_URL=sqlite+aiosqlite:///upnext.db \
+        UPNEXT_DEFAULT_DEPLOYMENT_ID=local \
         UPNEXT_REDIS_URL=redis://localhost:6379 \
         UPNEXT_AUTH_ENABLED=true \
         UPNEXT_API_KEY=changeme \
@@ -97,6 +99,7 @@ With infrastructure running, start the server and your services using the CLI:
         ```bash
         UPNEXT_BACKEND=postgres \
         UPNEXT_DATABASE_URL=postgresql+asyncpg://upnext:upnext@localhost:5432/upnext \
+        UPNEXT_DEFAULT_DEPLOYMENT_ID=local \
         UPNEXT_REDIS_URL=redis://localhost:6379 \
         UPNEXT_AUTH_ENABLED=true \
         UPNEXT_API_KEY=changeme \
@@ -107,6 +110,7 @@ With infrastructure running, start the server and your services using the CLI:
   </Step>
   <Step title="Start your worker and API">
     ```bash
+    UPNEXT_DEPLOYMENT_ID=local \
     UPNEXT_REDIS_URL=redis://localhost:6379 \
     UPNEXT_URL=http://localhost:8080 \
     UPNEXT_API_KEY=changeme \
@@ -117,15 +121,21 @@ With infrastructure running, start the server and your services using the CLI:
 
 The dashboard is available at **http://localhost:8080** and your service connects to it automatically.
 
+<Note>
+For self-hosted setups, `UPNEXT_API_KEY` is a single static bearer token. UpNext no longer creates local users or rotates keys through the dashboard.
+</Note>
+
 ## Environment variables
 
 | Variable | Description |
 | --- | --- |
 | `UPNEXT_BACKEND` | Server persistence backend: `redis`, `sqlite`, or `postgres` |
 | `UPNEXT_DATABASE_URL` | SQL connection URL used when `UPNEXT_BACKEND=sqlite` or `postgres` |
+| `UPNEXT_DEFAULT_DEPLOYMENT_ID` | Deployment namespace served by the server (`local` by default) |
+| `UPNEXT_DEPLOYMENT_ID` | Deployment namespace used by worker and API runtimes (`local` by default) |
 | `UPNEXT_REDIS_URL` | Redis connection URL |
-| `UPNEXT_AUTH_ENABLED` | Enable API key authentication (`"true"` / `"false"`) |
-| `UPNEXT_API_KEY` | API key for authentication |
+| `UPNEXT_AUTH_ENABLED` | Enable the self-hosted bearer-token gate (`"true"` / `"false"`) |
+| `UPNEXT_API_KEY` | Static bearer token for self-hosted authentication |
 | `UPNEXT_ARTIFACT_STORAGE_BACKEND` | `local` or `s3` |
 
 See the full [Configuration reference](/deploy/configuration) for all options.

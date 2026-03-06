@@ -1,51 +1,31 @@
 import { useState, type FormEvent } from "react";
+
+import { useAuth } from "@/components/providers/use-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/components/providers/use-auth";
-import { env } from "@/lib/env";
+import { verifyToken } from "@/lib/upnext-api";
 
-type LoginPageProps = {
-  runtimeMode?: "self_hosted" | "cloud_runtime";
-};
-
-export function LoginPage({ runtimeMode = "self_hosted" }: LoginPageProps) {
+export function LoginPage() {
   const { login } = useAuth();
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const isCloudRuntime = runtimeMode === "cloud_runtime";
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (isCloudRuntime) {
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    const trimmed = key.trim();
+    if (!trimmed) {
       return;
     }
-    const trimmed = key.trim();
-    if (!trimmed) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      // Verify the key against the backend
-      const res = await fetch(`${env.VITE_API_BASE_URL}/auth/verify`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${trimmed}`,
-          "Content-Type": "application/json",
-        },
-      });
-
-      if (res.ok) {
-        await res.json();
-        login(trimmed);
-      } else if (res.status === 401 || res.status === 403) {
-        setError("Invalid API key");
-      } else {
-        setError("Something went wrong. Please try again.");
-      }
-    } catch {
-      setError("Unable to connect to server");
+      await verifyToken(trimmed);
+      login(trimmed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid authentication token");
     } finally {
       setLoading(false);
     }
@@ -68,13 +48,9 @@ export function LoginPage({ runtimeMode = "self_hosted" }: LoginPageProps) {
               <path d="M2 12l10 5 10-5" />
             </svg>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            UpNext
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">UpNext</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {isCloudRuntime
-              ? "Cloud runtime access is managed by the control plane."
-              : "Enter your API key to continue"}
+            Enter the configured self-hosted token to continue
           </p>
         </div>
 
@@ -82,23 +58,16 @@ export function LoginPage({ runtimeMode = "self_hosted" }: LoginPageProps) {
           <div>
             <Input
               type="password"
-              placeholder="API key"
+              placeholder="Authentication token"
               value={key}
-              onChange={(e) => setKey(e.target.value)}
+              onChange={(event) => setKey(event.target.value)}
               autoFocus
               autoComplete="off"
-              disabled={isCloudRuntime}
             />
-            {error && (
-              <p className="mt-2 text-sm text-destructive">{error}</p>
-            )}
+            {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
           </div>
-          <Button
-            type="submit"
-            className="w-full"
-            disabled={isCloudRuntime || loading || !key.trim()}
-          >
-            {isCloudRuntime ? "Use UpNext Cloud" : loading ? "Verifying..." : "Sign in"}
+          <Button type="submit" className="w-full" disabled={loading || !key.trim()}>
+            {loading ? "Verifying..." : "Sign in"}
           </Button>
         </form>
       </div>

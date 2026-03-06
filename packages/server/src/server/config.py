@@ -87,7 +87,6 @@ class Settings(BaseSettings):
     # Authentication
     auth_enabled: bool = False
     api_key: str | None = None
-    secrets_require_admin_reads: bool = False
     runtime_mode: RuntimeModes = RuntimeModes.SELF_HOSTED
     default_deployment_id: str = DEFAULT_DEPLOYMENT_ID
     runtime_token_secret: str | None = None
@@ -204,11 +203,6 @@ class Settings(BaseSettings):
         origins = [origin.strip() for origin in self.cors_allow_origins.split(",")]
         cleaned = [origin for origin in origins if origin]
         return cleaned or ["*"]
-
-    @property
-    def effective_secrets_require_admin_reads(self) -> bool:
-        """Resolve secret read policy from explicit configuration."""
-        return self.secrets_require_admin_reads
 
     @property
     def is_cloud_runtime(self) -> bool:

@@ -1,52 +1,48 @@
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { AuthProvider } from "./auth-provider";
 import { useAuth } from "./use-auth";
 
 function AuthConsumer() {
-  const { apiKey, isAuthenticated, login, logout } = useAuth();
-
+  const { authToken, isAuthenticated, login, logout } = useAuth();
   return (
     <div>
-      <div data-testid="api-key">{apiKey ?? ""}</div>
+      <div data-testid="auth-token">{authToken ?? ""}</div>
       <div data-testid="is-authenticated">{String(isAuthenticated)}</div>
-      <button type="button" onClick={() => login("key-123")}>
-        login
-      </button>
-      <button type="button" onClick={logout}>
-        logout
-      </button>
+      <button onClick={() => login("key-123")}>login</button>
+      <button onClick={() => logout()}>logout</button>
     </div>
   );
 }
 
 describe("AuthProvider", () => {
-  it("throws when useAuth is used outside provider", () => {
-    expect(() => render(<AuthConsumer />)).toThrow("useAuth must be used within an AuthProvider");
+  beforeEach(() => {
+    localStorage.clear();
   });
 
-  it("updates auth state on login and logout", async () => {
-    localStorage.clear();
-    const user = userEvent.setup();
+  it("throws when useAuth is used outside the provider", () => {
+    expect(() => render(<AuthConsumer />)).toThrow(
+      "useAuth must be used within an AuthProvider"
+    );
+  });
 
+  it("stores and clears the auth token", () => {
     render(
       <AuthProvider>
         <AuthConsumer />
       </AuthProvider>
     );
 
+    expect(screen.getByTestId("auth-token")).toHaveTextContent("");
     expect(screen.getByTestId("is-authenticated")).toHaveTextContent("false");
 
-    await user.click(screen.getByRole("button", { name: "login" }));
-
-    expect(screen.getByTestId("api-key")).toHaveTextContent("key-123");
+    fireEvent.click(screen.getByText("login"));
+    expect(screen.getByTestId("auth-token")).toHaveTextContent("key-123");
     expect(screen.getByTestId("is-authenticated")).toHaveTextContent("true");
 
-    await user.click(screen.getByRole("button", { name: "logout" }));
-
-    expect(screen.getByTestId("api-key")).toHaveTextContent("");
+    fireEvent.click(screen.getByText("logout"));
+    expect(screen.getByTestId("auth-token")).toHaveTextContent("");
     expect(screen.getByTestId("is-authenticated")).toHaveTextContent("false");
   });
 });

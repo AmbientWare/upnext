@@ -4,7 +4,7 @@ import {
   ApiError,
   getJob,
   getJobs,
-  verifyAuth,
+  verifyToken,
   queryKeys,
 } from "./upnext-api";
 
@@ -67,7 +67,7 @@ describe("upnext-api", () => {
 });
 
 describe("auth api", () => {
-  it("verifyAuth sends POST to /auth/verify", async () => {
+  it("verifyToken sends POST to /auth/verify", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -75,7 +75,6 @@ describe("auth api", () => {
         scope: {
           deployment_id: "local",
           workspace_id: null,
-          role: "admin",
           mode: "self_hosted",
           subject: "self-hosted-token",
         },
@@ -83,7 +82,7 @@ describe("auth api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await verifyAuth();
+    const result = await verifyToken();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/auth/verify");
     expect(init.method).toBe("POST");
