@@ -14,6 +14,7 @@ from shared.contracts import (
     WorkerStats,
 )
 from shared.keys import (
+    DEFAULT_DEPLOYMENT_ID,
     function_definition_pattern,
     worker_definition_pattern,
     worker_instance_key,
@@ -43,10 +44,14 @@ def _parse_worker_instance(data: str) -> WorkerInstance:
     )
 
 
-async def get_worker_instance(worker_id: str) -> WorkerInstance | None:
+async def get_worker_instance(
+    worker_id: str,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+) -> WorkerInstance | None:
     """Get a worker instance by ID."""
     r = await get_redis()
-    key = worker_instance_key(worker_id)
+    key = worker_instance_key(worker_id, deployment_id=deployment_id)
     try:
         data = await r.get(key)
     except Exception:
@@ -62,12 +67,17 @@ async def get_worker_instance(worker_id: str) -> WorkerInstance | None:
         return None
 
 
-async def list_worker_instances() -> list[WorkerInstance]:
+async def list_worker_instances(
+    *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+) -> list[WorkerInstance]:
     """List all active worker instances from Redis."""
     r = await get_redis()
     instances: list[WorkerInstance] = []
 
-    async for key in r.scan_iter(match=worker_instance_pattern(), count=100):
+    async for key in r.scan_iter(
+        match=worker_instance_pattern(deployment_id=deployment_id),
+        count=100,
+    ):
         try:
             data = await r.get(key)
         except Exception:
@@ -86,12 +96,18 @@ async def list_worker_instances() -> list[WorkerInstance]:
     return instances
 
 
-async def get_worker_definitions() -> dict[str, WorkerDefinition]:
+async def get_worker_definitions(
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+) -> dict[str, WorkerDefinition]:
     """Get all persistent worker definitions from Redis."""
     r = await get_redis()
     defs: dict[str, WorkerDefinition] = {}
 
-    async for key in r.scan_iter(match=worker_definition_pattern(), count=100):
+    async for key in r.scan_iter(
+        match=worker_definition_pattern(deployment_id=deployment_id),
+        count=100,
+    ):
         data = await r.get(key)
         if data:
             payload = data.decode() if isinstance(data, bytes) else str(data)
@@ -105,21 +121,32 @@ async def get_worker_definitions() -> dict[str, WorkerDefinition]:
     return defs
 
 
-async def get_worker_stats() -> WorkerStats:
+async def get_worker_stats(
+    *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+) -> WorkerStats:
     """Get worker statistics."""
     r = await get_redis()
     total = 0
-    async for _ in r.scan_iter(match=worker_instance_pattern(), count=100):
+    async for _ in r.scan_iter(
+        match=worker_instance_pattern(deployment_id=deployment_id),
+        count=100,
+    ):
         total += 1
     return WorkerStats(total=total)
 
 
-async def get_function_definitions() -> dict[str, FunctionConfig]:
+async def get_function_definitions(
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+) -> dict[str, FunctionConfig]:
     """Get all function definitions from Redis."""
     r = await get_redis()
     functions: dict[str, FunctionConfig] = {}
 
-    async for key in r.scan_iter(match=function_definition_pattern(), count=100):
+    async for key in r.scan_iter(
+        match=function_definition_pattern(deployment_id=deployment_id),
+        count=100,
+    ):
         data = await r.get(key)
         if data:
             payload = data.decode() if isinstance(data, bytes) else str(data)

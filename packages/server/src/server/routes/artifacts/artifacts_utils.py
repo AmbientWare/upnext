@@ -8,7 +8,7 @@ from hashlib import sha256
 from pydantic import ValidationError
 from shared.artifacts import ArtifactType
 from shared.contracts import ArtifactStreamEvent
-from shared.keys import ARTIFACT_EVENTS_STREAM
+from shared.keys import artifact_events_stream_key
 
 from server.services.redis import get_redis
 from server.shared_utils import get_stream_json_object
@@ -102,7 +102,7 @@ async def publish_artifact_event(event: ArtifactStreamEvent) -> None:
         return
     try:
         await redis_client.xadd(
-            ARTIFACT_EVENTS_STREAM,
+            artifact_events_stream_key(deployment_id=event.deployment_id),
             {"data": event.model_dump_json()},
             maxlen=10_000,
             approximate=True,

@@ -2,9 +2,11 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from shared.contracts import WorkerInfo, WorkerInstance, WorkersListResponse
 
+from server.auth import require_auth_scope
+from server.runtime_scope import AuthScope
 from server.services.registry import (
     get_worker_definitions,
     get_worker_instance,
@@ -17,11 +19,13 @@ worker_root_router = APIRouter(tags=["workers"])
 
 
 @worker_root_router.get("", response_model=WorkersListResponse)
-async def list_workers_route() -> WorkersListResponse:
+async def list_workers_route(
+    scope: AuthScope = Depends(require_auth_scope),
+) -> WorkersListResponse:
     """List all workers with active instances, matching API pattern."""
     try:
-        worker_defs = await get_worker_definitions()
-        all_instances = await list_worker_instances()
+        worker_defs = await get_worker_definitions(deployment_id=scope.deployment_id)
+        all_instances = await list_worker_instances(deployment_id=scope.deployment_id)
     except RuntimeError:
         return WorkersListResponse(workers=[], total=0)
 
@@ -66,10 +70,16 @@ async def list_workers_route() -> WorkersListResponse:
 
 
 @worker_root_router.get("/{worker_id}", response_model=WorkerInstance)
-async def get_worker_route(worker_id: str) -> WorkerInstance:
+async def get_worker_route(
+    worker_id: str,
+    scope: AuthScope = Depends(require_auth_scope),
+) -> WorkerInstance:
     """Get a specific worker instance by ID."""
     try:
-        instance = await get_worker_instance(worker_id)
+        instance = await get_worker_instance(
+            worker_id,
+            deployment_id=scope.deployment_id,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
 

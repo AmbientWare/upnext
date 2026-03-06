@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from shared.contracts import (
     ApiDetailResponse,
     ApiEndpoint,
@@ -17,7 +17,9 @@ from shared.contracts import (
     HttpMethod,
 )
 
+from server.auth import require_auth_scope
 from server.routes.apis.apis_utils import build_docs_url
+from server.runtime_scope import AuthScope
 from server.services.apis import (
     ApiEndpointMetrics,
     ApiHourlyTrend,
@@ -41,17 +43,19 @@ def _coerce_http_method(value: str) -> HttpMethod:
 
 
 @api_root_router.get("", response_model=ApisListResponse)
-async def list_apis() -> ApisListResponse:
+async def list_apis(
+    scope: AuthScope = Depends(require_auth_scope),
+) -> ApisListResponse:
     """List all tracked APIs grouped by name, with active instances."""
     try:
-        reader = await get_metrics_reader()
+        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
         raw: list[ApiMetricsByName] = await reader.get_apis()
     except RuntimeError:
         raw = []
 
     # Fetch active instances and group by api_name
     try:
-        all_instances = await list_api_instances()
+        all_instances = await list_api_instances(deployment_id=scope.deployment_id)
     except Exception:
         all_instances = []
 
@@ -93,10 +97,12 @@ async def list_apis() -> ApisListResponse:
 
 
 @api_root_router.get("/detail", response_model=EndpointsListResponse)
-async def list_endpoints() -> EndpointsListResponse:
+async def list_endpoints(
+    scope: AuthScope = Depends(require_auth_scope),
+) -> EndpointsListResponse:
     """List all tracked API endpoints (per-endpoint detail)."""
     try:
-        reader = await get_metrics_reader()
+        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
         raw: list[ApiEndpointMetrics] = await reader.get_endpoints()
     except RuntimeError:
         raw = []
@@ -123,11 +129,12 @@ async def list_endpoints() -> EndpointsListResponse:
 @api_root_router.get("/trends", response_model=ApiTrendsResponse)
 async def get_api_trends(
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
+    scope: AuthScope = Depends(require_auth_scope),
 ) -> ApiTrendsResponse:
     """Get hourly API response trends for charts."""
     hours_window = hours if isinstance(hours, int) else 24
     try:
-        reader = await get_metrics_reader()
+        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
         raw: list[ApiHourlyTrend] = await reader.get_hourly_trends(hours_window)
     except RuntimeError:
         raw = []
@@ -144,10 +151,13 @@ async def get_api_trends(
 
 
 @api_root_router.get("/{api_name}", response_model=ApiPageResponse)
-async def get_api(api_name: str) -> ApiPageResponse:
+async def get_api(
+    api_name: str,
+    scope: AuthScope = Depends(require_auth_scope),
+) -> ApiPageResponse:
     """Get overview + route-level metrics for a single API."""
     try:
-        reader = await get_metrics_reader()
+        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
         endpoint_rows: list[ApiEndpointMetrics] = await reader.get_endpoints(
             api_name=api_name
         )
@@ -155,7 +165,7 @@ async def get_api(api_name: str) -> ApiPageResponse:
         endpoint_rows = []
 
     try:
-        all_instances = await list_api_instances()
+        all_instances = await list_api_instances(deployment_id=scope.deployment_id)
     except Exception:
         all_instances = []
 
@@ -220,10 +230,14 @@ async def get_api(api_name: str) -> ApiPageResponse:
 
 
 @api_root_router.get("/{method}/{path:path}", response_model=ApiDetailResponse)
-async def get_endpoint(method: str, path: str) -> ApiDetailResponse:
+async def get_endpoint(
+    method: str,
+    path: str,
+    scope: AuthScope = Depends(require_auth_scope),
+) -> ApiDetailResponse:
     """Get detailed info for a specific API endpoint."""
     try:
-        reader = await get_metrics_reader()
+        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
         raw: list[ApiEndpointMetrics] = await reader.get_endpoints()
     except RuntimeError:
         raw = []

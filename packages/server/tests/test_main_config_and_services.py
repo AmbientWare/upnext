@@ -12,6 +12,8 @@ import server.services.apis.instances as api_instances_module
 import server.services.redis as redis_module
 from fastapi import FastAPI
 from server.backends.types import PersistenceBackends
+from server.runtime_scope import RuntimeModes
+from shared.keys import status_events_stream_key
 from shared._version import __version__ as shared_version
 
 
@@ -36,8 +38,28 @@ class _SettingsStub:
     alert_poll_interval_seconds: float = 60.0
     auth_enabled: bool = False
     api_key: str | None = None
+    runtime_mode: RuntimeModes = RuntimeModes.SELF_HOSTED
+    runtime_token_secret: str | None = None
     is_production: bool = False
     cors_allow_origins_list: list[str] = field(default_factory=lambda: ["*"])
+
+    @property
+    def is_cloud_runtime(self) -> bool:
+        return self.runtime_mode == RuntimeModes.CLOUD_RUNTIME
+
+    @property
+    def normalized_default_deployment_id(self) -> str:
+        return "local"
+
+    @property
+    def status_events_stream(self) -> str:
+        return status_events_stream_key(
+            deployment_id=self.normalized_default_deployment_id
+        )
+
+    @property
+    def effective_invalid_events_stream(self) -> str:
+        return self.event_subscriber_invalid_stream
 
 
 class _FakeDatabase:
@@ -65,7 +87,14 @@ class _FakeDatabase:
 
     async def get_missing_tables(self, required_tables: set[str]) -> list[str]:
         self.checked_tables += 1
-        assert required_tables == {"job_history", "artifacts", "pending_artifacts", "users", "api_keys", "secrets"}
+        assert required_tables == {
+            "job_history",
+            "artifacts",
+            "pending_artifacts",
+            "users",
+            "api_keys",
+            "secrets",
+        }
         return list(self.missing_tables)
 
     async def prepare_startup(self, required_tables: set[str]) -> None:

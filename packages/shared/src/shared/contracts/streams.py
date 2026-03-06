@@ -33,6 +33,7 @@ class StatusStreamEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: EventType
+    deployment_id: str = Field(min_length=1)
     job_id: str = Field(min_length=1)
     worker_id: str = Field(min_length=1)
     data: dict[str, Any] = Field(default_factory=dict)
@@ -50,6 +51,7 @@ class ApiRequestStreamEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     type: Literal["api.request"] | None = None
+    deployment_id: str | None = None
     id: str | None = None
     at: str | None = None
     api_name: str | None = None
@@ -87,7 +89,9 @@ class ApiRequestStreamEvent(BaseModel):
         if payload.get("instance_id") is None:
             payload["instance_id"] = self.instance_id
         if payload.get("sampled") is None:
-            payload["sampled"] = bool(self.sampled) if self.sampled is not None else False
+            payload["sampled"] = (
+                bool(self.sampled) if self.sampled is not None else False
+            )
 
         return payload
 
@@ -102,6 +106,7 @@ class WorkerSignalStreamEvent(BaseModel):
         "worker.definition.updated",
         "worker.stopped",
     ]
+    deployment_id: str | None = None
     at: str | None = None
     worker_id: str | None = None
     worker_name: str | None = None
@@ -112,4 +117,3 @@ __all__ = [
     "ApiRequestStreamEvent",
     "WorkerSignalStreamEvent",
 ]
-

@@ -22,6 +22,7 @@ from typing import Protocol, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from redis.asyncio import Redis
 from shared.keys import (
+    DEFAULT_DEPLOYMENT_ID,
     api_endpoints_key,
     api_hourly_bucket_key,
     api_minute_bucket_key,
@@ -84,9 +85,15 @@ class _MetricsRedisClient(Protocol):
 class ApiMetricsReader:
     """Reads API metrics from Redis hash buckets."""
 
-    def __init__(self, redis_client: Redis) -> None:
+    def __init__(
+        self,
+        redis_client: Redis,
+        *,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    ) -> None:
         # redis-py's async stubs currently under-type some awaitable commands.
         self._redis = cast(_MetricsRedisClient, redis_client)
+        self._deployment_id = deployment_id
 
     @staticmethod
     def _decode_text(value: object) -> str | None:
@@ -150,14 +157,18 @@ class ApiMetricsReader:
 
     async def get_apis(self) -> list[ApiMetricsByName]:
         """Get metrics aggregated by API name (sum of last 24h hourly buckets)."""
-        raw_api_names = await self._redis.smembers(api_registry_key())
+        raw_api_names = await self._redis.smembers(
+            api_registry_key(deployment_id=self._deployment_id)
+        )
         api_names = self._decode_members(raw_api_names)
         if not api_names:
             return []
 
         results: list[ApiMetricsByName] = []
         for api_name in api_names:
-            endpoint_values = await self._redis.smembers(api_endpoints_key(api_name))
+            endpoint_values = await self._redis.smembers(
+                api_endpoints_key(api_name, deployment_id=self._deployment_id)
+            )
             endpoint_keys = self._decode_members(endpoint_values)
             if not endpoint_keys:
                 continue
@@ -192,12 +203,19 @@ class ApiMetricsReader:
         if api_name:
             api_names = [api_name]
         else:
-            raw_api_names = await self._redis.smembers(api_registry_key()) or set()
+            raw_api_names = (
+                await self._redis.smembers(
+                    api_registry_key(deployment_id=self._deployment_id)
+                )
+                or set()
+            )
             api_names = self._decode_members(raw_api_names)
 
         results: list[ApiEndpointMetrics] = []
         for name in api_names:
-            endpoint_values = await self._redis.smembers(api_endpoints_key(name))
+            endpoint_values = await self._redis.smembers(
+                api_endpoints_key(name, deployment_id=self._deployment_id)
+            )
             endpoint_keys = self._decode_members(endpoint_values)
             if not endpoint_keys:
                 continue
@@ -243,11 +261,19 @@ class ApiMetricsReader:
         """Get hourly trend data across all APIs for charts."""
         now = datetime.now(UTC)
 
-        raw_api_names = await self._redis.smembers(api_registry_key()) or set()
+        raw_api_names = (
+            await self._redis.smembers(
+                api_registry_key(deployment_id=self._deployment_id)
+            )
+            or set()
+        )
         all_endpoints: list[tuple[str, str]] = []
         for api_name in self._decode_members(raw_api_names):
             endpoint_values = (
-                await self._redis.smembers(api_endpoints_key(api_name)) or set()
+                await self._redis.smembers(
+                    api_endpoints_key(api_name, deployment_id=self._deployment_id)
+                )
+                or set()
             )
             for endpoint_value in self._decode_members(endpoint_values):
                 all_endpoints.append((api_name, endpoint_value))
@@ -265,7 +291,14 @@ class ApiMetricsReader:
             if all_endpoints:
                 pipe = self._redis.pipeline(transaction=False)
                 for api_name, ep_key in all_endpoints:
-                    pipe.hgetall(api_hourly_bucket_key(api_name, ep_key, hour_key))
+                    pipe.hgetall(
+                        api_hourly_bucket_key(
+                            api_name,
+                            ep_key,
+                            hour_key,
+                            deployment_id=self._deployment_id,
+                        )
+                    )
                 bucket_results = await pipe.execute()
 
                 for raw_bucket in bucket_results:
@@ -368,7 +401,14 @@ class ApiMetricsReader:
         pipe = self._redis.pipeline(transaction=False)
         for ep_key in endpoints:
             for hour_key in hour_keys:
-                pipe.hgetall(api_hourly_bucket_key(api_name, ep_key, hour_key))
+                pipe.hgetall(
+                    api_hourly_bucket_key(
+                        api_name,
+                        ep_key,
+                        hour_key,
+                        deployment_id=self._deployment_id,
+                    )
+                )
 
         results = await pipe.execute()
 
@@ -408,7 +448,14 @@ class ApiMetricsReader:
         pipe = self._redis.pipeline(transaction=False)
         for ep_key in endpoints:
             for minute_key in minute_keys:
-                pipe.hgetall(api_minute_bucket_key(api_name, ep_key, minute_key))
+                pipe.hgetall(
+                    api_minute_bucket_key(
+                        api_name,
+                        ep_key,
+                        minute_key,
+                        deployment_id=self._deployment_id,
+                    )
+                )
 
         results = await pipe.execute()
         for raw_bucket in results:
@@ -425,14 +472,18 @@ class ApiMetricsReader:
         return totals
 
     async def _list_endpoints_by_api(self) -> list[tuple[str, list[str]]]:
-        raw_api_names = await self._redis.smembers(api_registry_key())
+        raw_api_names = await self._redis.smembers(
+            api_registry_key(deployment_id=self._deployment_id)
+        )
         api_names = self._decode_members(raw_api_names)
         if not api_names:
             return []
 
         endpoints_by_api: list[tuple[str, list[str]]] = []
         for api_name in api_names:
-            endpoint_values = await self._redis.smembers(api_endpoints_key(api_name))
+            endpoint_values = await self._redis.smembers(
+                api_endpoints_key(api_name, deployment_id=self._deployment_id)
+            )
             endpoint_keys = self._decode_members(endpoint_values)
             if endpoint_keys:
                 endpoints_by_api.append((api_name, endpoint_keys))
@@ -453,7 +504,13 @@ class ApiMetricsReader:
         for ep_key in endpoints:
             for minute_key in minute_keys:
                 pipe.hget(
-                    api_minute_bucket_key(api_name, ep_key, minute_key), "requests"
+                    api_minute_bucket_key(
+                        api_name,
+                        ep_key,
+                        minute_key,
+                        deployment_id=self._deployment_id,
+                    ),
+                    "requests",
                 )
 
         results = await pipe.execute()
@@ -470,10 +527,12 @@ class ApiMetricsReader:
         return round(total / 2, 1)
 
 
-async def get_metrics_reader() -> ApiMetricsReader:
+async def get_metrics_reader(
+    *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+) -> ApiMetricsReader:
     """Get an ApiMetricsReader using the shared Redis client."""
     redis_client = await get_redis()
-    return ApiMetricsReader(redis_client)
+    return ApiMetricsReader(redis_client, deployment_id=deployment_id)
 
 
 __all__ = [

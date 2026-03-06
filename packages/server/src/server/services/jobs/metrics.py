@@ -12,7 +12,9 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 from shared.contracts import DispatchReasonMetrics
 from shared.domain import Job
 from shared.keys import (
+    DEFAULT_DEPLOYMENT_ID,
     QUEUE_CONSUMER_GROUP,
+    deployment_namespace_prefix,
     dispatch_reasons_pattern,
     dispatch_reasons_prefix,
     function_scheduled_pattern,
@@ -213,7 +215,9 @@ async def _pending_ids_for_stream(
     return pending_ids
 
 
-async def get_queue_depth_stats() -> QueueDepthStats:
+async def get_queue_depth_stats(
+    *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+) -> QueueDepthStats:
     """
     Get total queue depth directly from Redis.
 
@@ -228,7 +232,8 @@ async def get_queue_depth_stats() -> QueueDepthStats:
     """
     try:
         r = await get_redis()
-        stream_pattern = function_stream_pattern()
+        key_prefix = deployment_namespace_prefix(deployment_id)
+        stream_pattern = function_stream_pattern(key_prefix=key_prefix)
 
         waiting = 0
         claimed = 0
@@ -251,7 +256,7 @@ async def get_queue_depth_stats() -> QueueDepthStats:
         now_score = str(time.time())
         future_min = f"({now_score}"
         async for scheduled_key in r.scan_iter(
-            match=function_scheduled_pattern(),
+            match=function_scheduled_pattern(key_prefix=key_prefix),
             count=100,
         ):
             try:
@@ -265,7 +270,10 @@ async def get_queue_depth_stats() -> QueueDepthStats:
         backlog = waiting + claimed + scheduled_due
         running = 0
         capacity = 0
-        async for worker_key in r.scan_iter(match=worker_instance_pattern(), count=100):
+        async for worker_key in r.scan_iter(
+            match=worker_instance_pattern(deployment_id=deployment_id),
+            count=100,
+        ):
             heartbeat = _parse_worker_heartbeat(await r.get(worker_key))
             if heartbeat is None:
                 continue
@@ -338,12 +346,16 @@ def _queued_at_from_stream_id(message_id: str) -> datetime:
     return datetime.fromtimestamp(ms / 1000, UTC)
 
 
-async def get_function_queue_depth_stats() -> dict[str, FunctionQueueDepthStats]:
+async def get_function_queue_depth_stats(
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+) -> dict[str, FunctionQueueDepthStats]:
     """Get per-function queue lag/pending counts from Redis stream groups."""
     try:
         r = await get_redis()
         out: dict[str, FunctionQueueDepthStats] = {}
-        stream_pattern = function_stream_pattern()
+        key_prefix = deployment_namespace_prefix(deployment_id)
+        stream_pattern = function_stream_pattern(key_prefix=key_prefix)
 
         async for stream_key in r.scan_iter(match=stream_pattern, count=100):
             stream_name = _decode_text(stream_key)
@@ -378,14 +390,22 @@ async def get_function_queue_depth_stats() -> dict[str, FunctionQueueDepthStats]
         return {}
 
 
-async def get_oldest_queued_jobs(limit: int = 10) -> list[QueuedJobSnapshot]:
+async def get_oldest_queued_jobs(
+    limit: int = 10,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+) -> list[QueuedJobSnapshot]:
     """Get oldest queued jobs from stream and scheduled Redis queue storage."""
     try:
         r = await get_redis()
         now = datetime.now(UTC)
         rows: list[QueuedJobSnapshot] = []
 
-        async for stream_key in r.scan_iter(match=function_stream_pattern(), count=100):
+        key_prefix = deployment_namespace_prefix(deployment_id)
+        async for stream_key in r.scan_iter(
+            match=function_stream_pattern(key_prefix=key_prefix),
+            count=100,
+        ):
             stream_name = _decode_text(stream_key)
             function = _function_from_stream_key(stream_name)
             if function is None:
@@ -468,7 +488,7 @@ async def get_oldest_queued_jobs(limit: int = 10) -> list[QueuedJobSnapshot]:
             )
 
         async for scheduled_key in r.scan_iter(
-            match=function_scheduled_pattern(),
+            match=function_scheduled_pattern(key_prefix=key_prefix),
             count=100,
         ):
             scheduled_name = _decode_text(scheduled_key)
@@ -487,7 +507,7 @@ async def get_oldest_queued_jobs(limit: int = 10) -> list[QueuedJobSnapshot]:
             job_function_name = function
 
             try:
-                job_raw = await r.get(job_key(function, job_id))
+                job_raw = await r.get(job_key(function, job_id, key_prefix=key_prefix))
             except Exception:
                 job_raw = None
             if job_raw:
@@ -516,26 +536,37 @@ async def get_oldest_queued_jobs(limit: int = 10) -> list[QueuedJobSnapshot]:
         return []
 
 
-def _parse_dispatch_reason_key(key: str) -> str | None:
-    prefix = f"{dispatch_reasons_prefix()}:"
+def _parse_dispatch_reason_key(
+    key: str,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+) -> str | None:
+    prefix = f"{dispatch_reasons_prefix(key_prefix=deployment_namespace_prefix(deployment_id))}:"
     if not key.startswith(prefix):
         return None
     function = key[len(prefix) :]
     return function or None
 
 
-async def get_function_dispatch_reason_stats() -> dict[str, DispatchReasonMetrics]:
+async def get_function_dispatch_reason_stats(
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+) -> dict[str, DispatchReasonMetrics]:
     """Get per-function dispatch reason counters from Redis hashes."""
     try:
         r = await get_redis()
         out: dict[str, DispatchReasonMetrics] = {}
 
         async for reason_key in r.scan_iter(
-            match=dispatch_reasons_pattern(),
+            match=dispatch_reasons_pattern(
+                key_prefix=deployment_namespace_prefix(deployment_id)
+            ),
             count=100,
         ):
             redis_key = _decode_text(reason_key)
-            function = _parse_dispatch_reason_key(redis_key)
+            function = _parse_dispatch_reason_key(
+                redis_key, deployment_id=deployment_id
+            )
             if function is None:
                 continue
 

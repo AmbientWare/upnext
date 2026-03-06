@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from shared.contracts import (
     ErrorResponse,
     FunctionQueueMetrics,
@@ -10,6 +10,8 @@ from shared.contracts import (
     QueueMetricsTotals,
 )
 
+from server.auth import require_auth_scope
+from server.runtime_scope import AuthScope
 from server.services.jobs import get_function_queue_depth_stats, get_queue_depth_stats
 
 logger = logging.getLogger(__name__)
@@ -24,15 +26,19 @@ router = APIRouter(prefix="/metrics", tags=["metrics"])
         503: {"model": ErrorResponse, "description": "Redis not available."},
     },
 )
-async def get_queue_metrics() -> QueueMetricsResponse:
+async def get_queue_metrics(
+    scope: AuthScope = Depends(require_auth_scope),
+) -> QueueMetricsResponse:
     """Per-function queue depth metrics for external monitoring.
 
     Returns waiting, claimed, and backlog counts per function.
     Suitable for Prometheus scrapers, Datadog, etc.
     """
     try:
-        totals = await get_queue_depth_stats()
-        per_function = await get_function_queue_depth_stats()
+        totals = await get_queue_depth_stats(deployment_id=scope.deployment_id)
+        per_function = await get_function_queue_depth_stats(
+            deployment_id=scope.deployment_id
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
 

@@ -1,5 +1,12 @@
 """Redis key builders and key-space constants."""
 
+from shared.keys.namespace import (
+    DEFAULT_DEPLOYMENT_ID,
+    DEPLOYMENT_NAMESPACE_PREFIX,
+    deployment_namespace_prefix,
+    normalize_deployment_id,
+    scoped_key,
+)
 from shared.keys.api import (
     API_INSTANCE_PREFIX,
     API_INSTANCE_TTL,
@@ -42,6 +49,10 @@ from shared.keys.streams import (
     ARTIFACT_EVENTS_STREAM,
     EVENTS_PUBSUB_CHANNEL,
     EVENTS_STREAM,
+    api_requests_stream_key,
+    artifact_events_stream_key,
+    status_events_pubsub_channel,
+    status_events_stream_key,
 )
 from shared.keys.workers import (
     FUNCTION_DEF_TTL,
@@ -54,6 +65,7 @@ from shared.keys.workers import (
     WORKER_TTL,
     function_definition_key,
     function_definition_pattern,
+    worker_events_stream_key,
     worker_definition_key,
     worker_definition_pattern,
     worker_instance_key,
@@ -63,6 +75,11 @@ from shared.keys.workers import (
 __all__ = [
     "API_PREFIX",
     "API_INSTANCE_PREFIX",
+    "DEFAULT_DEPLOYMENT_ID",
+    "DEPLOYMENT_NAMESPACE_PREFIX",
+    "deployment_namespace_prefix",
+    "normalize_deployment_id",
+    "scoped_key",
     "MINUTE_BUCKET_TTL",
     "HOURLY_BUCKET_TTL",
     "REGISTRY_TTL",
@@ -98,6 +115,10 @@ __all__ = [
     "API_REQUESTS_STREAM",
     "ARTIFACT_EVENTS_STREAM",
     "EVENTS_PUBSUB_CHANNEL",
+    "status_events_stream_key",
+    "api_requests_stream_key",
+    "artifact_events_stream_key",
+    "status_events_pubsub_channel",
     "WORKER_INSTANCE_KEY_PREFIX",
     "WORKER_DEF_PREFIX",
     "FUNCTION_KEY_PREFIX",
@@ -108,6 +129,7 @@ __all__ = [
     "FUNCTION_DEF_TTL",
     "worker_instance_key",
     "worker_instance_pattern",
+    "worker_events_stream_key",
     "worker_definition_key",
     "worker_definition_pattern",
     "function_definition_key",

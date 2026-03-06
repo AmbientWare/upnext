@@ -69,6 +69,7 @@ class ArtifactStreamEvent(BaseModel):
         "artifact.promoted",
         "artifact.deleted",
     ]
+    deployment_id: str
     at: str
     job_id: str
     artifact_id: str | None = None

@@ -18,6 +18,7 @@ def _job_payload(
     *,
     status: str,
     created_at: datetime,
+    deployment_id: str = "local",
     parent_id: str | None = None,
     root_id: str | None = None,
     started_at: datetime | None = None,
@@ -29,6 +30,7 @@ def _job_payload(
         "function": "fn.contract",
         "function_name": "contract",
         "status": status,
+        "deployment_id": deployment_id,
         "created_at": created_at,
         "started_at": started_at,
         "completed_at": completed_at,
@@ -182,6 +184,57 @@ async def test_artifacts_contract_create_promote_delete(
 
 
 @pytest.mark.asyncio
+async def test_artifacts_are_scoped_by_deployment(
+    repo_session: tuple[str, RepositorySession[object]],
+) -> None:
+    backend_name, tx = repo_session
+    created_at = datetime(2026, 1, 1, 14, 0, tzinfo=UTC)
+
+    await tx.jobs.record_job(
+        _job_payload(
+            "job-dep-a",
+            status="active",
+            created_at=created_at,
+            deployment_id="dep-a",
+        )
+    )
+    await tx.jobs.record_job(
+        _job_payload(
+            "job-dep-b",
+            status="active",
+            created_at=created_at + timedelta(seconds=1),
+            deployment_id="dep-b",
+        )
+    )
+    await tx.flush()
+
+    artifact_a = await tx.artifacts.create(
+        job_id="job-dep-a",
+        name="result.json",
+        artifact_type="json",
+        data={"deployment": "a"},
+        deployment_id="dep-a",
+    )
+    artifact_b = await tx.artifacts.create(
+        job_id="job-dep-b",
+        name="result.json",
+        artifact_type="json",
+        data={"deployment": "b"},
+        deployment_id="dep-b",
+    )
+    await tx.flush()
+
+    dep_a_artifacts = await tx.artifacts.list_by_job("job-dep-a", deployment_id="dep-a")
+    dep_b_artifacts = await tx.artifacts.list_by_job("job-dep-b", deployment_id="dep-b")
+
+    assert [row.id for row in dep_a_artifacts] == [artifact_a.id], backend_name
+    assert [row.id for row in dep_b_artifacts] == [artifact_b.id], backend_name
+    assert await tx.artifacts.get_by_id(artifact_a.id, deployment_id="dep-b") is None, (
+        backend_name
+    )
+
+
+@pytest.mark.asyncio
 async def test_artifacts_contract_promote_ready_pending_requires_job_row(
     repo_session: tuple[str, RepositorySession[object]],
 ) -> None:
@@ -281,3 +334,29 @@ async def test_secrets_contract_crud(
     deleted_again = await tx.secrets.delete_secret(secret.id)
     assert deleted is True, backend_name
     assert deleted_again is False, backend_name
+
+
+@pytest.mark.asyncio
+async def test_secrets_allow_same_name_across_deployments(
+    repo_session: tuple[str, RepositorySession[object]],
+) -> None:
+    backend_name, tx = repo_session
+
+    secret_a = await tx.secrets.create_secret(
+        "stripe",
+        {"api_key": "sk_a"},
+        deployment_id="dep-a",
+    )
+    secret_b = await tx.secrets.create_secret(
+        "stripe",
+        {"api_key": "sk_b"},
+        deployment_id="dep-b",
+    )
+
+    fetched_a = await tx.secrets.get_secret_by_name("stripe", deployment_id="dep-a")
+    fetched_b = await tx.secrets.get_secret_by_name("stripe", deployment_id="dep-b")
+
+    assert fetched_a is not None and fetched_a.id == secret_a.id, backend_name
+    assert fetched_b is not None and fetched_b.id == secret_b.id, backend_name
+    assert tx.secrets.decrypt_secret(fetched_a)["api_key"] == "sk_a", backend_name
+    assert tx.secrets.decrypt_secret(fetched_b)["api_key"] == "sk_b", backend_name

@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from server.backends import get_backend
+from server.backends.types import PersistenceBackends
 from server.config import get_settings
 from server.logging import configure_logging
 from server.middleware import CorrelationIDMiddleware
@@ -66,9 +67,21 @@ async def lifespan(_app: FastAPI):
     await backend.prepare_startup(_REQUIRED_SQL_TABLES)
     logger.info("Persistence connected (%s)", backend.backend_name)
 
-    # Seed admin user + API key when auth is enabled
-    if settings.auth_enabled:
-        logger.info("Authentication enabled")
+    if settings.is_cloud_runtime:
+        logger.info("Cloud runtime mode enabled")
+        if settings.backend != PersistenceBackends.POSTGRES:
+            raise RuntimeError(
+                "Cloud runtime requires UPNEXT_BACKEND=postgres for scoped persistence"
+            )
+        if not settings.runtime_token_secret:
+            logger.warning(
+                "UPNEXT_RUNTIME_MODE=cloud_runtime but no runtime token secret is set. "
+                "Protected routes will reject all requests until "
+                "UPNEXT_RUNTIME_TOKEN_SECRET is configured."
+            )
+    # Seed admin user + API key when self-hosted auth is enabled
+    elif settings.auth_enabled:
+        logger.info("Self-hosted authentication enabled")
         if settings.api_key:
             async with backend.session() as tx:
                 await tx.auth.seed_admin_api_key(settings.api_key)
@@ -91,10 +104,11 @@ async def lifespan(_app: FastAPI):
         subscriber = StreamSubscriber(
             redis_client=redis_client,
             config=StreamSubscriberConfig(
+                stream=settings.status_events_stream,
                 batch_size=settings.event_subscriber_batch_size,
                 poll_interval=settings.event_subscriber_poll_interval_ms / 1000,
                 stale_claim_ms=settings.event_subscriber_stale_claim_ms,
-                invalid_events_stream=settings.event_subscriber_invalid_stream,
+                invalid_events_stream=settings.effective_invalid_events_stream,
                 invalid_events_stream_maxlen=settings.event_subscriber_invalid_stream_maxlen,
             ),
         )

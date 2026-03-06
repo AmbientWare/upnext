@@ -22,16 +22,21 @@ import { Sidebar } from "@/components/layout";
 import { ErrorBoundary } from "@/components/shared";
 import { CircleUserIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
 
+type AuthStatus = {
+  auth_enabled: boolean;
+  runtime_mode: "self_hosted" | "cloud_runtime";
+};
+
 export const Route = createRootRoute({
   component: RootLayout,
 });
 
 /** Check whether the server has auth enabled (unauthenticated endpoint). */
-async function fetchAuthStatus(): Promise<{ auth_enabled: boolean }> {
+async function fetchAuthStatus(): Promise<AuthStatus> {
   const res = await fetch(`${env.VITE_API_BASE_URL}/auth/status`);
   if (!res.ok) {
     // If endpoint doesn't exist yet or server is down, assume auth enabled
-    return { auth_enabled: true };
+    return { auth_enabled: true, runtime_mode: "self_hosted" };
   }
   return res.json();
 }
@@ -64,6 +69,8 @@ function RootLayout() {
   }, [verifyData, setIsAdmin]);
 
   const authEnabled = authStatus?.auth_enabled ?? true;
+  const runtimeMode = authStatus?.runtime_mode ?? "self_hosted";
+  const isCloudRuntime = runtimeMode === "cloud_runtime";
 
   // Show login page if auth is enabled and user is not authenticated
   if (authLoading) {
@@ -75,7 +82,7 @@ function RootLayout() {
   }
 
   if (authEnabled && !isAuthenticated) {
-    return <LoginPage />;
+    return <LoginPage runtimeMode={runtimeMode} />;
   }
 
   const streamSubscriptions = getStreamSubscriptions(path);
@@ -97,7 +104,7 @@ function RootLayout() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {isAdmin && (
+                  {isAdmin && !isCloudRuntime && (
                     <>
                       <DropdownMenuItem asChild>
                         <Link to="/admin">

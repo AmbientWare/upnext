@@ -11,16 +11,18 @@ import time as time_module
 from datetime import UTC, datetime
 from typing import Any
 
-from shared.contracts import FunctionConfig, WorkerDefinition
+from shared.contracts import FunctionConfig, WorkerDefinition, WorkerSignalStreamEvent
 from shared.domain import CronSource, Job
 from shared.keys import (
+    DEFAULT_DEPLOYMENT_ID,
     FUNCTION_DEF_TTL,
     WORKER_DEF_TTL,
-    WORKER_EVENTS_STREAM,
     WORKER_HEARTBEAT_INTERVAL,
     WORKER_TTL,
     cron_registry_member_key,
     function_definition_key,
+    normalize_deployment_id,
+    worker_events_stream_key,
     worker_definition_key,
     worker_instance_key,
 )
@@ -84,11 +86,20 @@ async def write_worker_heartbeat(
     redis_client: Any,
     worker_id: str,
     worker_data: str,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
 ) -> None:
     """Write worker data to Redis with TTL."""
-    key = worker_instance_key(worker_id)
+    normalized_deployment_id = normalize_deployment_id(deployment_id)
+    key = worker_instance_key(worker_id, deployment_id=normalized_deployment_id)
     await redis_client.setex(key, WORKER_TTL, worker_data)
-    await publish_worker_signal(redis_client, worker_id, "", "worker.heartbeat")
+    await publish_worker_signal(
+        redis_client,
+        worker_id,
+        "",
+        "worker.heartbeat",
+        deployment_id=normalized_deployment_id,
+    )
 
 
 async def write_worker_definition(
@@ -97,9 +108,12 @@ async def write_worker_definition(
     registered_functions: list[str],
     function_name_map: dict[str, str],
     concurrency: int,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
 ) -> None:
     """Write persistent worker definition to Redis with 30-day TTL."""
-    key = worker_definition_key(worker_name)
+    normalized_deployment_id = normalize_deployment_id(deployment_id)
+    key = worker_definition_key(worker_name, deployment_id=normalized_deployment_id)
     definition = WorkerDefinition(
         name=worker_name,
         functions=registered_functions,
@@ -108,16 +122,26 @@ async def write_worker_definition(
     )
     await redis_client.setex(key, WORKER_DEF_TTL, definition.model_dump_json())
     await publish_worker_signal(
-        redis_client, "", worker_name, "worker.definition.updated"
+        redis_client,
+        "",
+        worker_name,
+        "worker.definition.updated",
+        deployment_id=normalized_deployment_id,
     )
 
 
 async def write_function_definitions(
     redis_client: Any,
     function_definitions: list[FunctionConfig],
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
 ) -> None:
     """Write function definitions to Redis with a 30-day TTL."""
-    keys = [function_definition_key(func_def.key) for func_def in function_definitions]
+    normalized_deployment_id = normalize_deployment_id(deployment_id)
+    keys = [
+        function_definition_key(func_def.key, deployment_id=normalized_deployment_id)
+        for func_def in function_definitions
+    ]
     existing_rows = await redis_client.mget(keys) if keys else []
 
     async with redis_client.pipeline(transaction=False) as pipe:
@@ -152,28 +176,31 @@ async def publish_worker_signal(
     worker_id: str,
     worker_name: str,
     signal_type: str,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
 ) -> None:
     """Publish worker heartbeat/lifecycle signal for realtime dashboards."""
-    payload = json.dumps(
-        {
-            "type": signal_type,
-            "at": datetime.now(UTC).isoformat(),
-            "worker_id": worker_id,
-            "worker_name": worker_name,
-        }
+    normalized_deployment_id = normalize_deployment_id(deployment_id)
+    payload = WorkerSignalStreamEvent(
+        type=signal_type,
+        deployment_id=normalized_deployment_id,
+        at=datetime.now(UTC).isoformat(),
+        worker_id=worker_id or None,
+        worker_name=worker_name or None,
     )
+    stream_key = worker_events_stream_key(deployment_id=normalized_deployment_id)
     try:
         try:
             await redis_client.xadd(
-                WORKER_EVENTS_STREAM,
-                {"data": payload},
+                stream_key,
+                {"data": payload.model_dump_json()},
                 maxlen=10_000,
                 approximate=True,
             )
         except TypeError:
             await redis_client.xadd(
-                WORKER_EVENTS_STREAM,
-                {"data": payload},
+                stream_key,
+                {"data": payload.model_dump_json()},
                 maxlen=10_000,
             )
     except Exception as e:
@@ -184,12 +211,19 @@ async def heartbeat_loop(
     redis_client: Any,
     worker_id: str,
     get_worker_data: Any,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
 ) -> None:
     """Refresh worker heartbeat TTL in Redis periodically."""
     while True:
         try:
             await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL)
-            await write_worker_heartbeat(redis_client, worker_id, get_worker_data())
+            await write_worker_heartbeat(
+                redis_client,
+                worker_id,
+                get_worker_data(),
+                deployment_id=deployment_id,
+            )
         except asyncio.CancelledError:
             break
         except Exception as e:

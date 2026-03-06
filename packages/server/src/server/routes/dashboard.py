@@ -14,11 +14,14 @@ from shared.contracts import (
     RunStats,
     StuckActiveJob,
     TopFailingFunction,
+    WorkerStats,
 )
 
+from server.auth import require_auth_scope
 from server.backends.service import BackendService
 from server.config import get_settings
 from server.routes.depends import require_backend
+from server.runtime_scope import AuthScope
 from server.services.apis import ApiMetricsSummary, get_metrics_reader
 from server.services.jobs import get_oldest_queued_jobs, get_queue_depth_stats
 from server.services.registry import get_function_definitions, get_worker_stats
@@ -34,6 +37,7 @@ SUPPORTED_DASHBOARD_WINDOWS: tuple[int, ...] = (1, 5, 15, 60, 1440)
 async def get_dashboard_stats(
     window_minutes: Annotated[int, Query(ge=1, le=24 * 60)] = 24 * 60,
     failing_min_rate: Annotated[float, Query(ge=0.0, le=100.0)] = 0.0,
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ) -> DashboardStats:
     """
@@ -54,24 +58,21 @@ async def get_dashboard_stats(
 
     now = datetime.now(UTC)
     window_ago = now - timedelta(minutes=window_minutes)
-
-    # Default empty stats
     run_stats = RunStats(
         total=0,
         success_rate=100.0,
         window_minutes=window_minutes,
         jobs_per_min=0.0,
     )
-    queue_depth = await get_queue_depth_stats()
     queue_stats = QueueStats(
-        running=queue_depth.running,
-        waiting=queue_depth.waiting,
-        claimed=queue_depth.claimed,
-        scheduled_due=queue_depth.scheduled_due,
-        scheduled_future=queue_depth.scheduled_future,
-        backlog=queue_depth.backlog,
-        capacity=queue_depth.capacity,
-        total=queue_depth.total,
+        running=0,
+        waiting=0,
+        claimed=0,
+        scheduled_due=0,
+        scheduled_future=0,
+        backlog=0,
+        capacity=0,
+        total=0,
     )
 
     recent_runs: list[Run] = []
@@ -83,7 +84,9 @@ async def get_dashboard_stats(
 
     function_name_map: dict[str, str] = {}
     try:
-        function_defs = await get_function_definitions()
+        function_defs = await get_function_definitions(
+            deployment_id=scope.deployment_id
+        )
         function_name_map = {key: cfg.name for key, cfg in function_defs.items()}
     except RuntimeError:
         function_name_map = {}
@@ -91,7 +94,10 @@ async def get_dashboard_stats(
     async with backend.session() as tx:
         repo = tx.jobs
 
-        stats_window = await repo.get_stats(start_date=window_ago)
+        stats_window = await repo.get_stats(
+            start_date=window_ago,
+            deployment_id=scope.deployment_id,
+        )
 
         run_stats = RunStats(
             total=stats_window.total,
@@ -100,7 +106,10 @@ async def get_dashboard_stats(
             jobs_per_min=round(stats_window.total / max(1, window_minutes), 2),
         )
 
-        function_stats = await repo.get_function_job_stats(start_date=window_ago)
+        function_stats = await repo.get_function_job_stats(
+            start_date=window_ago,
+            deployment_id=scope.deployment_id,
+        )
         top_candidates: list[TopFailingFunction] = []
         for function_key, item in function_stats.items():
             if item.runs < 1 or item.failures < 1:
@@ -134,6 +143,7 @@ async def get_dashboard_stats(
             started_before=now
             - timedelta(seconds=max(0, settings.dashboard_stuck_active_seconds)),
             limit=max(0, settings.dashboard_stuck_active_limit),
+            deployment_id=scope.deployment_id,
         )
         for stuck in stuck_rows:
             started_at = as_utc_aware(stuck.started_at)
@@ -152,7 +162,7 @@ async def get_dashboard_stats(
             )
 
         # Get recent runs (last 10)
-        recent_jobs = await repo.list_jobs(limit=10)
+        recent_jobs = await repo.list_jobs(limit=10, deployment_id=scope.deployment_id)
         for job in recent_jobs:
             duration_ms = None
             if job.started_at and job.completed_at:
@@ -177,7 +187,11 @@ async def get_dashboard_stats(
             )
 
         # Get recent failures (last 10)
-        failed_jobs = await repo.list_jobs(status="failed", limit=10)
+        failed_jobs = await repo.list_jobs(
+            status="failed",
+            limit=10,
+            deployment_id=scope.deployment_id,
+        )
         for job in failed_jobs:
             duration_ms = None
             if job.started_at and job.completed_at:
@@ -201,8 +215,26 @@ async def get_dashboard_stats(
                 )
             )
 
+    worker_stats = WorkerStats(total=0)
+    api_summary = ApiMetricsSummary(
+        requests_24h=0,
+        avg_latency_ms=0.0,
+        error_rate=0.0,
+    )
+    queue_depth = await get_queue_depth_stats(deployment_id=scope.deployment_id)
+    queue_stats = QueueStats(
+        running=queue_depth.running,
+        waiting=queue_depth.waiting,
+        claimed=queue_depth.claimed,
+        scheduled_due=queue_depth.scheduled_due,
+        scheduled_future=queue_depth.scheduled_future,
+        backlog=queue_depth.backlog,
+        capacity=queue_depth.capacity,
+        total=queue_depth.total,
+    )
     oldest_queued = await get_oldest_queued_jobs(
         limit=max(0, settings.dashboard_oldest_queued_limit),
+        deployment_id=scope.deployment_id,
     )
     oldest_queued_jobs = [
         OldestQueuedJob(
@@ -215,13 +247,9 @@ async def get_dashboard_stats(
         )
         for item in oldest_queued
     ]
-
-    # Worker stats from Redis
-    worker_stats = await get_worker_stats()
-
-    # API stats from Redis hash buckets
+    worker_stats = await get_worker_stats(deployment_id=scope.deployment_id)
     try:
-        reader = await get_metrics_reader()
+        reader = await get_metrics_reader(deployment_id=scope.deployment_id)
         api_summary = await reader.get_summary_window(minutes=window_minutes)
     except RuntimeError:
         api_summary = ApiMetricsSummary(

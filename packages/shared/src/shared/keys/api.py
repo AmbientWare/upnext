@@ -10,11 +10,10 @@ Each hash contains:
     requests, errors, total_latency_ms, status_2xx, status_4xx, status_5xx
 """
 
-# Key prefix for all API tracking keys
-API_PREFIX = "upnext:apis"
+from shared.keys.namespace import scoped_key
 
-# Key prefix for API instance heartbeats
-API_INSTANCE_PREFIX = "upnext:apis:instances"
+API_PREFIX = scoped_key("apis")
+API_INSTANCE_PREFIX = scoped_key("apis", "instances")
 
 # TTLs (seconds)
 # Keep enough minute resolution to support up to 1h dashboard windows.
@@ -27,31 +26,57 @@ REGISTRY_TTL = 2_592_000  # 30 days
 API_INSTANCE_TTL = 30
 
 
-def api_registry_key() -> str:
+def api_registry_key(*, deployment_id: str | None = None) -> str:
     """Build API-name registry key."""
-    return f"{API_PREFIX}:registry"
+    return scoped_key("apis", "registry", deployment_id=deployment_id)
 
 
-def api_endpoints_key(api_name: str) -> str:
+def api_endpoints_key(api_name: str, *, deployment_id: str | None = None) -> str:
     """Build per-API endpoint registry key."""
-    return f"{API_PREFIX}:{api_name}:endpoints"
+    return scoped_key("apis", api_name, "endpoints", deployment_id=deployment_id)
 
 
-def api_minute_bucket_key(api_name: str, endpoint_key: str, minute_key: str) -> str:
+def api_minute_bucket_key(
+    api_name: str,
+    endpoint_key: str,
+    minute_key: str,
+    *,
+    deployment_id: str | None = None,
+) -> str:
     """Build minute metrics hash key for an API endpoint."""
-    return f"{API_PREFIX}:{api_name}:{endpoint_key}:m:{minute_key}"
+    return scoped_key(
+        "apis",
+        api_name,
+        endpoint_key,
+        "m",
+        minute_key,
+        deployment_id=deployment_id,
+    )
 
 
-def api_hourly_bucket_key(api_name: str, endpoint_key: str, hour_key: str) -> str:
+def api_hourly_bucket_key(
+    api_name: str,
+    endpoint_key: str,
+    hour_key: str,
+    *,
+    deployment_id: str | None = None,
+) -> str:
     """Build hourly metrics hash key for an API endpoint."""
-    return f"{API_PREFIX}:{api_name}:{endpoint_key}:h:{hour_key}"
+    return scoped_key(
+        "apis",
+        api_name,
+        endpoint_key,
+        "h",
+        hour_key,
+        deployment_id=deployment_id,
+    )
 
 
-def api_instance_key(api_id: str) -> str:
+def api_instance_key(api_id: str, *, deployment_id: str | None = None) -> str:
     """Build API instance heartbeat key."""
-    return f"{API_INSTANCE_PREFIX}:{api_id}"
+    return scoped_key("apis", "instances", api_id, deployment_id=deployment_id)
 
 
-def api_instance_pattern() -> str:
+def api_instance_pattern(*, deployment_id: str | None = None) -> str:
     """SCAN pattern for API instance heartbeat keys."""
-    return f"{API_INSTANCE_PREFIX}:*"
+    return scoped_key("apis", "instances", "*", deployment_id=deployment_id)

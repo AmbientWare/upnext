@@ -4,13 +4,13 @@ import asyncio
 import logging
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from shared.keys import (
-    EVENTS_PUBSUB_CHANNEL,
-)
+from shared.keys import status_events_pubsub_channel
 
+from server.auth import require_auth_scope
 from server.routes.sse import SSE_HEADERS, SSE_PUBSUB_TIMEOUT_SECONDS
+from server.runtime_scope import AuthScope
 from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,10 @@ router = APIRouter(prefix=EVENTS_PREFIX, tags=["events"])
 
 
 @router.get("/stream")
-async def stream_events(request: Request) -> StreamingResponse:
+async def stream_events(
+    request: Request,
+    scope: AuthScope = Depends(require_auth_scope),
+) -> StreamingResponse:
     """Stream job events via Server-Sent Events (SSE)."""
     try:
         redis_client = await get_redis()
@@ -29,7 +32,8 @@ async def stream_events(request: Request) -> StreamingResponse:
         raise HTTPException(status_code=503, detail=str(e)) from e
 
     pubsub = redis_client.pubsub()
-    await pubsub.subscribe(EVENTS_PUBSUB_CHANNEL)
+    channel = status_events_pubsub_channel(deployment_id=scope.deployment_id)
+    await pubsub.subscribe(channel)
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
@@ -53,9 +57,9 @@ async def stream_events(request: Request) -> StreamingResponse:
             pass
         except Exception as exc:
             logger.warning("Events stream error: %s", exc)
-            yield "event: error\ndata: {\"error\": \"stream disconnected\"}\n\n"
+            yield 'event: error\ndata: {"error": "stream disconnected"}\n\n'
         finally:
-            await pubsub.unsubscribe(EVENTS_PUBSUB_CHANNEL)
+            await pubsub.unsubscribe(channel)
             await pubsub.close()
 
     return StreamingResponse(

@@ -4,7 +4,7 @@ import time
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from shared.contracts import (
     FunctionType,
@@ -12,8 +12,9 @@ from shared.contracts import (
     JobTrendsResponse,
     JobTrendsSnapshotEvent,
 )
-from shared.keys import EVENTS_STREAM
+from shared.keys import status_events_stream_key
 
+from server.auth import require_auth_scope
 from server.backends import get_backend
 from server.routes.jobs.jobs_root import get_job_trends
 from server.routes.jobs.jobs_utils import (
@@ -27,6 +28,7 @@ from server.routes.sse import (
     SSE_HEADERS,
     SSE_READ_COUNT,
 )
+from server.runtime_scope import AuthScope
 from server.services.redis import get_redis
 from server.shared_utils import get_stream_text_field
 
@@ -138,6 +140,7 @@ async def stream_job_trends(
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     function: str | None = Query(None, description="Filter by function key"),
     type: FunctionType | None = Query(None, description="Filter by function type"),
+    scope: AuthScope = Depends(require_auth_scope),
 ) -> StreamingResponse:
     """Stream realtime job trends snapshots via Server-Sent Events (SSE)."""
     hours_window = hours if isinstance(hours, int) else 24
@@ -169,7 +172,11 @@ async def stream_job_trends(
                     break
 
                 result = await redis_client.xread(
-                    {EVENTS_STREAM: last_id},
+                    {
+                        status_events_stream_key(
+                            deployment_id=scope.deployment_id
+                        ): last_id
+                    },
                     count=SSE_READ_COUNT,
                     block=SSE_BLOCK_MS,
                 )

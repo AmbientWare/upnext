@@ -4,14 +4,22 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/components/providers/use-auth";
 import { env } from "@/lib/env";
 
-export function LoginPage() {
+type LoginPageProps = {
+  runtimeMode?: "self_hosted" | "cloud_runtime";
+};
+
+export function LoginPage({ runtimeMode = "self_hosted" }: LoginPageProps) {
   const { login, setIsAdmin } = useAuth();
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const isCloudRuntime = runtimeMode === "cloud_runtime";
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (isCloudRuntime) {
+      return;
+    }
     const trimmed = key.trim();
     if (!trimmed) return;
 
@@ -67,7 +75,9 @@ export function LoginPage() {
             UpNext
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Enter your API key to continue
+            {isCloudRuntime
+              ? "Cloud runtime access is managed by the control plane."
+              : "Enter your API key to continue"}
           </p>
         </div>
 
@@ -80,13 +90,18 @@ export function LoginPage() {
               onChange={(e) => setKey(e.target.value)}
               autoFocus
               autoComplete="off"
+              disabled={isCloudRuntime}
             />
             {error && (
               <p className="mt-2 text-sm text-destructive">{error}</p>
             )}
           </div>
-          <Button type="submit" className="w-full" disabled={loading || !key.trim()}>
-            {loading ? "Verifying..." : "Sign in"}
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={isCloudRuntime || loading || !key.trim()}
+          >
+            {isCloudRuntime ? "Use UpNext Cloud" : loading ? "Verifying..." : "Sign in"}
           </Button>
         </form>
       </div>

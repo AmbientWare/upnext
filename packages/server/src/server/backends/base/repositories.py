@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from datetime import datetime
 
 from pydantic import TypeAdapter
+from shared.keys import DEFAULT_DEPLOYMENT_ID
 
 from server.backends.base.models import ApiKey, Job, Secret, User
 from server.backends.base.repository_models import (
@@ -38,10 +39,14 @@ class BaseJobRepository(ABC):
     async def record_job(self, data: JobRecordCreate | Mapping[str, object]) -> Job: ...
 
     @abstractmethod
-    async def get_by_id(self, id: str) -> Job | None: ...
+    async def get_by_id(
+        self, id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> Job | None: ...
 
     @abstractmethod
-    async def list_job_subtree(self, id: str) -> list[Job]: ...
+    async def list_job_subtree(
+        self, id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> list[Job]: ...
 
     @abstractmethod
     async def list_jobs(
@@ -54,6 +59,7 @@ class BaseJobRepository(ABC):
         end_date: datetime | None = None,
         limit: int = 100,
         cursor: str | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> list[Job]: ...
 
     @abstractmethod
@@ -65,6 +71,7 @@ class BaseJobRepository(ABC):
         worker_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> int: ...
 
     @abstractmethod
@@ -73,6 +80,7 @@ class BaseJobRepository(ABC):
         function: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> JobStatsSummary: ...
 
     @abstractmethod
@@ -81,6 +89,7 @@ class BaseJobRepository(ABC):
         *,
         function: str,
         start_date: datetime,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> list[float]: ...
 
     @abstractmethod
@@ -91,6 +100,7 @@ class BaseJobRepository(ABC):
         end_date: datetime,
         function: str | None = None,
         functions: list[str] | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> list[JobHourlyTrendRow]: ...
 
     @abstractmethod
@@ -98,6 +108,7 @@ class BaseJobRepository(ABC):
         self,
         *,
         start_date: datetime,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> dict[str, FunctionJobStats]: ...
 
     @abstractmethod
@@ -106,6 +117,7 @@ class BaseJobRepository(ABC):
         *,
         start_date: datetime,
         function: str | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> dict[str, FunctionWaitStats]: ...
 
     @abstractmethod
@@ -114,13 +126,18 @@ class BaseJobRepository(ABC):
         *,
         started_before: datetime,
         limit: int = 10,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> list[Job]: ...
 
     @abstractmethod
-    async def list_old_ids(self, retention_hours: int = 24) -> list[str]: ...
+    async def list_old_ids(
+        self, retention_hours: int = 24, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> list[str]: ...
 
     @abstractmethod
-    async def delete_by_ids(self, ids: list[str]) -> int: ...
+    async def delete_by_ids(
+        self, ids: list[str], *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> int: ...
 
     @abstractmethod
     async def save_job(self, job: Job) -> None: ...
@@ -129,10 +146,42 @@ class BaseJobRepository(ABC):
 class BaseArtifactRepository(ABC):
     @staticmethod
     def _to_model_artifact(payload: object) -> ArtifactRecord:
+        if not isinstance(payload, Mapping):
+            payload = {
+                "id": getattr(payload, "id"),
+                "deployment_id": getattr(payload, "deployment_id"),
+                "job_id": getattr(payload, "job_id"),
+                "name": getattr(payload, "name"),
+                "type": getattr(payload, "type"),
+                "size_bytes": getattr(payload, "size_bytes"),
+                "content_type": getattr(payload, "content_type"),
+                "sha256": getattr(payload, "sha256"),
+                "storage_backend": getattr(payload, "storage_backend"),
+                "storage_key": getattr(payload, "storage_key"),
+                "status": getattr(payload, "status"),
+                "error": getattr(payload, "error"),
+                "created_at": getattr(payload, "created_at"),
+            }
         return _ARTIFACT_ADAPTER.validate_python(payload, from_attributes=True)
 
     @staticmethod
     def _to_model_pending_artifact(payload: object) -> PendingArtifactRecord:
+        if not isinstance(payload, Mapping):
+            payload = {
+                "id": getattr(payload, "id"),
+                "deployment_id": getattr(payload, "deployment_id"),
+                "job_id": getattr(payload, "job_id"),
+                "name": getattr(payload, "name"),
+                "type": getattr(payload, "type"),
+                "size_bytes": getattr(payload, "size_bytes"),
+                "content_type": getattr(payload, "content_type"),
+                "sha256": getattr(payload, "sha256"),
+                "storage_backend": getattr(payload, "storage_backend"),
+                "storage_key": getattr(payload, "storage_key"),
+                "status": getattr(payload, "status"),
+                "error": getattr(payload, "error"),
+                "created_at": getattr(payload, "created_at"),
+            }
         return _PENDING_ARTIFACT_ADAPTER.validate_python(payload, from_attributes=True)
 
     @abstractmethod
@@ -150,6 +199,7 @@ class BaseArtifactRepository(ABC):
         storage_key: str = "",
         status: str = "available",
         error: str | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> ArtifactRecord: ...
 
     @abstractmethod
@@ -167,35 +217,48 @@ class BaseArtifactRepository(ABC):
         storage_key: str = "",
         status: str = "queued",
         error: str | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> PendingArtifactRecord: ...
 
     @abstractmethod
-    async def promote_pending_for_job(self, job_id: str) -> int: ...
+    async def promote_pending_for_job(
+        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> int: ...
 
     @abstractmethod
     async def promote_pending_for_job_with_artifacts(
-        self, job_id: str
+        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
     ) -> list[ArtifactRecord]: ...
 
     @abstractmethod
-    async def promote_ready_pending(self, *, limit: int = 500) -> int: ...
+    async def promote_ready_pending(
+        self, *, limit: int = 500, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> int: ...
 
     @abstractmethod
     async def cleanup_stale_pending_with_rows(
-        self, *, retention_hours: int = 24
+        self, *, retention_hours: int = 24, deployment_id: str = DEFAULT_DEPLOYMENT_ID
     ) -> list[PendingArtifactRecord]: ...
 
     @abstractmethod
-    async def get_by_id(self, artifact_id: str) -> ArtifactRecord | None: ...
+    async def get_by_id(
+        self, artifact_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> ArtifactRecord | None: ...
 
     @abstractmethod
-    async def list_by_job(self, job_id: str) -> list[ArtifactRecord]: ...
+    async def list_by_job(
+        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> list[ArtifactRecord]: ...
 
     @abstractmethod
-    async def list_by_job_ids(self, job_ids: list[str]) -> list[ArtifactRecord]: ...
+    async def list_by_job_ids(
+        self, job_ids: list[str], *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> list[ArtifactRecord]: ...
 
     @abstractmethod
-    async def delete(self, artifact_id: str) -> bool: ...
+    async def delete(
+        self, artifact_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> bool: ...
 
 
 class BaseAuthRepository(ABC):
@@ -286,6 +349,7 @@ class BaseSecretsRepository(ABC):
         if not isinstance(payload, Mapping):
             payload = {
                 "id": getattr(payload, "id"),
+                "deployment_id": getattr(payload, "deployment_id"),
                 "name": getattr(payload, "name"),
                 "encrypted_data": getattr(payload, "encrypted_data"),
                 "created_at": getattr(payload, "created_at"),
@@ -294,16 +358,30 @@ class BaseSecretsRepository(ABC):
         return _SECRET_ADAPTER.validate_python(payload)
 
     @abstractmethod
-    async def list_secrets(self) -> list[Secret]: ...
+    async def list_secrets(
+        self,
+        *,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    ) -> list[Secret]: ...
 
     @abstractmethod
-    async def get_secret_by_name(self, name: str) -> Secret | None: ...
+    async def get_secret_by_name(
+        self, name: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> Secret | None: ...
 
     @abstractmethod
-    async def get_secret_by_id(self, secret_id: str) -> Secret | None: ...
+    async def get_secret_by_id(
+        self, secret_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> Secret | None: ...
 
     @abstractmethod
-    async def create_secret(self, name: str, data: dict[str, str]) -> Secret: ...
+    async def create_secret(
+        self,
+        name: str,
+        data: dict[str, str],
+        *,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    ) -> Secret: ...
 
     @abstractmethod
     async def update_secret(
@@ -312,10 +390,13 @@ class BaseSecretsRepository(ABC):
         *,
         name: str | None = None,
         data: dict[str, str] | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> Secret | None: ...
 
     @abstractmethod
-    async def delete_secret(self, secret_id: str) -> bool: ...
+    async def delete_secret(
+        self, secret_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> bool: ...
 
     @abstractmethod
     def decrypt_secret(self, secret: Secret) -> dict[str, str]: ...

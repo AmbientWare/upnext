@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
+from shared.keys import DEFAULT_DEPLOYMENT_ID
 
 from server.backends.base.repositories import BaseArtifactRepository
 from server.backends.base.repository_models import ArtifactRecord, PendingArtifactRecord
@@ -47,6 +48,7 @@ def _pending_job_key(job_id: str) -> str:
 def _encode_artifact(record: ArtifactRecord) -> dict[str, object]:
     return {
         "id": record.id,
+        "deployment_id": record.deployment_id,
         "job_id": record.job_id,
         "name": record.name,
         "type": record.type,
@@ -71,6 +73,7 @@ def _decode_artifact(payload: dict[str, object]) -> ArtifactRecord | None:
 def _encode_pending(record: PendingArtifactRecord) -> dict[str, object]:
     return {
         "id": record.id,
+        "deployment_id": record.deployment_id,
         "job_id": record.job_id,
         "name": record.name,
         "type": record.type,
@@ -128,6 +131,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         storage_key: str = "",
         status: str = "available",
         error: str | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> ArtifactRecord:
         size_bytes, content_type = infer_artifact_metadata(
             data=data,
@@ -137,6 +141,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         )
         record = ArtifactRecord(
             id=str(uuid4()),
+            deployment_id=deployment_id,
             job_id=job_id,
             name=name,
             type=artifact_type,
@@ -166,6 +171,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         storage_key: str = "",
         status: str = "queued",
         error: str | None = None,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
     ) -> PendingArtifactRecord:
         size_bytes, content_type = infer_artifact_metadata(
             data=data,
@@ -175,6 +181,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         )
         record = PendingArtifactRecord(
             id=str(uuid4()),
+            deployment_id=deployment_id,
             job_id=job_id,
             name=name,
             type=artifact_type,
@@ -190,17 +197,23 @@ class RedisArtifactRepository(BaseArtifactRepository):
         await self._write_pending(record)
         return record
 
-    async def promote_pending_for_job(self, job_id: str) -> int:
-        return len(await self.promote_pending_for_job_with_artifacts(job_id))
+    async def promote_pending_for_job(
+        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> int:
+        return len(
+            await self.promote_pending_for_job_with_artifacts(
+                job_id, deployment_id=deployment_id
+            )
+        )
 
     async def promote_pending_for_job_with_artifacts(
-        self, job_id: str
+        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
     ) -> list[ArtifactRecord]:
         pending_ids = await self._redis.smembers(_pending_job_key(job_id))
         pending_rows: list[PendingArtifactRecord] = []
         for raw_pending_id in pending_ids:
             row = await self._read_pending(decode_text(raw_pending_id))
-            if row is not None:
+            if row is not None and row.deployment_id == deployment_id:
                 pending_rows.append(row)
         pending_rows.sort(key=lambda row: (row.created_at, row.id))
         return await self._promote_pending_rows(pending_rows)
@@ -212,6 +225,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         for pending in pending_rows:
             artifact = ArtifactRecord(
                 id=str(uuid4()),
+                deployment_id=pending.deployment_id,
                 job_id=pending.job_id,
                 name=pending.name,
                 type=pending.type,
@@ -231,7 +245,9 @@ class RedisArtifactRepository(BaseArtifactRepository):
             out.append(artifact)
         return out
 
-    async def promote_ready_pending(self, *, limit: int = 500) -> int:
+    async def promote_ready_pending(
+        self, *, limit: int = 500, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> int:
         if limit <= 0:
             return 0
         pending_ids = await self._redis.smembers(_PENDING_SET)
@@ -241,6 +257,8 @@ class RedisArtifactRepository(BaseArtifactRepository):
             row = await self._read_pending(pending_id)
             if row is None:
                 continue
+            if row.deployment_id != deployment_id:
+                continue
             if await self._redis.exists(_job_key(row.job_id)):
                 pending_rows.append(row)
         pending_rows.sort(key=lambda row: (row.created_at, row.id))
@@ -248,7 +266,7 @@ class RedisArtifactRepository(BaseArtifactRepository):
         return len(promoted)
 
     async def cleanup_stale_pending_with_rows(
-        self, *, retention_hours: int = 24
+        self, *, retention_hours: int = 24, deployment_id: str = DEFAULT_DEPLOYMENT_ID
     ) -> list[PendingArtifactRecord]:
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
         pending_ids = await self._redis.smembers(_PENDING_SET)
@@ -257,6 +275,8 @@ class RedisArtifactRepository(BaseArtifactRepository):
             pending_id = decode_text(raw_pending_id)
             row = await self._read_pending(pending_id)
             if row is None:
+                continue
+            if row.deployment_id != deployment_id:
                 continue
             if row.created_at < cutoff:
                 stale.append(row)
@@ -267,30 +287,44 @@ class RedisArtifactRepository(BaseArtifactRepository):
             await self._redis.srem(_pending_job_key(row.job_id), row.id)
         return stale
 
-    async def get_by_id(self, artifact_id: str) -> ArtifactRecord | None:
-        return await self._read_artifact(artifact_id)
+    async def get_by_id(
+        self, artifact_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> ArtifactRecord | None:
+        record = await self._read_artifact(artifact_id)
+        if record is None or record.deployment_id != deployment_id:
+            return None
+        return record
 
-    async def list_by_job(self, job_id: str) -> list[ArtifactRecord]:
+    async def list_by_job(
+        self, job_id: str, *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> list[ArtifactRecord]:
         artifact_ids = await self._redis.smembers(_artifact_job_key(job_id))
         out: list[ArtifactRecord] = []
         for raw_artifact_id in artifact_ids:
             record = await self._read_artifact(decode_text(raw_artifact_id))
-            if record is not None:
+            if record is not None and record.deployment_id == deployment_id:
                 out.append(record)
         out.sort(key=lambda row: (row.created_at, row.id), reverse=True)
         return out
 
-    async def list_by_job_ids(self, job_ids: list[str]) -> list[ArtifactRecord]:
+    async def list_by_job_ids(
+        self, job_ids: list[str], *, deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    ) -> list[ArtifactRecord]:
         if not job_ids:
             return []
         out: list[ArtifactRecord] = []
         for job_id in job_ids:
-            out.extend(await self.list_by_job(job_id))
+            out.extend(await self.list_by_job(job_id, deployment_id=deployment_id))
         out.sort(key=lambda row: (row.created_at, row.id), reverse=True)
         return out
 
-    async def delete(self, artifact_id: str) -> bool:
-        record = await self._read_artifact(artifact_id)
+    async def delete(
+        self,
+        artifact_id: str,
+        *,
+        deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    ) -> bool:
+        record = await self.get_by_id(artifact_id, deployment_id=deployment_id)
         if record is None:
             return False
         await self._redis.delete(_artifact_key(artifact_id))

@@ -77,6 +77,7 @@ def test_calculate_artifact_size_handles_supported_payload_types() -> None:
 @pytest.mark.asyncio
 async def test_artifact_routes_create_list_get_delete_round_trip(
     sqlite_db,
+    local_auth_scope,
 ) -> None:
     now = datetime.now(UTC)
     async with sqlite_db.session() as session:
@@ -97,6 +98,7 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
         "artifact-job-1",
         CreateArtifactRequest(name="summary", type=ArtifactType.TEXT, data="hello"),
         create_response,
+        scope=local_auth_scope,
         backend=sqlite_db,
     )
     assert isinstance(created, ArtifactResponse)
@@ -106,36 +108,46 @@ async def test_artifact_routes_create_list_get_delete_round_trip(
     assert created.type == ArtifactType.TEXT
     assert created.size_bytes == 5
 
-    listed = await artifacts_root_route.list_artifacts("artifact-job-1", backend=sqlite_db)
+    listed = await artifacts_root_route.list_artifacts(
+        "artifact-job-1", scope=local_auth_scope, backend=sqlite_db
+    )
     assert listed.total == 1
     assert listed.artifacts[0].id == created.id
     assert listed.artifacts[0].storage_backend == "local"
     assert listed.artifacts[0].storage_key
 
-    fetched = await artifacts_root_route.get_artifact(created.id, backend=sqlite_db)
+    fetched = await artifacts_root_route.get_artifact(
+        created.id, scope=local_auth_scope, backend=sqlite_db
+    )
     assert fetched.id == created.id
     assert fetched.job_id == "artifact-job-1"
 
-    content = await artifacts_root_route.get_artifact_content(created.id, backend=sqlite_db)
+    content = await artifacts_root_route.get_artifact_content(
+        created.id, scope=local_auth_scope, backend=sqlite_db
+    )
     assert content.body == b"hello"
 
-    deleted = await artifacts_root_route.delete_artifact(created.id, backend=sqlite_db)
+    deleted = await artifacts_root_route.delete_artifact(
+        created.id, scope=local_auth_scope, backend=sqlite_db
+    )
     assert deleted.status == "deleted"
     assert deleted.id == created.id
 
     with pytest.raises(HTTPException, match="Artifact not found") as get_missing_exc:
-        await artifacts_root_route.get_artifact(created.id, backend=sqlite_db)
+        await artifacts_root_route.get_artifact(
+            created.id, scope=local_auth_scope, backend=sqlite_db
+        )
     assert get_missing_exc.value.status_code == 404
 
     with pytest.raises(HTTPException, match="Artifact not found") as delete_missing_exc:
-        await artifacts_root_route.delete_artifact(created.id, backend=sqlite_db)
+        await artifacts_root_route.delete_artifact(
+            created.id, scope=local_auth_scope, backend=sqlite_db
+        )
     assert delete_missing_exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_job_scoped_artifact_routes_are_available(
-    sqlite_db, monkeypatch
-) -> None:
+async def test_job_scoped_artifact_routes_are_available(sqlite_db, monkeypatch) -> None:
     now = datetime.now(UTC)
     async with sqlite_db.session() as session:
         jobs = JobRepository(session)
@@ -180,6 +192,7 @@ async def test_job_scoped_artifact_routes_are_available(
 @pytest.mark.asyncio
 async def test_create_artifact_queues_pending_when_job_row_missing(
     sqlite_db,
+    local_auth_scope,
 ) -> None:
     response = Response()
     queued = await artifacts_root_route.create_artifact(
@@ -188,6 +201,7 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
             name="payload", type=ArtifactType.JSON, data={"ok": True}
         ),
         response,
+        scope=local_auth_scope,
         backend=sqlite_db,
     )
     assert isinstance(queued, ArtifactQueuedResponse)
@@ -212,7 +226,9 @@ async def test_create_artifact_queues_pending_when_job_row_missing(
     assert rows[0].name == "payload"
     assert rows[0].size_bytes == len(json.dumps({"ok": True}).encode("utf-8"))
 
-    listed = await artifacts_root_route.list_artifacts("missing-job", backend=sqlite_db)
+    listed = await artifacts_root_route.list_artifacts(
+        "missing-job", scope=local_auth_scope, backend=sqlite_db
+    )
     assert listed.total == 0
     assert listed.artifacts == []
 
@@ -234,7 +250,7 @@ async def test_artifact_routes_handle_database_unavailable(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_list_functions_merges_stats_filters_and_worker_labels(
-    sqlite_db, monkeypatch
+    sqlite_db, monkeypatch, local_auth_scope
 ) -> None:
     now = datetime.now(UTC)
     async with sqlite_db.session() as session:
@@ -266,7 +282,8 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             }
         )
 
-    async def _defs() -> dict[str, FunctionConfig]:
+    async def _defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "fn.task": FunctionConfig(
                 key="fn.task",
@@ -285,7 +302,8 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             ),
         }
 
-    async def _workers() -> list[WorkerInstance]:
+    async def _workers(*, deployment_id: str = "local") -> list[WorkerInstance]:
+        assert deployment_id == local_auth_scope.deployment_id
         return [
             _worker(worker_id="worker-a-1", worker_name="alpha", functions=["fn.task"]),
             _worker(worker_id="worker-a-2", worker_name="alpha", functions=["fn.task"]),
@@ -303,7 +321,10 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             ),
         ]
 
-    async def _queue_depth() -> dict[str, FunctionQueueDepthStats]:
+    async def _queue_depth(
+        *, deployment_id: str = "local"
+    ) -> dict[str, FunctionQueueDepthStats]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "fn.task": FunctionQueueDepthStats(
                 function="fn.task",
@@ -317,7 +338,10 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
             ),
         }
 
-    async def _dispatch_reasons() -> dict[str, DispatchReasonMetrics]:
+    async def _dispatch_reasons(
+        *, deployment_id: str = "local"
+    ) -> dict[str, DispatchReasonMetrics]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "fn.task": DispatchReasonMetrics(
                 paused=1,
@@ -337,7 +361,11 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
-    all_functions = await functions_route.list_functions(type=None, backend=sqlite_db)
+    all_functions = await functions_route.list_functions(
+        type=None,
+        scope=local_auth_scope,
+        backend=sqlite_db,
+    )
     assert all_functions.total == 2
 
     by_key = {item.key: item for item in all_functions.functions}
@@ -363,16 +391,21 @@ async def test_list_functions_merges_stats_filters_and_worker_labels(
     assert set(event.workers) == {"host-1", "workerid"}
     assert event.active is True
 
-    event_only = await functions_route.list_functions(type=FunctionType.EVENT, backend=sqlite_db)
+    event_only = await functions_route.list_functions(
+        type=FunctionType.EVENT,
+        scope=local_auth_scope,
+        backend=sqlite_db,
+    )
     assert event_only.total == 1
     assert event_only.functions[0].key == "fn.event"
 
 
 @pytest.mark.asyncio
 async def test_list_functions_has_no_alert_delivery_side_effect(
-    sqlite_db, monkeypatch
+    sqlite_db, monkeypatch, local_auth_scope
 ) -> None:
-    async def _defs() -> dict[str, FunctionConfig]:
+    async def _defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "fn.task": FunctionConfig(
                 key="fn.task",
@@ -381,13 +414,20 @@ async def test_list_functions_has_no_alert_delivery_side_effect(
             )
         }
 
-    async def _workers() -> list[WorkerInstance]:
+    async def _workers(*, deployment_id: str = "local") -> list[WorkerInstance]:
+        assert deployment_id == local_auth_scope.deployment_id
         return []
 
-    async def _queue_depth() -> dict[str, FunctionQueueDepthStats]:
+    async def _queue_depth(
+        *, deployment_id: str = "local"
+    ) -> dict[str, FunctionQueueDepthStats]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {}
 
-    async def _dispatch_reasons() -> dict[str, DispatchReasonMetrics]:
+    async def _dispatch_reasons(
+        *, deployment_id: str = "local"
+    ) -> dict[str, DispatchReasonMetrics]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {}
 
     async def _emit_raises(_functions):  # type: ignore[no-untyped-def]
@@ -403,14 +443,18 @@ async def test_list_functions_has_no_alert_delivery_side_effect(
     )
     monkeypatch.setattr(alerts_module, "emit_function_alerts", _emit_raises)
 
-    out = await functions_route.list_functions(type=None, backend=sqlite_db)
+    out = await functions_route.list_functions(
+        type=None,
+        scope=local_auth_scope,
+        backend=sqlite_db,
+    )
     assert out.total == 1
     assert out.functions[0].key == "fn.task"
 
 
 @pytest.mark.asyncio
 async def test_get_function_computes_duration_percentile_and_recent_runs(
-    sqlite_db, monkeypatch
+    sqlite_db, monkeypatch, local_auth_scope
 ) -> None:
     now = datetime.now(UTC)
     async with sqlite_db.session() as session:
@@ -455,7 +499,8 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             }
         )
 
-    async def _defs() -> dict[str, FunctionConfig]:
+    async def _defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "fn.detail": FunctionConfig(
                 key="fn.detail",
@@ -465,7 +510,8 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             )
         }
 
-    async def _workers() -> list[WorkerInstance]:
+    async def _workers(*, deployment_id: str = "local") -> list[WorkerInstance]:
+        assert deployment_id == local_auth_scope.deployment_id
         return [
             _worker(
                 worker_id="worker-1",
@@ -479,7 +525,10 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             ),
         ]
 
-    async def _queue_depth() -> dict[str, FunctionQueueDepthStats]:
+    async def _queue_depth(
+        *, deployment_id: str = "local"
+    ) -> dict[str, FunctionQueueDepthStats]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "fn.detail": FunctionQueueDepthStats(
                 function="fn.detail",
@@ -488,7 +537,10 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
             )
         }
 
-    async def _dispatch_reasons() -> dict[str, DispatchReasonMetrics]:
+    async def _dispatch_reasons(
+        *, deployment_id: str = "local"
+    ) -> dict[str, DispatchReasonMetrics]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "fn.detail": DispatchReasonMetrics(
                 paused=0,
@@ -507,7 +559,11 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
         "get_function_dispatch_reason_stats",
         _dispatch_reasons,
     )
-    detail = await functions_route.get_function("fn.detail", backend=sqlite_db)
+    detail = await functions_route.get_function(
+        "fn.detail",
+        scope=local_auth_scope,
+        backend=sqlite_db,
+    )
     assert detail.type == FunctionType.CRON
     assert detail.runs_24h == 3
     assert detail.success_rate == 33.3
@@ -531,7 +587,10 @@ async def test_get_function_computes_duration_percentile_and_recent_runs(
 
 
 @pytest.mark.asyncio
-async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
+async def test_apis_routes_list_detail_and_trends(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _Reader:
         async def get_apis(self) -> list[api_tracking_module.ApiMetricsByName]:
             return [
@@ -581,10 +640,12 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
                 )
             ]
 
-    async def _reader() -> _Reader:
+    async def _reader(*, deployment_id: str = "local") -> _Reader:
+        assert deployment_id == local_auth_scope.deployment_id
         return _Reader()
 
-    async def _instances() -> list[ApiInstance]:
+    async def _instances(*, deployment_id: str = "local") -> list[ApiInstance]:
+        assert deployment_id == local_auth_scope.deployment_id
         now = datetime.now(UTC).isoformat()
         return [
             ApiInstance(
@@ -616,7 +677,7 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     monkeypatch.setattr(apis_root_route, "get_metrics_reader", _reader)
     monkeypatch.setattr(apis_root_route, "list_api_instances", _instances)
 
-    listed = await apis_root_route.list_apis()
+    listed = await apis_root_route.list_apis(scope=local_auth_scope)
     assert listed.total == 2
     by_name = {api.name: api for api in listed.apis}
     assert by_name["orders"].active is True
@@ -624,20 +685,30 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     assert by_name["instance-only"].active is True
     assert by_name["instance-only"].requests_24h == 0
 
-    endpoints = await apis_root_route.list_endpoints()
+    endpoints = await apis_root_route.list_endpoints(scope=local_auth_scope)
     assert endpoints.total == 1
     assert endpoints.endpoints[0].method == "GET"
     assert endpoints.endpoints[0].path == "/orders"
 
-    trends = await apis_root_route.get_api_trends(hours=12)
+    trends = await apis_root_route.get_api_trends(
+        hours=12,
+        scope=local_auth_scope,
+    )
     assert len(trends.hourly) == 1
     assert trends.hourly[0].success_2xx == 10
 
-    found = await apis_root_route.get_endpoint("get", "orders")
+    found = await apis_root_route.get_endpoint(
+        "get",
+        "orders",
+        scope=local_auth_scope,
+    )
     assert found.method == "GET"
     assert found.path == "/orders"
 
-    api_page = await apis_root_route.get_api("orders")
+    api_page = await apis_root_route.get_api(
+        "orders",
+        scope=local_auth_scope,
+    )
     assert api_page.api.name == "orders"
     assert api_page.api.docs_url == "http://localhost:8080/docs"
     assert api_page.api.requests_24h == 12
@@ -645,50 +716,73 @@ async def test_apis_routes_list_detail_and_trends(monkeypatch) -> None:
     assert api_page.total_endpoints == 1
     assert api_page.endpoints[0].path == "/orders"
 
-    missing = await apis_root_route.get_endpoint("post", "missing")
+    missing = await apis_root_route.get_endpoint(
+        "post",
+        "missing",
+        scope=local_auth_scope,
+    )
     assert missing.method == "POST"
     assert missing.path == "/missing"
 
 
 @pytest.mark.asyncio
-async def test_apis_routes_fallback_to_empty_when_sources_fail(monkeypatch) -> None:
-    async def _fail_reader():
+async def test_apis_routes_fallback_to_empty_when_sources_fail(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
+    async def _fail_reader(*, deployment_id: str = "local"):
+        assert deployment_id == local_auth_scope.deployment_id
         raise RuntimeError("metrics unavailable")
 
-    async def _fail_instances():
+    async def _fail_instances(*, deployment_id: str = "local"):
+        assert deployment_id == local_auth_scope.deployment_id
         raise RuntimeError("instances unavailable")
 
     monkeypatch.setattr(apis_root_route, "get_metrics_reader", _fail_reader)
     monkeypatch.setattr(apis_root_route, "list_api_instances", _fail_instances)
 
-    listed = await apis_root_route.list_apis()
+    listed = await apis_root_route.list_apis(scope=local_auth_scope)
     assert listed.total == 0
     assert listed.apis == []
 
-    endpoints = await apis_root_route.list_endpoints()
+    endpoints = await apis_root_route.list_endpoints(scope=local_auth_scope)
     assert endpoints.total == 0
     assert endpoints.endpoints == []
 
-    trends = await apis_root_route.get_api_trends(hours=24)
+    trends = await apis_root_route.get_api_trends(
+        hours=24,
+        scope=local_auth_scope,
+    )
     assert trends.hourly == []
 
-    detail = await apis_root_route.get_endpoint("get", "missing")
+    detail = await apis_root_route.get_endpoint(
+        "get",
+        "missing",
+        scope=local_auth_scope,
+    )
     assert detail.method == "GET"
     assert detail.path == "/missing"
 
-    api_page = await apis_root_route.get_api("missing")
+    api_page = await apis_root_route.get_api(
+        "missing",
+        scope=local_auth_scope,
+    )
     assert api_page.api.name == "missing"
     assert api_page.api.docs_url is None
     assert api_page.total_endpoints == 0
 
 
 @pytest.mark.asyncio
-async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
+async def test_apis_stream_routes_emit_snapshot_frames(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _RedisStub:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return []
 
-    async def _list_apis() -> ApisListResponse:
+    async def _list_apis(*, scope=None) -> ApisListResponse:
+        assert scope == local_auth_scope
         return ApisListResponse(
             apis=[
                 apis_root_route.ApiInfo(
@@ -705,7 +799,8 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
             total=1,
         )
 
-    async def _get_api(name: str) -> ApiPageResponse:
+    async def _get_api(name: str, *, scope=None) -> ApiPageResponse:
+        assert scope == local_auth_scope
         return ApiPageResponse(
             api=apis_root_route.ApiOverview(
                 name=name, requests_24h=123, endpoint_count=2
@@ -725,12 +820,19 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
     monkeypatch.setattr(apis_stream_route, "get_api", _get_api)
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
-    list_response = await apis_stream_route.stream_apis(_RequestStub())
+    list_response = await apis_stream_route.stream_apis(
+        _RequestStub(),
+        scope=local_auth_scope,
+    )
     list_stream = cast(AsyncIterator[str], list_response.body_iterator.__aiter__())
     open_frame = await anext(list_stream)
     snapshot_frame = await anext(list_stream)
 
-    detail_response = await apis_stream_route.stream_api("orders", _RequestStub())
+    detail_response = await apis_stream_route.stream_api(
+        "orders",
+        _RequestStub(),
+        scope=local_auth_scope,
+    )
     detail_stream = cast(AsyncIterator[str], detail_response.body_iterator.__aiter__())
     detail_open_frame = await anext(detail_stream)
     detail_snapshot_frame = await anext(detail_stream)
@@ -758,6 +860,7 @@ async def test_apis_stream_routes_emit_snapshot_frames(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_apis_stream_routes_return_503_when_redis_unavailable(
     monkeypatch,
+    local_auth_scope,
 ) -> None:
     class _RequestStub:
         async def is_disconnected(self) -> bool:
@@ -769,20 +872,30 @@ async def test_apis_stream_routes_return_503_when_redis_unavailable(
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
     with pytest.raises(HTTPException, match="redis unavailable") as list_exc:
-        await apis_route.stream_apis(_RequestStub())
+        await apis_route.stream_apis(_RequestStub(), scope=local_auth_scope)
     assert list_exc.value.status_code == 503
 
     with pytest.raises(HTTPException, match="redis unavailable") as detail_exc:
-        await apis_route.stream_api("orders", _RequestStub())
+        await apis_route.stream_api(
+            "orders",
+            _RequestStub(),
+            scope=local_auth_scope,
+        )
     assert detail_exc.value.status_code == 503
 
     with pytest.raises(HTTPException, match="redis unavailable") as events_exc:
-        await apis_route.stream_api_request_events(_RequestStub())
+        await apis_route.stream_api_request_events(
+            _RequestStub(),
+            scope=local_auth_scope,
+        )
     assert events_exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
-async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
+async def test_api_request_events_list_and_stream_routes(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _RedisStub:
         async def xrevrange(self, _stream: str, count: int):  # type: ignore[no-untyped-def]
             _ = count
@@ -847,13 +960,19 @@ async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
 
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
-    listed = await apis_route.list_api_request_events(api_name="orders", limit=10)
+    listed = await apis_route.list_api_request_events(
+        api_name="orders",
+        limit=10,
+        scope=local_auth_scope,
+    )
     assert listed.total == 1
     assert listed.events[0].id == "evt-1"
     assert listed.events[0].path == "/orders/{order_id}"
 
     response = await apis_route.stream_api_request_events(
-        _RequestStub(), api_name="orders"
+        _RequestStub(),
+        api_name="orders",
+        scope=local_auth_scope,
     )
     body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
     open_frame = await anext(body)
@@ -869,6 +988,7 @@ async def test_api_request_events_list_and_stream_routes(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_api_request_events_skip_malformed_rows_without_crashing(
     monkeypatch,
+    local_auth_scope,
 ) -> None:
     class _RedisStub:
         async def xrevrange(self, _stream: str, count: int):  # type: ignore[no-untyped-def]
@@ -910,7 +1030,11 @@ async def test_api_request_events_skip_malformed_rows_without_crashing(
 
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
 
-    listed = await apis_route.list_api_request_events(api_name="orders", limit=10)
+    listed = await apis_route.list_api_request_events(
+        api_name="orders",
+        limit=10,
+        scope=local_auth_scope,
+    )
     assert listed.total == 1
     assert listed.events[0].id == "evt-valid"
 
@@ -1004,7 +1128,10 @@ async def test_jobs_trends_stream_path_not_captured_by_job_detail(
 
 
 @pytest.mark.asyncio
-async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) -> None:
+async def test_api_trends_stream_emits_initial_and_update_frames(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _RedisStub:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
@@ -1046,7 +1173,12 @@ async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
 
     call_count = {"value": 0}
 
-    async def _get_api_trends(hours: int = 24) -> apis_route.ApiTrendsResponse:
+    async def _get_api_trends(
+        hours: int = 24,
+        *,
+        scope=None,
+    ) -> apis_route.ApiTrendsResponse:
+        assert scope == local_auth_scope
         _ = hours
         call_count["value"] += 1
         return apis_route.ApiTrendsResponse(
@@ -1063,7 +1195,10 @@ async def test_api_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
     monkeypatch.setattr(apis_stream_route, "get_redis", _get_redis)
     monkeypatch.setattr(apis_stream_route, "get_api_trends", _get_api_trends)
 
-    response = await apis_route.stream_api_trends(_RequestStub())
+    response = await apis_route.stream_api_trends(
+        _RequestStub(),
+        scope=local_auth_scope,
+    )
     body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
     open_frame = await anext(body)
     first_snapshot_frame = await anext(body)

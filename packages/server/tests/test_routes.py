@@ -49,7 +49,7 @@ def _clear_health_metrics_cache() -> None:
 
 @pytest.mark.asyncio
 async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
-    sqlite_db, monkeypatch
+    sqlite_db, monkeypatch, local_auth_scope
 ) -> None:
     now = datetime.now(UTC).replace(microsecond=0)
     async with sqlite_db.session() as session:
@@ -75,24 +75,35 @@ async def test_jobs_list_get_and_trends_routes_cover_happy_paths(
         before=None,
         limit=100,
         cursor=None,
+        scope=local_auth_scope,
         backend=sqlite_db,
     )
     assert listed.total == 1
     assert listed.jobs[0].id == "job-list-1"
 
-    fetched = await jobs_route.get_job("job-list-1", backend=sqlite_db)
+    fetched = await jobs_route.get_job(
+        "job-list-1", scope=local_auth_scope, backend=sqlite_db
+    )
     assert fetched.id == "job-list-1"
     assert fetched.duration_ms == 1000
 
     stats = await jobs_route.get_job_stats(
-        function="fn.list", after=None, before=None, backend=sqlite_db
+        function="fn.list",
+        after=None,
+        before=None,
+        scope=local_auth_scope,
+        backend=sqlite_db,
     )
     assert stats.total == 1
     assert stats.success_count == 1
     assert stats.avg_duration_ms == pytest.approx(1000.0, abs=0.1)
 
     trends = await jobs_route.get_job_trends(
-        hours=2, function="fn.list", type=None, backend=sqlite_db
+        hours=2,
+        function="fn.list",
+        type=None,
+        scope=local_auth_scope,
+        backend=sqlite_db,
     )
     assert len(trends.hourly) == 2
     assert sum(hour.complete for hour in trends.hourly) == 1
@@ -217,7 +228,10 @@ async def test_readiness_allows_missing_redis_in_development(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) -> None:
+async def test_job_trends_stream_emits_initial_and_update_frames(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _BackendStub:
         is_initialized = True
 
@@ -264,7 +278,10 @@ async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
     monkeypatch.setattr(jobs_stream_route, "get_backend", lambda: _BackendStub())
     monkeypatch.setattr(jobs_stream_route, "get_job_trends", _get_job_trends)
 
-    response = await jobs_route.stream_job_trends(_RequestStub())
+    response = await jobs_route.stream_job_trends(
+        _RequestStub(),
+        scope=local_auth_scope,
+    )
     body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
     open_frame = await anext(body)
     first_snapshot_frame = await anext(body)
@@ -281,7 +298,10 @@ async def test_job_trends_stream_emits_initial_and_update_frames(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
+async def test_job_trends_stream_ignores_progress_events(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _BackendStub:
         is_initialized = True
 
@@ -357,7 +377,10 @@ async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
     monkeypatch.setattr(jobs_stream_route, "get_backend", lambda: _BackendStub())
     monkeypatch.setattr(jobs_stream_route, "get_job_trends", _get_job_trends)
 
-    response = await jobs_route.stream_job_trends(_RequestStub())
+    response = await jobs_route.stream_job_trends(
+        _RequestStub(),
+        scope=local_auth_scope,
+    )
     body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
     open_frame = await anext(body)
     first_snapshot_frame = await anext(body)
@@ -377,7 +400,7 @@ async def test_job_trends_stream_ignores_progress_events(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
-    sqlite_db, fake_redis, monkeypatch
+    sqlite_db, fake_redis, monkeypatch, local_auth_scope
 ) -> None:
     async def _get_redis():
         return fake_redis
@@ -418,13 +441,15 @@ async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
             }
         )
 
-    cancel_out = await jobs_route.cancel_job("job-123")
+    cancel_out = await jobs_route.cancel_job("job-123", scope=local_auth_scope)
     assert cancel_out.job_id == "job-123"
     assert cancel_out.cancelled is True
     assert await fake_redis.get(queued_key) is None
     assert await fake_redis.get("upnext:job_index:job-123") is None
 
-    retry_out = await jobs_route.retry_job("job-456", backend=sqlite_db)
+    retry_out = await jobs_route.retry_job(
+        "job-456", scope=local_auth_scope, backend=sqlite_db
+    )
     assert retry_out.job_id == "job-456"
     assert retry_out.retried is True
     retried_job = await fake_redis.get("upnext:job:fn.retry:job-456")
@@ -437,7 +462,7 @@ async def test_jobs_cancel_and_retry_routes_operate_on_redis_queue(
 
 @pytest.mark.asyncio
 async def test_jobs_cancel_and_retry_routes_validate_status_and_presence(
-    sqlite_db, fake_redis, monkeypatch
+    sqlite_db, fake_redis, monkeypatch, local_auth_scope
 ) -> None:
     async def _get_redis():
         return fake_redis
@@ -445,7 +470,7 @@ async def test_jobs_cancel_and_retry_routes_validate_status_and_presence(
     monkeypatch.setattr(jobs_root_route, "get_redis", _get_redis)
 
     with pytest.raises(HTTPException, match="Job not found") as not_found:
-        await jobs_route.cancel_job("missing")
+        await jobs_route.cancel_job("missing", scope=local_auth_scope)
     assert not_found.value.status_code == 404
 
     active = Job(id="job-active", function="fn.active", function_name="active")
@@ -472,13 +497,15 @@ async def test_jobs_cancel_and_retry_routes_validate_status_and_presence(
         )
 
     with pytest.raises(HTTPException, match="cannot be retried") as conflict:
-        await jobs_route.retry_job("job-active", backend=sqlite_db)
+        await jobs_route.retry_job(
+            "job-active", scope=local_auth_scope, backend=sqlite_db
+        )
     assert conflict.value.status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_retry_route_rejects_active_idempotency_key(
-    sqlite_db, fake_redis, monkeypatch
+    sqlite_db, fake_redis, monkeypatch, local_auth_scope
 ) -> None:
     async def _get_redis():
         return fake_redis
@@ -506,12 +533,16 @@ async def test_retry_route_rejects_active_idempotency_key(
     await fake_redis.sadd("upnext:fn:fn.retry:dedup", "shared-key")
 
     with pytest.raises(HTTPException, match="idempotency key 'shared-key'") as conflict:
-        await jobs_route.retry_job("job-idempotency", backend=sqlite_db)
+        await jobs_route.retry_job(
+            "job-idempotency", scope=local_auth_scope, backend=sqlite_db
+        )
     assert conflict.value.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_jobs_timeline_returns_recursive_subtree(sqlite_db) -> None:
+async def test_jobs_timeline_returns_recursive_subtree(
+    sqlite_db, local_auth_scope
+) -> None:
     async with sqlite_db.session() as session:
         repo = JobRepository(session)
         await repo.record_job(
@@ -536,14 +567,16 @@ async def test_jobs_timeline_returns_recursive_subtree(sqlite_db) -> None:
             }
         )
 
-    out = await jobs_route.get_job_timeline("root-job", backend=sqlite_db)
+    out = await jobs_route.get_job_timeline(
+        "root-job", scope=local_auth_scope, backend=sqlite_db
+    )
     assert out.total == 2
     assert [job.id for job in out.jobs] == ["root-job", "child-job"]
 
 
 @pytest.mark.asyncio
 async def test_functions_route_aggregates_defs_stats_and_workers(
-    sqlite_db, monkeypatch
+    sqlite_db, monkeypatch, local_auth_scope
 ) -> None:
     async with sqlite_db.session() as session:
         repo = JobRepository(session)
@@ -560,7 +593,8 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
             }
         )
 
-    async def fake_defs() -> dict[str, FunctionConfig]:
+    async def fake_defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "task_key": FunctionConfig(
                 key="task_key",
@@ -572,7 +606,8 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
             )
         }
 
-    async def fake_workers() -> list[WorkerInstance]:
+    async def fake_workers(*, deployment_id: str = "local") -> list[WorkerInstance]:
+        assert deployment_id == local_auth_scope.deployment_id
         return [
             WorkerInstance(
                 id="worker-1",
@@ -592,7 +627,11 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
     monkeypatch.setattr(functions_route, "get_function_definitions", fake_defs)
     monkeypatch.setattr(functions_route, "list_worker_instances", fake_workers)
 
-    out = await functions_route.list_functions(type=None, backend=sqlite_db)
+    out = await functions_route.list_functions(
+        type=None,
+        scope=local_auth_scope,
+        backend=sqlite_db,
+    )
     assert out.total == 1
     fn = out.functions[0]
     assert fn.key == "task_key"
@@ -604,7 +643,7 @@ async def test_functions_route_aggregates_defs_stats_and_workers(
 
 @pytest.mark.asyncio
 async def test_functions_pause_and_resume_routes_persist_pause_state(
-    fake_redis, monkeypatch
+    fake_redis, monkeypatch, local_auth_scope
 ) -> None:
     function_key = "fn.pause"
     redis_key = f"{FUNCTION_KEY_PREFIX}:{function_key}"
@@ -624,20 +663,29 @@ async def test_functions_pause_and_resume_routes_persist_pause_state(
 
     monkeypatch.setattr(functions_utils_route, "get_redis", _get_redis)
 
-    paused = await functions_route.pause_function(function_key)
+    paused = await functions_route.pause_function(
+        function_key,
+        scope=local_auth_scope,
+    )
     assert paused == {"key": function_key, "paused": True}
     raw_after_pause = await fake_redis.get(redis_key)
     assert raw_after_pause is not None
     assert json.loads(raw_after_pause.decode())["paused"] is True
 
-    resumed = await functions_route.resume_function(function_key)
+    resumed = await functions_route.resume_function(
+        function_key,
+        scope=local_auth_scope,
+    )
     assert resumed == {"key": function_key, "paused": False}
     raw_after_resume = await fake_redis.get(redis_key)
     assert raw_after_resume is not None
     assert json.loads(raw_after_resume.decode())["paused"] is False
 
     with pytest.raises(HTTPException, match="not found") as missing_exc:
-        await functions_route.pause_function("fn.missing")
+        await functions_route.pause_function(
+            "fn.missing",
+            scope=local_auth_scope,
+        )
     assert missing_exc.value.status_code == 404
 
     await fake_redis.set(
@@ -647,15 +695,20 @@ async def test_functions_pause_and_resume_routes_persist_pause_state(
     with pytest.raises(
         HTTPException, match="Invalid function definition"
     ) as invalid_exc:
-        await functions_route.pause_function("fn.invalid")
+        await functions_route.pause_function(
+            "fn.invalid",
+            scope=local_auth_scope,
+        )
     assert invalid_exc.value.status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_workers_route_includes_defs_and_instance_only_workers(
     monkeypatch,
+    local_auth_scope,
 ) -> None:
-    async def fake_defs() -> dict[str, WorkerDefinition]:
+    async def fake_defs(*, deployment_id: str = "local") -> dict[str, WorkerDefinition]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "defined-worker": WorkerDefinition(
                 name="defined-worker",
@@ -665,7 +718,8 @@ async def test_workers_route_includes_defs_and_instance_only_workers(
             )
         }
 
-    async def fake_instances() -> list[WorkerInstance]:
+    async def fake_instances(*, deployment_id: str = "local") -> list[WorkerInstance]:
+        assert deployment_id == local_auth_scope.deployment_id
         return [
             WorkerInstance(
                 id="w-1",
@@ -698,13 +752,16 @@ async def test_workers_route_includes_defs_and_instance_only_workers(
     monkeypatch.setattr(workers_root_route, "get_worker_definitions", fake_defs)
     monkeypatch.setattr(workers_root_route, "list_worker_instances", fake_instances)
 
-    out = await workers_route.list_workers_route()
+    out = await workers_route.list_workers_route(scope=local_auth_scope)
     names = {w.name for w in out.workers}
     assert names == {"defined-worker", "ephemeral-worker"}
 
 
 @pytest.mark.asyncio
-async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> None:
+async def test_workers_stream_emits_initial_and_update_frames(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _RedisStub:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
@@ -741,7 +798,11 @@ async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> No
 
     call_count = {"value": 0}
 
-    async def _list_workers() -> workers_route.WorkersListResponse:
+    async def _list_workers(
+        *,
+        scope=None,
+    ) -> workers_route.WorkersListResponse:
+        assert scope == local_auth_scope
         call_count["value"] += 1
         return workers_route.WorkersListResponse(
             workers=[
@@ -761,7 +822,10 @@ async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> No
     monkeypatch.setattr(workers_stream_route, "get_redis", _get_redis)
     monkeypatch.setattr(workers_stream_route, "list_workers_route", _list_workers)
 
-    response = await workers_route.stream_workers(_RequestStub())
+    response = await workers_route.stream_workers(
+        _RequestStub(),
+        scope=local_auth_scope,
+    )
     body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
     open_frame = await anext(body)
     first_snapshot_frame = await anext(body)
@@ -779,7 +843,10 @@ async def test_workers_stream_emits_initial_and_update_frames(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_workers_stream_returns_503_when_redis_unavailable(monkeypatch) -> None:
+async def test_workers_stream_returns_503_when_redis_unavailable(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _RequestStub:
         async def is_disconnected(self) -> bool:
             return False
@@ -790,13 +857,16 @@ async def test_workers_stream_returns_503_when_redis_unavailable(monkeypatch) ->
     monkeypatch.setattr(workers_stream_route, "get_redis", _get_redis)
 
     with pytest.raises(HTTPException, match="redis unavailable") as exc:
-        await workers_route.stream_workers(_RequestStub())
+        await workers_route.stream_workers(
+            _RequestStub(),
+            scope=local_auth_scope,
+        )
     assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
 async def test_dashboard_includes_queue_depth_when_database_available(
-    sqlite_db, monkeypatch
+    sqlite_db, monkeypatch, local_auth_scope
 ) -> None:
     now = datetime.now(UTC).replace(microsecond=0)
     async with sqlite_db.session() as session:
@@ -832,10 +902,12 @@ async def test_dashboard_includes_queue_depth_when_database_available(
         capacity = 8
         total = 13
 
-    async def fake_queue_depth() -> _QueueDepth:
+    async def fake_queue_depth(*, deployment_id: str = "local") -> _QueueDepth:
+        assert deployment_id == local_auth_scope.deployment_id
         return _QueueDepth()
 
-    async def fake_worker_stats() -> WorkerStats:
+    async def fake_worker_stats(*, deployment_id: str = "local") -> WorkerStats:
+        assert deployment_id == local_auth_scope.deployment_id
         return WorkerStats(total=1)
 
     class FakeReader:
@@ -849,14 +921,17 @@ async def test_dashboard_includes_queue_depth_when_database_available(
                 error_rate=0.0,
             )
 
-    async def fake_reader() -> FakeReader:
+    async def fake_reader(*, deployment_id: str = "local") -> FakeReader:
+        assert deployment_id == local_auth_scope.deployment_id
         return FakeReader()
 
     monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
     monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
 
-    out = await dashboard_route.get_dashboard_stats(backend=sqlite_db)
+    out = await dashboard_route.get_dashboard_stats(
+        scope=local_auth_scope, backend=sqlite_db
+    )
     assert out.queue.running == 4
     assert out.queue.waiting == 1
     assert out.queue.claimed == 5
@@ -869,7 +944,7 @@ async def test_dashboard_includes_queue_depth_when_database_available(
 
 @pytest.mark.asyncio
 async def test_dashboard_window_stats_use_requested_minutes(
-    sqlite_db, monkeypatch
+    sqlite_db, monkeypatch, local_auth_scope
 ) -> None:
     class _QueueDepth:
         running = 1
@@ -881,10 +956,12 @@ async def test_dashboard_window_stats_use_requested_minutes(
         capacity = 10
         total = 2
 
-    async def fake_queue_depth() -> _QueueDepth:
+    async def fake_queue_depth(*, deployment_id: str = "local") -> _QueueDepth:
+        assert deployment_id == local_auth_scope.deployment_id
         return _QueueDepth()
 
-    async def fake_worker_stats() -> WorkerStats:
+    async def fake_worker_stats(*, deployment_id: str = "local") -> WorkerStats:
+        assert deployment_id == local_auth_scope.deployment_id
         return WorkerStats(total=1)
 
     class FakeReader:
@@ -903,14 +980,19 @@ async def test_dashboard_window_stats_use_requested_minutes(
                 error_rate=1.5,
             )
 
-    async def fake_reader() -> FakeReader:
+    async def fake_reader(*, deployment_id: str = "local") -> FakeReader:
+        assert deployment_id == local_auth_scope.deployment_id
         return FakeReader()
 
     monkeypatch.setattr(dashboard_route, "get_queue_depth_stats", fake_queue_depth)
     monkeypatch.setattr(dashboard_route, "get_worker_stats", fake_worker_stats)
     monkeypatch.setattr(dashboard_route, "get_metrics_reader", fake_reader)
 
-    out = await dashboard_route.get_dashboard_stats(window_minutes=5, backend=sqlite_db)
+    out = await dashboard_route.get_dashboard_stats(
+        window_minutes=5,
+        scope=local_auth_scope,
+        backend=sqlite_db,
+    )
     assert out.runs.window_minutes == 5
     assert out.runs.total == 0
     assert out.runs.jobs_per_min == 0.0
@@ -922,7 +1004,9 @@ async def test_dashboard_window_stats_use_requested_minutes(
 
 
 @pytest.mark.asyncio
-async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> None:
+async def test_dashboard_includes_runbook_sections(
+    sqlite_db, monkeypatch, local_auth_scope
+) -> None:
     now = datetime.now(UTC).replace(microsecond=0)
     async with sqlite_db.session() as session:
         repo = JobRepository(session)
@@ -991,10 +1075,12 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
         dashboard_stuck_active_limit = 5
         dashboard_stuck_active_seconds = 900
 
-    async def fake_queue_depth() -> _QueueDepth:
+    async def fake_queue_depth(*, deployment_id: str = "local") -> _QueueDepth:
+        assert deployment_id == local_auth_scope.deployment_id
         return _QueueDepth()
 
-    async def fake_worker_stats() -> WorkerStats:
+    async def fake_worker_stats(*, deployment_id: str = "local") -> WorkerStats:
+        assert deployment_id == local_auth_scope.deployment_id
         return WorkerStats(total=2)
 
     class FakeReader:
@@ -1008,10 +1094,12 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
                 error_rate=0.0,
             )
 
-    async def fake_reader() -> FakeReader:
+    async def fake_reader(*, deployment_id: str = "local") -> FakeReader:
+        assert deployment_id == local_auth_scope.deployment_id
         return FakeReader()
 
-    async def fake_defs() -> dict[str, FunctionConfig]:
+    async def fake_defs(*, deployment_id: str = "local") -> dict[str, FunctionConfig]:
+        assert deployment_id == local_auth_scope.deployment_id
         return {
             "fn.fail": FunctionConfig(
                 key="fn.fail",
@@ -1025,7 +1113,12 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
             ),
         }
 
-    async def fake_oldest(limit: int = 10) -> list[QueuedJobSnapshot]:
+    async def fake_oldest(
+        limit: int = 10,
+        *,
+        deployment_id: str = "local",
+    ) -> list[QueuedJobSnapshot]:
+        assert deployment_id == local_auth_scope.deployment_id
         _ = limit
         return [
             QueuedJobSnapshot(
@@ -1045,7 +1138,9 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
     monkeypatch.setattr(dashboard_route, "get_function_definitions", fake_defs)
     monkeypatch.setattr(dashboard_route, "get_oldest_queued_jobs", fake_oldest)
 
-    out = await dashboard_route.get_dashboard_stats(backend=sqlite_db)
+    out = await dashboard_route.get_dashboard_stats(
+        scope=local_auth_scope, backend=sqlite_db
+    )
     assert out.top_failing_functions[0].key == "fn.fail"
     assert out.top_failing_functions[0].name == "Orders Processor"
     assert out.top_failing_functions[0].failures == 2
@@ -1057,13 +1152,17 @@ async def test_dashboard_includes_runbook_sections(sqlite_db, monkeypatch) -> No
     assert out.oldest_queued_jobs[0].source == "stream"
 
     filtered = await dashboard_route.get_dashboard_stats(
-        failing_min_rate=70.0, backend=sqlite_db
+        failing_min_rate=70.0,
+        scope=local_auth_scope,
+        backend=sqlite_db,
     )
     assert filtered.top_failing_functions == []
 
 
 @pytest.mark.asyncio
-async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) -> None:
+async def test_create_artifact_fk_race_returns_queued(
+    sqlite_db, monkeypatch, local_auth_scope
+) -> None:
     async with sqlite_db.session() as session:
         repo = JobRepository(session)
         await repo.record_job(
@@ -1091,6 +1190,7 @@ async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) ->
         "job-art-race",
         CreateArtifactRequest(name="summary", type=ArtifactType.JSON, data={"x": 1}),
         response,
+        scope=local_auth_scope,
         backend=sqlite_db,
     )
 
@@ -1099,7 +1199,10 @@ async def test_create_artifact_fk_race_returns_queued(sqlite_db, monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None:
+async def test_job_artifact_stream_filters_to_requested_job(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class _RedisStub:
         async def xread(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return [
@@ -1112,6 +1215,7 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
                                 "data": json.dumps(
                                     {
                                         "type": "artifact.created",
+                                        "deployment_id": "local",
                                         "at": "2026-02-09T12:00:00Z",
                                         "job_id": "job-a",
                                         "artifact_id": "artifact-1",
@@ -1140,6 +1244,7 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
                                 "data": json.dumps(
                                     {
                                         "type": "artifact.created",
+                                        "deployment_id": "local",
                                         "at": "2026-02-09T12:00:01Z",
                                         "job_id": "job-b",
                                         "artifact_id": "artifact-2",
@@ -1180,7 +1285,9 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
     monkeypatch.setattr(artifacts_stream_route, "get_redis", _get_redis)
 
     response = await artifacts_stream_route.stream_job_artifacts(
-        "job-a", _RequestStub()
+        "job-a",
+        _RequestStub(),
+        scope=local_auth_scope,
     )
     body = cast(AsyncIterator[str], response.body_iterator.__aiter__())
     open_frame = await anext(body)
@@ -1194,7 +1301,10 @@ async def test_job_artifact_stream_filters_to_requested_job(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_apis_route_merges_tracked_and_active_instances(monkeypatch) -> None:
+async def test_apis_route_merges_tracked_and_active_instances(
+    monkeypatch,
+    local_auth_scope,
+) -> None:
     class FakeMetricsReader:
         async def get_apis(self) -> list[api_tracking_module.ApiMetricsByName]:
             return [
@@ -1208,10 +1318,12 @@ async def test_apis_route_merges_tracked_and_active_instances(monkeypatch) -> No
                 )
             ]
 
-    async def fake_reader() -> FakeMetricsReader:
+    async def fake_reader(*, deployment_id: str = "local") -> FakeMetricsReader:
+        assert deployment_id == local_auth_scope.deployment_id
         return FakeMetricsReader()
 
-    async def fake_instances() -> list[ApiInstance]:
+    async def fake_instances(*, deployment_id: str = "local") -> list[ApiInstance]:
+        assert deployment_id == local_auth_scope.deployment_id
         return [
             ApiInstance(
                 id="api-1",
@@ -1238,7 +1350,7 @@ async def test_apis_route_merges_tracked_and_active_instances(monkeypatch) -> No
     monkeypatch.setattr(apis_root_route, "get_metrics_reader", fake_reader)
     monkeypatch.setattr(apis_root_route, "list_api_instances", fake_instances)
 
-    out = await apis_route.list_apis()
+    out = await apis_route.list_apis(scope=local_auth_scope)
     names = {api.name for api in out.apis}
     assert names == {"tracked-api", "instance-only-api"}
     tracked = next(api for api in out.apis if api.name == "tracked-api")

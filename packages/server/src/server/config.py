@@ -8,8 +8,15 @@ from cryptography.fernet import Fernet
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared._version import __version__
+from shared.keys import (
+    DEFAULT_DEPLOYMENT_ID,
+    normalize_deployment_id,
+    status_events_pubsub_channel,
+    status_events_stream_key,
+)
 
 from server.backends.types import PersistenceBackends
+from server.runtime_scope import RuntimeModes
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +88,11 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     api_key: str | None = None
     secrets_require_admin_reads: bool = False
+    runtime_mode: RuntimeModes = RuntimeModes.SELF_HOSTED
+    default_deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    runtime_token_secret: str | None = None
+    runtime_token_issuer: str = "upnext-saas"
+    runtime_token_audience: str = "upnext-runtime"
 
     # Encryption key for secrets storage.
     # Auto-generated and persisted to ~/.upnext/secret_key if not set via env.
@@ -99,7 +111,7 @@ class Settings(BaseSettings):
     event_subscriber_batch_size: int = 100
     event_subscriber_poll_interval_ms: int = 2000
     event_subscriber_stale_claim_ms: int = 30000
-    event_subscriber_invalid_stream: str = "upnext:status:events:invalid"
+    event_subscriber_invalid_stream: str | None = None
     event_subscriber_invalid_stream_maxlen: int = 10_000
 
     # Cleanup service tuning.
@@ -197,6 +209,36 @@ class Settings(BaseSettings):
     def effective_secrets_require_admin_reads(self) -> bool:
         """Resolve secret read policy from explicit configuration."""
         return self.secrets_require_admin_reads
+
+    @property
+    def is_cloud_runtime(self) -> bool:
+        return self.runtime_mode == RuntimeModes.CLOUD_RUNTIME
+
+    @property
+    def is_self_hosted_runtime(self) -> bool:
+        return self.runtime_mode == RuntimeModes.SELF_HOSTED
+
+    @property
+    def normalized_default_deployment_id(self) -> str:
+        return normalize_deployment_id(self.default_deployment_id)
+
+    @property
+    def status_events_stream(self) -> str:
+        return status_events_stream_key(
+            deployment_id=self.normalized_default_deployment_id
+        )
+
+    @property
+    def status_events_pubsub_channel(self) -> str:
+        return status_events_pubsub_channel(
+            deployment_id=self.normalized_default_deployment_id
+        )
+
+    @property
+    def effective_invalid_events_stream(self) -> str:
+        if self.event_subscriber_invalid_stream:
+            return self.event_subscriber_invalid_stream
+        return f"{self.status_events_stream}:invalid"
 
     def model_post_init(self, _context: object) -> None:
         if not self.secret_key:

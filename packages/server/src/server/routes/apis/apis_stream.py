@@ -3,7 +3,7 @@ import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from shared.contracts import (
     ApiRequestEvent,
@@ -13,17 +13,19 @@ from shared.contracts import (
     ApisSnapshotEvent,
     ApiTrendsSnapshotEvent,
 )
-from shared.keys import API_REQUESTS_STREAM
+from shared.keys import api_requests_stream_key
 
+from server.auth import require_auth_scope
 from server.config import get_settings
 from server.routes.apis.apis_root import get_api, get_api_trends, list_apis
 from server.routes.apis.apis_utils import parse_api_request_event
+from server.routes.sse import SSE_BLOCK_MS, SSE_HEADERS, SSE_READ_COUNT
+from server.runtime_scope import AuthScope
 from server.services.apis.request_events import (
     iter_api_request_rows,
     stream_id_ceil,
     stream_id_floor,
 )
-from server.routes.sse import SSE_BLOCK_MS, SSE_HEADERS, SSE_READ_COUNT
 from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ api_stream_router = APIRouter(tags=["apis"])
 async def stream_api_trends(
     request: Request,
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
+    scope: AuthScope = Depends(require_auth_scope),
 ) -> StreamingResponse:
     """Stream realtime API trends snapshots via Server-Sent Events (SSE)."""
     hours_window = hours if isinstance(hours, int) else 24
@@ -49,7 +52,7 @@ async def stream_api_trends(
         try:
             yield "event: open\ndata: connected\n\n"
 
-            initial = await get_api_trends(hours=hours_window)
+            initial = await get_api_trends(hours=hours_window, scope=scope)
             initial_event = ApiTrendsSnapshotEvent(
                 at=datetime.now(UTC).isoformat(),
                 trends=initial,
@@ -61,7 +64,11 @@ async def stream_api_trends(
                     break
 
                 result = await redis_client.xread(
-                    {API_REQUESTS_STREAM: last_id},
+                    {
+                        api_requests_stream_key(
+                            deployment_id=scope.deployment_id
+                        ): last_id
+                    },
                     count=SSE_READ_COUNT,
                     block=SSE_BLOCK_MS,
                 )
@@ -81,7 +88,7 @@ async def stream_api_trends(
                 if not has_updates:
                     continue
 
-                snapshot = await get_api_trends(hours=hours_window)
+                snapshot = await get_api_trends(hours=hours_window, scope=scope)
                 event = ApiTrendsSnapshotEvent(
                     at=datetime.now(UTC).isoformat(),
                     trends=snapshot,
@@ -116,6 +123,7 @@ async def list_api_request_events(
         description="Maximum number of recent request events",
     ),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
+    scope: AuthScope = Depends(require_auth_scope),
 ) -> ApiRequestEventsResponse:
     """List recent API request events from the Redis request stream."""
     api_name_filter = api_name if isinstance(api_name, str) and api_name else None
@@ -146,6 +154,7 @@ async def list_api_request_events(
 
     async for event_id, row in iter_api_request_rows(
         redis_client,
+        deployment_id=scope.deployment_id,
         max_id=max_id,
         min_id=min_id,
         count=read_count,
@@ -184,6 +193,7 @@ async def list_api_request_events(
 async def stream_api_request_events(
     request: Request,
     api_name: str | None = Query(None, description="Optional API name filter"),
+    scope: AuthScope = Depends(require_auth_scope),
 ) -> StreamingResponse:
     """Stream realtime API request events via Server-Sent Events (SSE)."""
     api_name_filter = api_name if isinstance(api_name, str) and api_name else None
@@ -202,7 +212,11 @@ async def stream_api_request_events(
                     break
 
                 result = await redis_client.xread(
-                    {API_REQUESTS_STREAM: last_id},
+                    {
+                        api_requests_stream_key(
+                            deployment_id=scope.deployment_id
+                        ): last_id
+                    },
                     count=100,
                     block=SSE_BLOCK_MS,
                 )
@@ -236,7 +250,10 @@ async def stream_api_request_events(
 
 
 @api_stream_router.get("/stream")
-async def stream_apis(request: Request) -> StreamingResponse:
+async def stream_apis(
+    request: Request,
+    scope: AuthScope = Depends(require_auth_scope),
+) -> StreamingResponse:
     """Stream realtime API list snapshots via Server-Sent Events (SSE)."""
     try:
         redis_client = await get_redis()
@@ -248,7 +265,7 @@ async def stream_apis(request: Request) -> StreamingResponse:
         try:
             yield "event: open\ndata: connected\n\n"
 
-            initial = await list_apis()
+            initial = await list_apis(scope=scope)
             initial_event = ApisSnapshotEvent(
                 at=datetime.now(UTC).isoformat(),
                 apis=initial,
@@ -260,7 +277,11 @@ async def stream_apis(request: Request) -> StreamingResponse:
                     break
 
                 result = await redis_client.xread(
-                    {API_REQUESTS_STREAM: last_id},
+                    {
+                        api_requests_stream_key(
+                            deployment_id=scope.deployment_id
+                        ): last_id
+                    },
                     count=SSE_READ_COUNT,
                     block=SSE_BLOCK_MS,
                 )
@@ -279,7 +300,7 @@ async def stream_apis(request: Request) -> StreamingResponse:
                 if not has_updates:
                     continue
 
-                snapshot = await list_apis()
+                snapshot = await list_apis(scope=scope)
                 event = ApisSnapshotEvent(
                     at=datetime.now(UTC).isoformat(),
                     apis=snapshot,
@@ -299,7 +320,11 @@ async def stream_apis(request: Request) -> StreamingResponse:
 
 
 @api_stream_router.get("/{api_name}/stream")
-async def stream_api(api_name: str, request: Request) -> StreamingResponse:
+async def stream_api(
+    api_name: str,
+    request: Request,
+    scope: AuthScope = Depends(require_auth_scope),
+) -> StreamingResponse:
     """Stream realtime snapshot for a single API via SSE."""
     try:
         redis_client = await get_redis()
@@ -311,7 +336,7 @@ async def stream_api(api_name: str, request: Request) -> StreamingResponse:
         try:
             yield "event: open\ndata: connected\n\n"
 
-            initial = await get_api(api_name)
+            initial = await get_api(api_name, scope=scope)
             initial_event = ApiSnapshotEvent(
                 at=datetime.now(UTC).isoformat(),
                 api=initial,
@@ -323,7 +348,11 @@ async def stream_api(api_name: str, request: Request) -> StreamingResponse:
                     break
 
                 result = await redis_client.xread(
-                    {API_REQUESTS_STREAM: last_id},
+                    {
+                        api_requests_stream_key(
+                            deployment_id=scope.deployment_id
+                        ): last_id
+                    },
                     count=SSE_READ_COUNT,
                     block=SSE_BLOCK_MS,
                 )
@@ -346,7 +375,7 @@ async def stream_api(api_name: str, request: Request) -> StreamingResponse:
                 if not has_updates:
                     continue
 
-                snapshot = await get_api(api_name)
+                snapshot = await get_api(api_name, scope=scope)
                 event = ApiSnapshotEvent(
                     at=datetime.now(UTC).isoformat(),
                     api=snapshot,

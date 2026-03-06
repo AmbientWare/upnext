@@ -11,6 +11,13 @@ from fakeredis.aioredis import FakeRedis
 from shared.contracts import WorkerDefinition
 from shared.domain.jobs import Job
 from shared.keys.api import API_PREFIX
+from shared.keys.namespace import deployment_namespace_prefix
+from shared.keys.queue import (
+    dispatch_reasons_key,
+    function_scheduled_key,
+    function_stream_key,
+    job_key,
+)
 from shared.keys.workers import (
     FUNCTION_KEY_PREFIX,
     WORKER_DEF_PREFIX,
@@ -227,8 +234,9 @@ async def test_workers_service_parses_and_lists_instances_and_definitions(
 async def test_queue_service_reads_depth_from_stream_groups(
     redis_text_client, monkeypatch
 ) -> None:
-    stream_a = "upnext:fn:fn.a:stream"
-    stream_b = "upnext:fn:fn.b:stream"
+    local_prefix = deployment_namespace_prefix("local")
+    stream_a = function_stream_key("fn.a", key_prefix=local_prefix)
+    stream_b = function_stream_key("fn.b", key_prefix=local_prefix)
     await redis_text_client.xgroup_create(stream_a, "workers", id="0", mkstream=True)
     await redis_text_client.xgroup_create(stream_b, "workers", id="0", mkstream=True)
 
@@ -254,11 +262,11 @@ async def test_queue_service_reads_depth_from_stream_groups(
 
     now_ts = datetime.now(UTC).timestamp()
     await redis_text_client.zadd(
-        "upnext:fn:fn.a:scheduled",
+        function_scheduled_key("fn.a", key_prefix=local_prefix),
         {"job-a-due": now_ts - 10, "job-a-future": now_ts + 30},
     )
     await redis_text_client.zadd(
-        "upnext:fn:fn.b:scheduled",
+        function_scheduled_key("fn.b", key_prefix=local_prefix),
         {"job-b-due": now_ts - 15, "job-b-future": now_ts + 45},
     )
 
@@ -295,7 +303,7 @@ async def test_queue_service_reads_depth_from_stream_groups(
     assert function_stats["fn.b"].backlog == 3
 
     await redis_text_client.hset(
-        "upnext:dispatch_reasons:fn.a",
+        dispatch_reasons_key("fn.a", key_prefix=local_prefix),
         mapping={
             "paused": 2,
             "rate_limited": 3,
@@ -342,6 +350,7 @@ async def test_queue_service_returns_zero_stats_when_redis_unavailable(
 async def test_queue_service_lists_oldest_queued_jobs(
     redis_text_client, monkeypatch
 ) -> None:
+    local_prefix = deployment_namespace_prefix("local")
     now = datetime.now(UTC)
     stream_job = Job(
         id="job-stream-1",
@@ -357,18 +366,18 @@ async def test_queue_service_lists_oldest_queued_jobs(
     )
 
     await redis_text_client.xadd(
-        "upnext:fn:fn.stream:stream",
+        function_stream_key("fn.stream", key_prefix=local_prefix),
         {
             "job_id": stream_job.id,
             "data": stream_job.to_json(),
         },
     )
     await redis_text_client.zadd(
-        "upnext:fn:fn.scheduled:scheduled",
+        function_scheduled_key("fn.scheduled", key_prefix=local_prefix),
         {scheduled_job.id: (now - timedelta(minutes=15)).timestamp()},
     )
     await redis_text_client.set(
-        "upnext:job:fn.scheduled:job-scheduled-1",
+        job_key("fn.scheduled", "job-scheduled-1", key_prefix=local_prefix),
         scheduled_job.to_json(),
     )
 
@@ -390,7 +399,8 @@ async def test_oldest_queued_jobs_excludes_claimed_stream_messages(
     redis_text_client,
     monkeypatch,
 ) -> None:
-    stream_key = "upnext:fn:fn.stream:stream"
+    local_prefix = deployment_namespace_prefix("local")
+    stream_key = function_stream_key("fn.stream", key_prefix=local_prefix)
     await redis_text_client.xgroup_create(stream_key, "workers", id="0", mkstream=True)
 
     claimed_job = Job(
@@ -436,7 +446,8 @@ async def test_oldest_queued_jobs_reads_from_unread_group_head(
     redis_text_client,
     monkeypatch,
 ) -> None:
-    stream_key = "upnext:fn:fn.stream:stream"
+    local_prefix = deployment_namespace_prefix("local")
+    stream_key = function_stream_key("fn.stream", key_prefix=local_prefix)
     await redis_text_client.xgroup_create(stream_key, "workers", id="0", mkstream=True)
 
     historical_1 = Job(
@@ -494,14 +505,16 @@ async def test_oldest_queued_jobs_reads_from_unread_group_head(
 
 @pytest.mark.asyncio
 async def test_queue_service_parsing_handles_malformed_payloads(monkeypatch) -> None:
+    local_prefix = deployment_namespace_prefix("local")
+
     class _MalformedRedis:
         async def scan_iter(self, match: str, count: int = 100):  # noqa: ARG002
             if match.endswith(":stream"):
-                yield "upnext:fn:fn.bad:stream"
-            elif match.startswith("upnext:workers:instances"):
-                yield "upnext:workers:instances:worker-1"
-            elif match.startswith("upnext:dispatch_reasons:"):
-                yield "upnext:dispatch_reasons:fn.bad"
+                yield function_stream_key("fn.bad", key_prefix=local_prefix)
+            elif match.startswith(WORKER_INSTANCE_KEY_PREFIX):
+                yield f"{WORKER_INSTANCE_KEY_PREFIX}:worker-1"
+            elif match.startswith(f"{local_prefix}:dispatch_reasons:"):
+                yield dispatch_reasons_key("fn.bad", key_prefix=local_prefix)
             else:
                 if False:
                     yield ""

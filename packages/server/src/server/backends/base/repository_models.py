@@ -50,6 +50,7 @@ class JobHourlyTrendRow:
 @dataclass(frozen=True)
 class ArtifactRecord:
     id: str
+    deployment_id: str
     job_id: str
     name: str
     type: str
@@ -66,6 +67,7 @@ class ArtifactRecord:
 @dataclass(frozen=True)
 class PendingArtifactRecord:
     id: str
+    deployment_id: str
     job_id: str
     name: str
     type: str
@@ -85,6 +87,7 @@ class JobRecordCreate(BaseModel):
     )
 
     id: str = Field(min_length=1, validation_alias="job_id")
+    deployment_id: str = Field(default="local", min_length=1)
     job_key: str | None = None
     function: str = Field(min_length=1)
     function_name: str | None = None

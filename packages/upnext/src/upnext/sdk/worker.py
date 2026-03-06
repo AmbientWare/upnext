@@ -118,6 +118,10 @@ class Worker:
     _heartbeat_task: asyncio.Task[None] | None = field(default=None, init=False)
     _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
     _status_flush_timeout_seconds: float = field(default=2.0, init=False)
+    _deployment_id: str = field(
+        default_factory=lambda: get_settings().normalized_deployment_id,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self._reg = WorkerRegistration(self.name, self._registry)
@@ -322,6 +326,7 @@ class Worker:
 
         self._queue_backend = RedisQueue(
             client=self._redis_client,
+            key_prefix=settings.runtime_key_prefix,
             claim_timeout_ms=claim_timeout_ms,
             batch_size=batch_size,
             inbox_size=inbox_size,
@@ -348,7 +353,7 @@ class Worker:
         )
         durable_buffer_key = None
         if settings.status_durable_buffer_enabled:
-            durable_candidate = settings.status_durable_buffer_key.strip()
+            durable_candidate = settings.effective_status_durable_buffer_key.strip()
             if durable_candidate:
                 durable_buffer_key = durable_candidate
 
@@ -356,6 +361,8 @@ class Worker:
             self._redis_client,
             worker_id,
             config=StatusPublisherConfig(
+                deployment_id=settings.normalized_deployment_id,
+                stream=settings.status_events_stream,
                 max_stream_len=settings.status_stream_max_len,
                 retry_attempts=settings.status_publish_retry_attempts,
                 retry_base_delay_seconds=max(0.0, settings.status_publish_retry_base_ms)
@@ -455,17 +462,32 @@ class Worker:
         self._function_name_map = catalog.function_name_map
         self._function_definitions = catalog.function_definitions
 
-        await write_worker_heartbeat(self._redis_client, worker_id, self._worker_data())
+        await write_worker_heartbeat(
+            self._redis_client,
+            worker_id,
+            self._worker_data(),
+            deployment_id=self._deployment_id,
+        )
         await write_worker_definition(
             self._redis_client,
             self.name,
             self._registered_functions,
             self._function_name_map,
             self.concurrency,
+            deployment_id=self._deployment_id,
         )
-        await write_function_definitions(self._redis_client, self._function_definitions)
+        await write_function_definitions(
+            self._redis_client,
+            self._function_definitions,
+            deployment_id=self._deployment_id,
+        )
         self._heartbeat_task = asyncio.create_task(
-            heartbeat_loop(self._redis_client, worker_id, self._worker_data)
+            heartbeat_loop(
+                self._redis_client,
+                worker_id,
+                self._worker_data,
+                deployment_id=self._deployment_id,
+            )
         )
         logger.debug(f"Worker instance registered: {worker_id}")
 
@@ -622,9 +644,18 @@ class Worker:
 
         if self._redis_client and self._worker_id:
             try:
-                await self._redis_client.delete(worker_instance_key(self._worker_id))
+                await self._redis_client.delete(
+                    worker_instance_key(
+                        self._worker_id,
+                        deployment_id=self._deployment_id,
+                    )
+                )
                 await publish_worker_signal(
-                    self._redis_client, self._worker_id, self.name, "worker.stopped"
+                    self._redis_client,
+                    self._worker_id,
+                    self.name,
+                    "worker.stopped",
+                    deployment_id=self._deployment_id,
                 )
             except Exception:
                 pass

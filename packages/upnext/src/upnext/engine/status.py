@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from shared.keys import EVENTS_STREAM
+from shared.keys import DEFAULT_DEPLOYMENT_ID, status_events_stream_key
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ class StatusEvent:
     """A status event to be sent to the API."""
 
     type: str  # "started", "completed", "failed", "progress", "checkpoint", etc.
+    deployment_id: str
     job_id: str
     worker_id: str
     timestamp: float = field(default_factory=time.time)
@@ -44,6 +45,7 @@ class StatusEvent:
         """Convert to dictionary for serialization."""
         return {
             "type": self.type,
+            "deployment_id": self.deployment_id,
             "job_id": self.job_id,
             "worker_id": self.worker_id,
             "timestamp": self.timestamp,
@@ -55,6 +57,7 @@ class StatusEvent:
         """Create from dictionary."""
         return cls(
             type=d["type"],
+            deployment_id=d["deployment_id"],
             job_id=d["job_id"],
             worker_id=d["worker_id"],
             timestamp=d.get("timestamp", time.time()),
@@ -68,7 +71,8 @@ class StatusPublisherConfig:
 
     # Maximum stream length (safety cap to prevent unbounded growth)
     max_stream_len: int = 50000
-    stream: str = EVENTS_STREAM
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID
+    stream: str = field(default_factory=status_events_stream_key)
     retry_attempts: int = 3
     retry_base_delay_seconds: float = 0.025
     retry_max_delay_seconds: float = 0.5
@@ -132,6 +136,7 @@ class StatusPublisher:
         """
         payload = {
             "type": event_type,
+            "deployment_id": self._config.deployment_id,
             "job_id": job_id,
             "worker_id": self._worker_id,
             "ts": str(time.time()),

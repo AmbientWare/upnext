@@ -36,7 +36,7 @@ from shared.contracts import (
     SSEJobEvent,
     StatusStreamEvent,
 )
-from shared.keys import EVENTS_PUBSUB_CHANNEL, EVENTS_STREAM
+from shared.keys import status_events_pubsub_channel, status_events_stream_key
 
 from server.backends import get_backend
 from server.services.events.processing import process_event
@@ -58,6 +58,7 @@ JobLifecycleEvent: TypeAlias = (
 @dataclass(frozen=True)
 class _ParsedEvent:
     event_id: str
+    deployment_id: str
     event_type: EventType
     event: JobLifecycleEvent
     worker_id: str
@@ -90,7 +91,7 @@ class StreamSubscriberConfig:
     """Configuration for the stream subscriber."""
 
     # Stream name (must match worker StatusPublisher.STREAM)
-    stream: str = EVENTS_STREAM
+    stream: str = status_events_stream_key()
 
     # Consumer group name
     group: str = "server-subscribers"
@@ -105,7 +106,7 @@ class StreamSubscriberConfig:
     stale_claim_ms: int = 30000
 
     # Stream for malformed/unsupported events.
-    invalid_events_stream: str = f"{EVENTS_STREAM}:invalid"
+    invalid_events_stream: str = f"{status_events_stream_key()}:invalid"
     invalid_events_stream_maxlen: int = 10_000
 
     # Consumer ID (auto-generated if None)
@@ -351,6 +352,7 @@ class StreamSubscriber:
                         async with self._nested_transaction(session):
                             applied = await process_event(
                                 event=parsed_event.event,
+                                deployment_id=parsed_event.deployment_id,
                                 session=session,
                             )
                         processed += 1
@@ -365,7 +367,10 @@ class StreamSubscriber:
             for parsed_event in coalesced_events:
                 event_id = parsed_event.event_id
                 try:
-                    applied = await process_event(event=parsed_event.event)
+                    applied = await process_event(
+                        event=parsed_event.event,
+                        deployment_id=parsed_event.deployment_id,
+                    )
                     processed += 1
                     ack_ids.append(event_id)
                     ack_ids.extend(coalesced_ack_ids_by_latest.get(event_id, ()))
@@ -502,6 +507,7 @@ class StreamSubscriber:
             parsed_events.append(
                 _ParsedEvent(
                     event_id=event_id,
+                    deployment_id=stream_event.deployment_id,
                     event_type=stream_event.type,
                     event=parsed_event_model,
                     worker_id=stream_event.worker_id,
@@ -653,6 +659,7 @@ class StreamSubscriber:
             parsed_event.event_type.value,
             event_data,
             parsed_event.worker_id,
+            deployment_id=parsed_event.deployment_id,
         )
 
     async def _publish_event(
@@ -660,6 +667,8 @@ class StreamSubscriber:
         event_type: str,
         data: dict[str, object],
         worker_id: str,
+        *,
+        deployment_id: str,
     ) -> None:
         """Publish event data for SSE consumers.
 
@@ -674,7 +683,7 @@ class StreamSubscriber:
             }
             event = SSEJobEvent.model_validate(payload)
             await self._redis.publish(
-                EVENTS_PUBSUB_CHANNEL,
+                status_events_pubsub_channel(deployment_id=deployment_id),
                 event.model_dump_json(exclude_none=True),
             )
         except Exception as e:

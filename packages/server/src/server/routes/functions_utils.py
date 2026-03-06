@@ -6,7 +6,7 @@ import json
 from typing import TypedDict
 
 from shared.contracts import FunctionConfig
-from shared.keys import function_definition_key
+from shared.keys import DEFAULT_DEPLOYMENT_ID, function_definition_key
 
 from server.services.redis import get_redis
 
@@ -17,7 +17,10 @@ class PauseStatePayload(TypedDict):
 
 
 async def set_function_pause_state(
-    function_key: str, *, paused: bool
+    function_key: str,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    paused: bool,
 ) -> PauseStatePayload | None:
     """
     Persist pause state for a function definition.
@@ -26,7 +29,7 @@ async def set_function_pause_state(
         Dict payload if function exists, else None.
     """
     redis_client = await get_redis()
-    redis_key = function_definition_key(function_key)
+    redis_key = function_definition_key(function_key, deployment_id=deployment_id)
     raw = await redis_client.get(redis_key)
     if not raw:
         return None

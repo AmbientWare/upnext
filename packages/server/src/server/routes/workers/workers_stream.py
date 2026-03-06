@@ -4,17 +4,24 @@ import time
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from shared.contracts import WorkersListResponse, WorkersSnapshotEvent
-from shared.keys import WORKER_EVENTS_STREAM
+from shared.keys import worker_events_stream_key
 
+from server.auth import require_auth_scope
 from server.routes.workers.workers_root import list_workers_route
 from server.routes.workers.workers_utils import (
     STREAMABLE_WORKER_EVENTS,
     parse_worker_signal_type,
 )
-from server.routes.sse import SSE_BLOCK_MS, SSE_CACHE_TTL_SECONDS, SSE_HEADERS, SSE_READ_COUNT
+from server.routes.sse import (
+    SSE_BLOCK_MS,
+    SSE_CACHE_TTL_SECONDS,
+    SSE_HEADERS,
+    SSE_READ_COUNT,
+)
+from server.runtime_scope import AuthScope
 from server.services.redis import get_redis
 
 logger = logging.getLogger(__name__)
@@ -25,7 +32,9 @@ _workers_snapshot_cache: tuple[float, str | None, WorkersListResponse] | None = 
 
 
 async def _get_cached_workers_snapshot(
-    *, event_token: str | None = None
+    scope: AuthScope,
+    *,
+    event_token: str | None = None,
 ) -> WorkersListResponse:
     global _workers_snapshot_cache
     now = time.monotonic()
@@ -39,7 +48,7 @@ async def _get_cached_workers_snapshot(
         if cached and cached[0] > now:
             if event_token is None or cached[1] == event_token:
                 return cached[2]
-        snapshot = await list_workers_route()
+        snapshot = await list_workers_route(scope=scope)
         _workers_snapshot_cache = (
             now + SSE_CACHE_TTL_SECONDS,
             event_token,
@@ -49,7 +58,10 @@ async def _get_cached_workers_snapshot(
 
 
 @worker_stream_router.get("/stream")
-async def stream_workers(request: Request) -> StreamingResponse:
+async def stream_workers(
+    request: Request,
+    scope: AuthScope = Depends(require_auth_scope),
+) -> StreamingResponse:
     """Stream realtime workers list snapshots via Server-Sent Events (SSE)."""
     try:
         redis_client = await get_redis()
@@ -61,7 +73,7 @@ async def stream_workers(request: Request) -> StreamingResponse:
         try:
             yield "event: open\ndata: connected\n\n"
 
-            initial = await _get_cached_workers_snapshot()
+            initial = await _get_cached_workers_snapshot(scope)
             initial_event = WorkersSnapshotEvent(
                 at=datetime.now(UTC).isoformat(),
                 workers=initial,
@@ -73,7 +85,11 @@ async def stream_workers(request: Request) -> StreamingResponse:
                     break
 
                 result = await redis_client.xread(
-                    {WORKER_EVENTS_STREAM: last_id},
+                    {
+                        worker_events_stream_key(
+                            deployment_id=scope.deployment_id
+                        ): last_id
+                    },
                     count=SSE_READ_COUNT,
                     block=SSE_BLOCK_MS,
                 )
@@ -96,7 +112,7 @@ async def stream_workers(request: Request) -> StreamingResponse:
                     continue
 
                 snapshot = await _get_cached_workers_snapshot(
-                    event_token=latest_relevant_event_id
+                    scope, event_token=latest_relevant_event_id
                 )
                 event = WorkersSnapshotEvent(
                     at=datetime.now(UTC).isoformat(),
@@ -107,7 +123,7 @@ async def stream_workers(request: Request) -> StreamingResponse:
             return
         except Exception as exc:
             logger.warning("Workers stream error: %s", exc)
-            yield "event: error\ndata: {\"error\": \"stream disconnected\"}\n\n"
+            yield 'event: error\ndata: {"error": "stream disconnected"}\n\n'
 
     return StreamingResponse(
         event_stream(),

@@ -17,20 +17,16 @@ from shared.contracts import (
     JobTrendsResponse,
 )
 from shared.domain import CronSource, EventSource, Job, JobStatus, TaskSource
-from shared.keys import EVENTS_STREAM
+from shared.keys import status_events_stream_key
 
-from server.backends.base import (
-    InvalidCursorError,
-    JobHourlyTrendRow,
-)
-from server.backends.base import (
-    Job as StoredJob,
-)
+from server.auth import require_auth_scope
+from server.backends.base import InvalidCursorError, Job as StoredJob, JobHourlyTrendRow
 from server.backends.service import BackendService
 from server.routes.depends import require_backend
 from server.routes.jobs.jobs_utils import (
     job_history_to_response,
 )
+from server.runtime_scope import AuthScope, RuntimeModes
 from server.services.jobs import (
     DuplicateIdempotencyKeyError,
     cancel_job,
@@ -99,6 +95,7 @@ async def list_jobs(
     before: datetime | None = Query(None, description="Filter by created before"),
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
     cursor: str | None = Query(None, description="Job ID cursor for pagination"),
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ) -> JobListResponse:
     """
@@ -127,6 +124,7 @@ async def list_jobs(
                 end_date=before,
                 limit=limit + 1,
                 cursor=cursor,
+                deployment_id=scope.deployment_id,
             )
         except InvalidCursorError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -137,6 +135,7 @@ async def list_jobs(
             worker_id=worker_id,
             start_date=after,
             end_date=before,
+            deployment_id=scope.deployment_id,
         )
 
         has_more = len(jobs) > limit
@@ -159,6 +158,7 @@ async def get_job_stats(
     function: str | None = Query(None, description="Filter by function key"),
     after: datetime | None = Query(None, description="Filter by start date"),
     before: datetime | None = Query(None, description="Filter by end date"),
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ) -> JobStatsResponse:
     """Get aggregate job statistics."""
@@ -169,6 +169,7 @@ async def get_job_stats(
             function=function,
             start_date=after,
             end_date=before,
+            deployment_id=scope.deployment_id,
         )
 
         return JobStatsResponse(
@@ -186,6 +187,7 @@ async def get_job_trends(
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     function: str | None = Query(None, description="Filter by function key"),
     type: FunctionType | None = Query(None, description="Filter by function type"),
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ) -> JobTrendsResponse:
     """
@@ -196,7 +198,9 @@ async def get_job_trends(
     allowed_functions: list[str] | None = None
     if type is not None:
         try:
-            func_defs = await get_function_definitions()
+            func_defs = await get_function_definitions(
+                deployment_id=scope.deployment_id
+            )
         except RuntimeError:
             return _empty_trends(hours)
 
@@ -219,6 +223,7 @@ async def get_job_trends(
             end_date=now,
             function=function,
             functions=allowed_functions,
+            deployment_id=scope.deployment_id,
         )
 
         # Initialize all hours
@@ -272,12 +277,14 @@ async def _publish_cancelled_status_event(
     redis_client: Redis,
     job: Job,
     *,
+    deployment_id: str,
     reason: str | None = None,
 ) -> None:
     """Emit job.cancelled so event ingestion and DB history stay in sync."""
     cancelled_at = datetime.now(UTC).isoformat()
     payload = {
         "type": "job.cancelled",
+        "deployment_id": deployment_id,
         "job_id": job.id,
         "worker_id": job.worker_id or "server",
         "ts": str(time.time()),
@@ -296,14 +303,14 @@ async def _publish_cancelled_status_event(
     }
     try:
         await redis_client.xadd(
-            EVENTS_STREAM,
+            status_events_stream_key(deployment_id=deployment_id),
             payload,  # type: ignore[arg-type]
             maxlen=STATUS_STREAM_MAXLEN,
             approximate=True,
         )
     except TypeError:
         await redis_client.xadd(
-            EVENTS_STREAM,
+            status_events_stream_key(deployment_id=deployment_id),
             payload,  # type: ignore[arg-type]
             maxlen=STATUS_STREAM_MAXLEN,
         )
@@ -315,6 +322,7 @@ async def _publish_cancelled_status_event(
 @router.get("/{job_id}/timeline", response_model=JobListResponse)
 async def get_job_timeline(
     job_id: str,
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ) -> JobListResponse:
     """
@@ -324,7 +332,7 @@ async def get_job_timeline(
     """
     async with backend.session() as tx:
         repo = tx.jobs
-        jobs = await repo.list_job_subtree(job_id)
+        jobs = await repo.list_job_subtree(job_id, deployment_id=scope.deployment_id)
         if not jobs:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -338,12 +346,13 @@ async def get_job_timeline(
 @router.get("/{job_id}", response_model=JobHistoryResponse)
 async def get_job(
     job_id: str,
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ) -> JobHistoryResponse:
     """Get a specific job by ID."""
     async with backend.session() as tx:
         repo = tx.jobs
-        job = await repo.get_by_id(job_id)
+        job = await repo.get_by_id(job_id, deployment_id=scope.deployment_id)
 
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -352,8 +361,16 @@ async def get_job(
 
 
 @router.post("/{job_id}/cancel", response_model=JobCancelResponse)
-async def cancel_job_route(job_id: str) -> JobCancelResponse:
+async def cancel_job_route(
+    job_id: str,
+    scope: AuthScope = Depends(require_auth_scope),
+) -> JobCancelResponse:
     """Cancel a running or queued job."""
+    if scope.mode == RuntimeModes.CLOUD_RUNTIME:
+        raise HTTPException(
+            status_code=501,
+            detail="Job cancellation is unavailable in cloud runtime mode",
+        )
     try:
         redis_client = await get_redis()
     except RuntimeError as exc:
@@ -388,6 +405,7 @@ async def cancel_job_route(job_id: str) -> JobCancelResponse:
     await _publish_cancelled_status_event(
         redis_client,
         job,
+        deployment_id=scope.deployment_id,
         reason="Cancelled via API",
     )
 
@@ -401,9 +419,15 @@ async def cancel_job_route(job_id: str) -> JobCancelResponse:
 @router.post("/{job_id}/retry", response_model=JobRetryResponse)
 async def retry_job(
     job_id: str,
+    scope: AuthScope = Depends(require_auth_scope),
     backend: BackendService = Depends(require_backend),
 ) -> JobRetryResponse:
     """Retry a failed job."""
+    if scope.mode == RuntimeModes.CLOUD_RUNTIME:
+        raise HTTPException(
+            status_code=501,
+            detail="Job retry is unavailable in cloud runtime mode",
+        )
     try:
         redis_client = await get_redis()
     except RuntimeError as exc:
@@ -411,7 +435,7 @@ async def retry_job(
 
     async with backend.session() as tx:
         repo = tx.jobs
-        row = await repo.get_by_id(job_id)
+        row = await repo.get_by_id(job_id, deployment_id=scope.deployment_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
