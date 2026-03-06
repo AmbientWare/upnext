@@ -383,6 +383,8 @@ export interface AuthVerifyResponse {
     workspace_id: string;
     mode: "self_hosted" | "cloud_runtime";
     subject: string | null;
+    email: string | null;
+    name: string | null;
   };
 }
 

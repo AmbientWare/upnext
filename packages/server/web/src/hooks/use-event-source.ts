@@ -175,7 +175,11 @@ export function useEventSource(url: string, options: UseEventSourceOptions = {})
 
       let response: Response;
       try {
-        response = await fetch(url, { headers, signal: controller.signal });
+        response = await fetch(url, {
+          headers,
+          signal: controller.signal,
+          credentials: "include",
+        });
       } catch {
         if (cancelled) return;
         onErrorRef.current?.(new Event("error"));

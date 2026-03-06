@@ -28,7 +28,7 @@ Backend-first: set `UPNEXT_BACKEND` explicitly when starting the server.
 | `UPNEXT_BACKEND` | `redis` | Server persistence backend: `redis`, `sqlite`, or `postgres` |
 | `UPNEXT_DATABASE_URL` | — | SQL connection URL used only when `UPNEXT_BACKEND=sqlite` or `postgres` |
 | `UPNEXT_AUTH_ENABLED` | `false` | Enable the self-hosted bearer-token gate |
-| `UPNEXT_DEFAULT_WORKSPACE_ID` | `local` | Workspace id served by this runtime instance |
+| `UPNEXT_WORKSPACE_ID` | `local` | Workspace id used by this runtime instance |
 | `UPNEXT_CLEANUP_RETENTION_HOURS` | backend-dependent | Job/artifact cleanup retention window in hours |
 
 ### Persistence backend behavior

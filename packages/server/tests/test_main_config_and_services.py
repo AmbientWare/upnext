@@ -40,22 +40,35 @@ class _SettingsStub:
     api_key: str | None = None
     runtime_mode: RuntimeModes = RuntimeModes.SELF_HOSTED
     runtime_token_secret: str | None = None
+    runtime_session_cookie_name: str = "upnext_runtime_session"
+    runtime_session_cookie_secure: bool = False
+    runtime_session_cookie_samesite: str = "lax"
+    runtime_session_cookie_domain: str | None = None
+    runtime_session_ttl_seconds: int = 900
+    runtime_default_session_enabled: bool = False
+    runtime_default_subject: str = "default-user"
+    runtime_default_email: str | None = "default@upnext.local"
+    runtime_default_name: str | None = "Default User"
     is_production: bool = False
     cors_allow_origins_list: list[str] = field(default_factory=lambda: ["*"])
+    is_development: bool = True
+    workspace_id: str = "local"
 
     @property
     def is_cloud_runtime(self) -> bool:
         return self.runtime_mode == RuntimeModes.CLOUD_RUNTIME
 
     @property
-    def normalized_default_workspace_id(self) -> str:
-        return "local"
+    def normalized_workspace_id(self) -> str:
+        return self.workspace_id
+
+    @property
+    def allow_runtime_default_session(self) -> bool:
+        return self.runtime_default_session_enabled or self.is_development
 
     @property
     def status_events_stream(self) -> str:
-        return status_events_stream_key(
-            workspace_id=self.normalized_default_workspace_id
-        )
+        return status_events_stream_key(workspace_id=self.normalized_workspace_id)
 
     @property
     def effective_invalid_events_stream(self) -> str:
@@ -244,6 +257,21 @@ def test_server_settings_env_aliases_are_accepted(monkeypatch) -> None:
     settings = config_module.get_settings()
     assert settings.env.value == "prod"
     assert settings.is_production is True
+
+
+def test_server_settings_cloud_runtime_requires_non_local_workspace(
+    monkeypatch,
+) -> None:
+    config_module.get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_RUNTIME_MODE", "cloud_runtime")
+    monkeypatch.setenv("UPNEXT_WORKSPACE_ID", "local")
+    monkeypatch.setenv("UPNEXT_SECRET_KEY", "test-secret-key")
+
+    with pytest.raises(
+        ValueError,
+        match="UPNEXT_WORKSPACE_ID must be set to a non-local value",
+    ):
+        config_module.get_settings()
 
 
 def test_cleanup_retention_defaults_by_backend(monkeypatch) -> None:

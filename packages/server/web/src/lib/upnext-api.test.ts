@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   ApiError,
+  clearRuntimeSession,
+  createDefaultRuntimeSession,
   getJob,
   getJobs,
   verifyToken,
@@ -76,6 +78,8 @@ describe("auth api", () => {
           workspace_id: "local",
           mode: "self_hosted",
           subject: "self-hosted-token",
+          email: null,
+          name: null,
         },
       }),
     });
@@ -85,8 +89,47 @@ describe("auth api", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/auth/verify");
     expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
     expect(result.ok).toBe(true);
     expect(result.scope.workspace_id).toBe("local");
+  });
+
+  it("createDefaultRuntimeSession sends POST to the default-session endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        scope: {
+          workspace_id: "ws_demo",
+          mode: "cloud_runtime",
+          subject: "default-user",
+          email: "default@upnext.local",
+          name: "Default User",
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createDefaultRuntimeSession();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/auth/session/default");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+    expect(result.scope.workspace_id).toBe("ws_demo");
+  });
+
+  it("clearRuntimeSession posts to the logout endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await clearRuntimeSession();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/auth/session/logout");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
   });
 });
 

@@ -11,10 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/components/layout";
 import { ErrorBoundary } from "@/components/shared";
 import { env } from "@/lib/env";
+import { clearRuntimeSession, verifyToken } from "@/lib/upnext-api";
 
 type AuthStatus = {
   auth_enabled: boolean;
   runtime_mode: "self_hosted" | "cloud_runtime";
+  default_session_available: boolean;
 };
 
 export const Route = createRootRoute({
@@ -22,9 +24,15 @@ export const Route = createRootRoute({
 });
 
 async function fetchAuthStatus(): Promise<AuthStatus> {
-  const response = await fetch(`${env.VITE_API_BASE_URL}/auth/status`);
+  const response = await fetch(`${env.VITE_API_BASE_URL}/auth/status`, {
+    credentials: "include",
+  });
   if (!response.ok) {
-    return { auth_enabled: true, runtime_mode: "self_hosted" };
+    return {
+      auth_enabled: true,
+      runtime_mode: "self_hosted",
+      default_session_available: false,
+    };
   }
   return response.json();
 }
@@ -39,11 +47,25 @@ function RootLayout() {
     staleTime: 60_000,
     retry: 1,
   });
+  const {
+    data: verifiedSession,
+    isLoading: verifyLoading,
+    isError: verifyError,
+    refetch: refetchVerify,
+  } = useQuery({
+    queryKey: ["auth", "verify", authStatus?.runtime_mode],
+    queryFn: () => verifyToken(),
+    enabled:
+      !!authStatus?.auth_enabled && authStatus.runtime_mode === "cloud_runtime",
+    retry: false,
+    staleTime: 30_000,
+  });
 
   const authEnabled = authStatus?.auth_enabled ?? true;
   const runtimeMode = authStatus?.runtime_mode ?? "self_hosted";
+  const defaultSessionAvailable = authStatus?.default_session_available ?? false;
 
-  if (authLoading) {
+  if (authLoading || (runtimeMode === "cloud_runtime" && verifyLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
@@ -53,6 +75,18 @@ function RootLayout() {
 
   if (authEnabled && runtimeMode === "self_hosted" && !isAuthenticated) {
     return <LoginPage />;
+  }
+
+  if (authEnabled && runtimeMode === "cloud_runtime" && verifyError) {
+    return (
+      <LoginPage
+        mode="cloud_runtime"
+        defaultSessionAvailable={defaultSessionAvailable}
+        onCloudAuthenticated={async () => {
+          await refetchVerify();
+        }}
+      />
+    );
   }
 
   const streamSubscriptions = getStreamSubscriptions(path);
@@ -65,10 +99,36 @@ function RootLayout() {
         <div className="flex-1 flex flex-col overflow-hidden">
           <header className="h-14 border-b border-border flex items-center px-6 shrink-0">
             <h1 className="text-lg font-semibold text-foreground">{getPageTitle(path)}</h1>
-            {authEnabled && runtimeMode === "self_hosted" && isAuthenticated ? (
+            {authEnabled &&
+            runtimeMode === "self_hosted" &&
+            isAuthenticated ? (
               <Button variant="ghost" size="sm" className="ml-auto" onClick={logout}>
                 Sign out
               </Button>
+            ) : null}
+            {authEnabled &&
+            runtimeMode === "cloud_runtime" &&
+            verifiedSession?.scope ? (
+              <div className="ml-auto flex items-center gap-3">
+                <div className="text-right text-sm">
+                  <div className="font-medium text-foreground">
+                    {verifiedSession.scope.name ?? verifiedSession.scope.subject ?? "User"}
+                  </div>
+                  <div className="text-muted-foreground">
+                    {verifiedSession.scope.workspace_id}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={async () => {
+                    await clearRuntimeSession();
+                    await refetchVerify();
+                  }}
+                >
+                  Sign out
+                </Button>
+              </div>
             ) : null}
           </header>
 

@@ -3,9 +3,19 @@ import { useState, type FormEvent } from "react";
 import { useAuth } from "@/components/providers/use-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { verifyToken } from "@/lib/upnext-api";
+import { createDefaultRuntimeSession, verifyToken } from "@/lib/upnext-api";
 
-export function LoginPage() {
+interface LoginPageProps {
+  mode?: "self_hosted" | "cloud_runtime";
+  defaultSessionAvailable?: boolean;
+  onCloudAuthenticated?: () => Promise<void> | void;
+}
+
+export function LoginPage({
+  mode = "self_hosted",
+  defaultSessionAvailable = false,
+  onCloudAuthenticated,
+}: LoginPageProps) {
   const { login } = useAuth();
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +41,19 @@ export function LoginPage() {
     }
   };
 
+  const handleCloudContinue = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await createDefaultRuntimeSession();
+      await onCloudAuthenticated?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create runtime session");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background p-8">
       <div className="w-full max-w-sm">
@@ -50,26 +73,47 @@ export function LoginPage() {
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">UpNext</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Enter the configured self-hosted token to continue
+            {mode === "cloud_runtime"
+              ? "Create a runtime session for the selected workspace"
+              : "Enter the configured self-hosted token to continue"}
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Input
-              type="password"
-              placeholder="Authentication token"
-              value={key}
-              onChange={(event) => setKey(event.target.value)}
-              autoFocus
-              autoComplete="off"
-            />
-            {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
+        {mode === "cloud_runtime" ? (
+          <div className="space-y-4">
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            <Button
+              type="button"
+              className="w-full"
+              disabled={loading || !defaultSessionAvailable}
+              onClick={handleCloudContinue}
+            >
+              {loading ? "Connecting..." : "Continue"}
+            </Button>
+            {!defaultSessionAvailable ? (
+              <p className="text-sm text-muted-foreground">
+                Default runtime sessions are disabled for this environment.
+              </p>
+            ) : null}
           </div>
-          <Button type="submit" className="w-full" disabled={loading || !key.trim()}>
-            {loading ? "Verifying..." : "Sign in"}
-          </Button>
-        </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Input
+                type="password"
+                placeholder="Authentication token"
+                value={key}
+                onChange={(event) => setKey(event.target.value)}
+                autoFocus
+                autoComplete="off"
+              />
+              {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
+            </div>
+            <Button type="submit" className="w-full" disabled={loading || !key.trim()}>
+              {loading ? "Verifying..." : "Sign in"}
+            </Button>
+          </form>
+        )}
       </div>
     </div>
   );

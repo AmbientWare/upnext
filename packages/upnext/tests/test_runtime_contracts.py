@@ -189,6 +189,20 @@ def test_settings_environment_flags_and_cache(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_settings_cloud_runtime_requires_non_local_workspace(monkeypatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("UPNEXT_RUNTIME_MODE", "cloud_runtime")
+    monkeypatch.setenv("UPNEXT_WORKSPACE_ID", "local")
+
+    with pytest.raises(
+        ValueError,
+        match="UPNEXT_WORKSPACE_ID must be set to a non-local value",
+    ):
+        get_settings()
+
+    get_settings.cache_clear()
+
+
 def test_upnext_run_passes_components_and_timeouts(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 

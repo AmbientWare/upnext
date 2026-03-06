@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from shared.keys import DEFAULT_WORKSPACE_ID
 
 from server.backends import get_backend
 from server.backends.types import PersistenceBackends
@@ -70,6 +71,10 @@ async def lifespan(_app: FastAPI):
         if settings.backend != PersistenceBackends.POSTGRES:
             raise RuntimeError(
                 "Cloud runtime requires UPNEXT_BACKEND=postgres for scoped persistence"
+            )
+        if settings.normalized_workspace_id == DEFAULT_WORKSPACE_ID:
+            raise RuntimeError(
+                "Cloud runtime requires UPNEXT_WORKSPACE_ID to be set to a non-local value"
             )
         if not settings.runtime_token_secret:
             logger.warning(

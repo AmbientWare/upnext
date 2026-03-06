@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from functools import lru_cache
 
 from shared.keys import (
@@ -11,6 +12,11 @@ from shared.keys import (
     status_events_stream_key,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class RuntimeModes(StrEnum):
+    SELF_HOSTED = "self_hosted"
+    CLOUD_RUNTIME = "cloud_runtime"
 
 
 class Settings(BaseSettings):
@@ -38,6 +44,7 @@ class Settings(BaseSettings):
     # Redis URL for queue and persistence backend
     redis_url: str | None = None
     workspace_id: str = DEFAULT_WORKSPACE_ID
+    runtime_mode: RuntimeModes = RuntimeModes.SELF_HOSTED
     queue_batch_size: int = 4
     queue_inbox_size: int = 4
     queue_outbox_size: int = 10_000
@@ -91,6 +98,10 @@ class Settings(BaseSettings):
         return not self.is_production
 
     @property
+    def is_cloud_runtime(self) -> bool:
+        return self.runtime_mode == RuntimeModes.CLOUD_RUNTIME
+
+    @property
     def normalized_workspace_id(self) -> str:
         """Workspace identifier for all Redis-backed runtime state."""
         return normalize_workspace_id(self.workspace_id)
@@ -111,6 +122,16 @@ class Settings(BaseSettings):
         if self.status_durable_buffer_key:
             return self.status_durable_buffer_key
         return f"{self.runtime_key_prefix}:status:pending"
+
+    def model_post_init(self, __context: object) -> None:
+        if (
+            self.is_cloud_runtime
+            and self.normalized_workspace_id == DEFAULT_WORKSPACE_ID
+        ):
+            raise ValueError(
+                "UPNEXT_WORKSPACE_ID must be set to a non-local value when "
+                "UPNEXT_RUNTIME_MODE=cloud_runtime"
+            )
 
 
 @lru_cache

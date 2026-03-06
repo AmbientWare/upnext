@@ -23,9 +23,41 @@ def _self_hosted_scope(
 ) -> AuthScope:
     settings = get_settings()
     return AuthScope(
-        workspace_id=settings.normalized_default_workspace_id,
+        workspace_id=settings.normalized_workspace_id,
         mode=RuntimeModes.SELF_HOSTED,
         subject=subject,
+    )
+
+
+def _cloud_scope_from_claims(claims: dict[str, object]) -> AuthScope:
+    settings = get_settings()
+    workspace_id = claims.get("workspace_id")
+    subject = claims.get("sub")
+    email = claims.get("email")
+    name = claims.get("name")
+
+    if not isinstance(workspace_id, str) or not workspace_id:
+        raise HTTPException(
+            status_code=401, detail="Runtime token missing workspace_id"
+        )
+    if workspace_id != settings.normalized_workspace_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Runtime token workspace_id does not match this runtime",
+        )
+    if subject is not None and not isinstance(subject, str):
+        raise HTTPException(status_code=401, detail="Runtime token has invalid subject")
+    if email is not None and not isinstance(email, str):
+        raise HTTPException(status_code=401, detail="Runtime token has invalid email")
+    if name is not None and not isinstance(name, str):
+        raise HTTPException(status_code=401, detail="Runtime token has invalid name")
+
+    return AuthScope(
+        workspace_id=workspace_id,
+        mode=RuntimeModes.CLOUD_RUNTIME,
+        subject=subject,
+        email=email,
+        name=name,
     )
 
 
@@ -66,8 +98,11 @@ async def require_api_key(
         if auth_header and auth_header.startswith("Bearer "):
             runtime_token = auth_header.removeprefix("Bearer ").strip()
         if not runtime_token:
+            runtime_token = request.cookies.get(settings.runtime_session_cookie_name)
+        if not runtime_token:
             raise HTTPException(
-                status_code=401, detail="Missing or invalid Authorization header"
+                status_code=401,
+                detail="Missing runtime session",
             )
 
         try:
@@ -80,31 +115,7 @@ async def require_api_key(
         except RuntimeTokenError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-        workspace_id = claims.get("workspace_id")
-        subject = claims.get("sub")
-
-        if not isinstance(workspace_id, str) or not workspace_id:
-            raise HTTPException(
-                status_code=401, detail="Runtime token missing workspace_id"
-            )
-        if workspace_id != settings.normalized_default_workspace_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Runtime token workspace_id does not match this runtime",
-            )
-        if subject is not None and not isinstance(subject, str):
-            raise HTTPException(
-                status_code=401, detail="Runtime token has invalid subject"
-            )
-
-        return _cache_scope(
-            request,
-            AuthScope(
-                workspace_id=workspace_id,
-                mode=RuntimeModes.CLOUD_RUNTIME,
-                subject=subject,
-            ),
-        )
+        return _cache_scope(request, _cloud_scope_from_claims(claims))
 
     if not settings.auth_enabled:
         return _cache_scope(request, _self_hosted_scope(subject="self-hosted"))

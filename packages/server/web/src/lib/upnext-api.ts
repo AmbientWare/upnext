@@ -65,7 +65,12 @@ async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   }
 
   try {
-    return await fetch(url, { ...init, headers, signal: controller.signal });
+    return await fetch(url, {
+      ...init,
+      headers,
+      signal: controller.signal,
+      credentials: "include",
+    });
   } catch (error) {
     if (isAbortError(error)) {
       throw new ApiError(
@@ -386,6 +391,20 @@ export async function verifyToken(token?: string): Promise<AuthVerifyResponse> {
     headers,
   });
   return handleResponse<AuthVerifyResponse>(response);
+}
+
+export async function createDefaultRuntimeSession(): Promise<AuthVerifyResponse> {
+  const response = await apiFetch(`${API_BASE}/auth/session/default`, {
+    method: "POST",
+  });
+  return handleResponse<AuthVerifyResponse>(response);
+}
+
+export async function clearRuntimeSession(): Promise<void> {
+  const response = await apiFetch(`${API_BASE}/auth/session/logout`, {
+    method: "POST",
+  });
+  await handleResponse<{ ok: boolean }>(response);
 }
 
 // =============================================================================

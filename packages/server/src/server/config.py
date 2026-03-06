@@ -88,10 +88,19 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     api_key: str | None = None
     runtime_mode: RuntimeModes = RuntimeModes.SELF_HOSTED
-    default_workspace_id: str = DEFAULT_WORKSPACE_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     runtime_token_secret: str | None = None
     runtime_token_issuer: str = "upnext-saas"
     runtime_token_audience: str = "upnext-runtime"
+    runtime_session_cookie_name: str = "upnext_runtime_session"
+    runtime_session_cookie_secure: bool = False
+    runtime_session_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    runtime_session_cookie_domain: str | None = None
+    runtime_session_ttl_seconds: int = 900
+    runtime_default_session_enabled: bool = False
+    runtime_default_subject: str = "default-user"
+    runtime_default_email: str | None = "default@upnext.local"
+    runtime_default_name: str | None = "Default User"
 
     # Encryption key for secrets storage.
     # Auto-generated and persisted to ~/.upnext/secret_key if not set via env.
@@ -213,26 +222,26 @@ class Settings(BaseSettings):
         return self.runtime_mode == RuntimeModes.SELF_HOSTED
 
     @property
-    def normalized_default_workspace_id(self) -> str:
-        return normalize_workspace_id(self.default_workspace_id)
+    def normalized_workspace_id(self) -> str:
+        return normalize_workspace_id(self.workspace_id)
 
     @property
     def status_events_stream(self) -> str:
-        return status_events_stream_key(
-            workspace_id=self.normalized_default_workspace_id
-        )
+        return status_events_stream_key(workspace_id=self.normalized_workspace_id)
 
     @property
     def status_events_pubsub_channel(self) -> str:
-        return status_events_pubsub_channel(
-            workspace_id=self.normalized_default_workspace_id
-        )
+        return status_events_pubsub_channel(workspace_id=self.normalized_workspace_id)
 
     @property
     def effective_invalid_events_stream(self) -> str:
         if self.event_subscriber_invalid_stream:
             return self.event_subscriber_invalid_stream
         return f"{self.status_events_stream}:invalid"
+
+    @property
+    def allow_runtime_default_session(self) -> bool:
+        return self.runtime_default_session_enabled or self.is_development
 
     def model_post_init(self, _context: object) -> None:
         if not self.secret_key:
@@ -241,6 +250,14 @@ class Settings(BaseSettings):
             # Redis defaults to shorter 6 hour, 7 days for SQL backends
             self.cleanup_retention_hours = (
                 6 if self.backend == PersistenceBackends.REDIS else 7 * 24
+            )
+        if (
+            self.is_cloud_runtime
+            and self.normalized_workspace_id == DEFAULT_WORKSPACE_ID
+        ):
+            raise ValueError(
+                "UPNEXT_WORKSPACE_ID must be set to a non-local value when "
+                "UPNEXT_RUNTIME_MODE=cloud_runtime"
             )
 
 

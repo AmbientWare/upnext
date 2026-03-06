@@ -18,3 +18,5 @@ class AuthScope:
     workspace_id: str
     mode: RuntimeModes
     subject: str | None = None
+    email: str | None = None
+    name: str | None = None
