@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from shared.keys import DEFAULT_WORKSPACE_ID
+from shared.keys import status_events_stream_key
 
 from server.backends import get_backend
 from server.backends.types import PersistenceBackends
@@ -72,10 +72,6 @@ async def lifespan(_app: FastAPI):
             raise RuntimeError(
                 "Cloud runtime requires UPNEXT_BACKEND=postgres for scoped persistence"
             )
-        if settings.normalized_workspace_id == DEFAULT_WORKSPACE_ID:
-            raise RuntimeError(
-                "Cloud runtime requires UPNEXT_WORKSPACE_ID to be set to a non-local value"
-            )
         if not settings.runtime_token_secret:
             logger.warning(
                 "UPNEXT_RUNTIME_MODE=cloud_runtime but no runtime token secret is set. "
@@ -102,11 +98,25 @@ async def lifespan(_app: FastAPI):
         subscriber = StreamSubscriber(
             redis_client=redis_client,
             config=StreamSubscriberConfig(
-                stream=settings.status_events_stream,
+                stream=None
+                if settings.is_cloud_runtime
+                else status_events_stream_key(),
+                stream_pattern=(
+                    settings.status_events_stream_pattern
+                    if settings.is_cloud_runtime
+                    else None
+                ),
                 batch_size=settings.event_subscriber_batch_size,
                 poll_interval=settings.event_subscriber_poll_interval_ms / 1000,
                 stale_claim_ms=settings.event_subscriber_stale_claim_ms,
-                invalid_events_stream=settings.effective_invalid_events_stream,
+                invalid_events_stream=(
+                    settings.event_subscriber_invalid_stream
+                    if settings.is_cloud_runtime
+                    else (
+                        settings.event_subscriber_invalid_stream
+                        or f"{status_events_stream_key()}:invalid"
+                    )
+                ),
                 invalid_events_stream_maxlen=settings.event_subscriber_invalid_stream_maxlen,
             ),
         )

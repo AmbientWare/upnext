@@ -8,12 +8,11 @@ from dataclasses import dataclass
 from time import time
 
 import pytest
+import server.auth as auth_module
 import server.routes.auth as auth_routes
+from server.runtime_scope import RuntimeModes
 from starlette.requests import Request
 from starlette.responses import Response
-
-import server.auth as auth_module
-from server.runtime_scope import RuntimeModes
 
 
 def _make_request(
@@ -55,12 +54,7 @@ class _SelfHostedSettings:
     runtime_token_secret: str | None = None
     runtime_token_issuer: str = "upnext-saas"
     runtime_token_audience: str = "upnext-runtime"
-    workspace_id: str = "local"
     is_cloud_runtime: bool = False
-
-    @property
-    def normalized_workspace_id(self) -> str:
-        return self.workspace_id
 
 
 @dataclass
@@ -79,13 +73,8 @@ class _CloudRuntimeSettings:
     runtime_default_subject: str = "default-user"
     runtime_default_email: str | None = "default@upnext.local"
     runtime_default_name: str | None = "Default User"
-    workspace_id: str = "ws_orders_api"
     is_cloud_runtime: bool = True
     is_development: bool = True
-
-    @property
-    def normalized_workspace_id(self) -> str:
-        return self.workspace_id
 
     @property
     def allow_runtime_default_session(self) -> bool:
@@ -147,6 +136,30 @@ async def test_require_api_key_decodes_cloud_runtime_token_scope(
 
 
 @pytest.mark.asyncio
+async def test_require_api_key_uses_workspace_from_cloud_runtime_token_claims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _CloudRuntimeSettings()
+    monkeypatch.setattr(auth_module, "get_settings", lambda: settings)
+
+    token = _encode_runtime_token(
+        settings.runtime_token_secret,
+        {
+            "iss": settings.runtime_token_issuer,
+            "aud": settings.runtime_token_audience,
+            "sub": "user_demo_03",
+            "workspace_id": "ws_shared_runtime",
+            "exp": int(time()) + 300,
+        },
+    )
+
+    scope = await auth_module.require_api_key(_make_request(token))
+
+    assert scope.workspace_id == "ws_shared_runtime"
+    assert scope.mode == RuntimeModes.CLOUD_RUNTIME
+
+
+@pytest.mark.asyncio
 async def test_require_api_key_decodes_cloud_runtime_cookie_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -188,7 +201,9 @@ async def test_create_default_cloud_session_sets_cookie(
     monkeypatch.setattr(auth_routes, "get_settings", lambda: settings)
 
     response = Response()
-    result = await auth_routes.create_default_cloud_session(response)
+    result = await auth_routes.create_default_cloud_session(
+        response, workspace_id="ws_orders_api"
+    )
 
     assert result.ok is True
     assert result.scope.workspace_id == "ws_orders_api"

@@ -13,8 +13,8 @@ import server.services.redis as redis_module
 from fastapi import FastAPI
 from server.backends.types import PersistenceBackends
 from server.runtime_scope import RuntimeModes
-from shared.keys import status_events_stream_key
 from shared._version import __version__ as shared_version
+from shared.keys import status_events_stream_key, status_events_stream_pattern
 
 
 @dataclass
@@ -52,27 +52,18 @@ class _SettingsStub:
     is_production: bool = False
     cors_allow_origins_list: list[str] = field(default_factory=lambda: ["*"])
     is_development: bool = True
-    workspace_id: str = "local"
 
     @property
     def is_cloud_runtime(self) -> bool:
         return self.runtime_mode == RuntimeModes.CLOUD_RUNTIME
 
     @property
-    def normalized_workspace_id(self) -> str:
-        return self.workspace_id
-
-    @property
     def allow_runtime_default_session(self) -> bool:
         return self.runtime_default_session_enabled or self.is_development
 
     @property
-    def status_events_stream(self) -> str:
-        return status_events_stream_key(workspace_id=self.normalized_workspace_id)
-
-    @property
-    def effective_invalid_events_stream(self) -> str:
-        return self.event_subscriber_invalid_stream
+    def status_events_stream_pattern(self) -> str:
+        return status_events_stream_pattern()
 
 
 class _FakeDatabase:
@@ -259,19 +250,16 @@ def test_server_settings_env_aliases_are_accepted(monkeypatch) -> None:
     assert settings.is_production is True
 
 
-def test_server_settings_cloud_runtime_requires_non_local_workspace(
+def test_server_settings_cloud_runtime_allows_request_scoped_workspaces(
     monkeypatch,
 ) -> None:
     config_module.get_settings.cache_clear()
     monkeypatch.setenv("UPNEXT_RUNTIME_MODE", "cloud_runtime")
-    monkeypatch.setenv("UPNEXT_WORKSPACE_ID", "local")
     monkeypatch.setenv("UPNEXT_SECRET_KEY", "test-secret-key")
+    monkeypatch.delenv("UPNEXT_WORKSPACE_ID", raising=False)
 
-    with pytest.raises(
-        ValueError,
-        match="UPNEXT_WORKSPACE_ID must be set to a non-local value",
-    ):
-        config_module.get_settings()
+    settings = config_module.get_settings()
+    assert settings.is_cloud_runtime is True
 
 
 def test_cleanup_retention_defaults_by_backend(monkeypatch) -> None:
@@ -449,6 +437,11 @@ async def test_lifespan_with_redis_starts_and_stops_subscriber(monkeypatch) -> N
     async with main_module.lifespan(FastAPI()):
         assert _FakeStreamSubscriber.instances[0].started is True
         assert _FakeStreamSubscriber.instances[0].redis_client is redis_client
+        assert (
+            _FakeStreamSubscriber.instances[0].config.stream
+            == status_events_stream_key()
+        )
+        assert _FakeStreamSubscriber.instances[0].config.stream_pattern is None
         assert _FakeCleanupService.instances[0].redis_client is redis_client
         assert _FakeCleanupService.instances[0].kwargs["interval_hours"] == 1
         assert _FakeAlertEmitterService.instances[0].started is True
@@ -458,6 +451,42 @@ async def test_lifespan_with_redis_starts_and_stops_subscriber(monkeypatch) -> N
     assert _FakeAlertEmitterService.instances[0].stopped is True
     assert close_calls["count"] == 1
     assert db.disconnected == 1
+
+
+@pytest.mark.asyncio
+async def test_lifespan_cloud_runtime_uses_workspace_stream_pattern(
+    monkeypatch,
+) -> None:
+    settings = _SettingsStub(
+        backend=PersistenceBackends.POSTGRES,
+        redis_url="redis://localhost:6379",
+        runtime_mode=RuntimeModes.CLOUD_RUNTIME,
+        runtime_token_secret="cloud-secret",
+    )
+    db = _FakeDatabase(missing_tables=[], backend_name="postgres")
+    redis_client = object()
+
+    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(main_module, "get_backend", lambda **_: db)
+    monkeypatch.setattr(main_module, "CleanupService", _FakeCleanupService)
+    monkeypatch.setattr(main_module, "AlertEmitterService", _FakeAlertEmitterService)
+    monkeypatch.setattr(main_module, "StreamSubscriber", _FakeStreamSubscriber)
+
+    async def fake_connect_redis(_url: str) -> object:
+        return redis_client
+
+    async def fake_close_redis() -> None:
+        return None
+
+    monkeypatch.setattr(main_module, "connect_redis", fake_connect_redis)
+    monkeypatch.setattr(main_module, "close_redis", fake_close_redis)
+
+    async with main_module.lifespan(FastAPI()):
+        assert _FakeStreamSubscriber.instances[0].config.stream is None
+        assert (
+            _FakeStreamSubscriber.instances[0].config.stream_pattern
+            == settings.status_events_stream_pattern
+        )
 
 
 def test_main_uses_settings_for_uvicorn(monkeypatch) -> None:

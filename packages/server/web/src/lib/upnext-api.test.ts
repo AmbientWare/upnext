@@ -110,9 +110,10 @@ describe("auth api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await createDefaultRuntimeSession();
+    const result = await createDefaultRuntimeSession("ws_demo");
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/auth/session/default");
+    expect(url).toContain("workspace_id=ws_demo");
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("include");
     expect(result.scope.workspace_id).toBe("ws_demo");

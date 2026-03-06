@@ -393,8 +393,11 @@ export async function verifyToken(token?: string): Promise<AuthVerifyResponse> {
   return handleResponse<AuthVerifyResponse>(response);
 }
 
-export async function createDefaultRuntimeSession(): Promise<AuthVerifyResponse> {
-  const response = await apiFetch(`${API_BASE}/auth/session/default`, {
+export async function createDefaultRuntimeSession(
+  workspaceId: string
+): Promise<AuthVerifyResponse> {
+  const searchParams = new URLSearchParams({ workspace_id: workspaceId });
+  const response = await apiFetch(`${API_BASE}/auth/session/default?${searchParams.toString()}`, {
     method: "POST",
   });
   return handleResponse<AuthVerifyResponse>(response);

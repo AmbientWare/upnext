@@ -57,6 +57,7 @@ JobLifecycleEvent: TypeAlias = (
 
 @dataclass(frozen=True)
 class _ParsedEvent:
+    source_stream: str
     event_id: str
     workspace_id: str
     event_type: EventType
@@ -66,6 +67,7 @@ class _ParsedEvent:
 
 @dataclass(frozen=True)
 class _InvalidEventRecord:
+    source_stream: str
     event_id: str
     reason: str
     raw: dict[str, object]
@@ -90,8 +92,12 @@ class _ParseDiscardSummary:
 class StreamSubscriberConfig:
     """Configuration for the stream subscriber."""
 
-    # Stream name (must match worker StatusPublisher.STREAM)
-    stream: str = status_events_stream_key()
+    # Stream name (must match worker StatusPublisher.STREAM). Optional when using
+    # dynamic stream discovery via ``stream_pattern``.
+    stream: str | None = status_events_stream_key()
+
+    # Optional Redis scan pattern for discovering many workspace-scoped streams.
+    stream_pattern: str | None = None
 
     # Consumer group name
     group: str = "server-subscribers"
@@ -106,7 +112,7 @@ class StreamSubscriberConfig:
     stale_claim_ms: int = 30000
 
     # Stream for malformed/unsupported events.
-    invalid_events_stream: str = f"{status_events_stream_key()}:invalid"
+    invalid_events_stream: str | None = f"{status_events_stream_key()}:invalid"
     invalid_events_stream_maxlen: int = 10_000
 
     # Consumer ID (auto-generated if None)
@@ -141,6 +147,7 @@ class StreamSubscriber:
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._group_created = False
+        self._group_created_streams: set[str] = set()
         self._invalid_envelope_total = 0
         self._invalid_payload_total = 0
         self._unsupported_type_total = 0
@@ -258,12 +265,15 @@ class StreamSubscriber:
         Returns:
             Number of events processed
         """
-        if not await self._ensure_consumer_group():
+        streams = await self._get_active_streams()
+        if not streams:
+            return 0
+        if not await self._ensure_consumer_groups(streams):
             return 0
 
-        events: list[tuple[str, dict[str, object]]] = []
-        event_ids: list[str] = []
-        ack_ids: list[str] = []
+        events: list[tuple[str, str, dict[str, object]]] = []
+        event_ids_by_stream: dict[str, list[str]] = {}
+        ack_ids_by_stream: dict[str, list[str]] = {}
         seen_event_ids: set[str] = set()
 
         # Read new events
@@ -276,7 +286,7 @@ class StreamSubscriber:
             result = await self._redis.xreadgroup(
                 self._config.group,
                 self._config.consumer_id,
-                {self._config.stream: ">"},
+                {stream: ">" for stream in streams},
                 count=self._config.batch_size,
                 block=block_ms,
             )
@@ -284,11 +294,17 @@ class StreamSubscriber:
             raise RuntimeError("Failed reading from status stream") from exc
 
         if result:
-            for _, stream_events in result:
+            for raw_stream_name, stream_events in result:
+                stream_name = (
+                    raw_stream_name.decode()
+                    if isinstance(raw_stream_name, bytes)
+                    else str(raw_stream_name)
+                )
                 self._add_stream_events(
+                    stream_name,
                     stream_events,
                     seen_event_ids=seen_event_ids,
-                    event_ids=event_ids,
+                    event_ids_by_stream=event_ids_by_stream,
                     events=events,
                 )
 
@@ -296,37 +312,50 @@ class StreamSubscriber:
         if not drain:
             remaining = self._config.batch_size - len(events)
             if remaining > 0:
-                try:
-                    claimed = await self._redis.xautoclaim(
-                        self._config.stream,
-                        self._config.group,
-                        self._config.consumer_id,
-                        min_idle_time=self._config.stale_claim_ms,
-                        count=remaining,
-                    )
-                except Exception as exc:
-                    raise RuntimeError("Failed claiming stale status events") from exc
+                for stream in streams:
+                    try:
+                        claimed = await self._redis.xautoclaim(
+                            stream,
+                            self._config.group,
+                            self._config.consumer_id,
+                            min_idle_time=self._config.stale_claim_ms,
+                            count=remaining,
+                        )
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "Failed claiming stale status events"
+                        ) from exc
 
-                if claimed and len(claimed) >= 2:
-                    claimed_events = claimed[1]
-                    self._add_stream_events(
-                        claimed_events,
-                        seen_event_ids=seen_event_ids,
-                        event_ids=event_ids,
-                        events=events,
-                    )
-                    if claimed_events:
-                        logger.debug(f"Claimed {len(claimed_events)} stale events")
+                    if claimed and len(claimed) >= 2:
+                        claimed_events = claimed[1]
+                        self._add_stream_events(
+                            stream,
+                            claimed_events,
+                            seen_event_ids=seen_event_ids,
+                            event_ids_by_stream=event_ids_by_stream,
+                            events=events,
+                        )
+                        if claimed_events:
+                            logger.debug(
+                                "Claimed %s stale events from %s",
+                                len(claimed_events),
+                                stream,
+                            )
+                            remaining = self._config.batch_size - len(events)
+                            if remaining <= 0:
+                                break
 
         if not events:
             return 0
 
         # Keep processing order stable even when mixing fresh and reclaimed events.
         # Reclaimed events can be older than newly-read events.
-        events.sort(key=lambda item: self._event_id_sort_key(item[0]))
+        events.sort(key=lambda item: self._event_id_sort_key(item[1]))
 
         parsed_events, discard_summary = self._parse_events(events)
-        ack_ids.extend(await self._archive_invalid_events(discard_summary))
+        archived_ack_ids = await self._archive_invalid_events(discard_summary)
+        for stream_name, event_id in archived_ack_ids:
+            ack_ids_by_stream.setdefault(stream_name, []).append(event_id)
         self._invalid_envelope_total += discard_summary.invalid_envelope
         self._invalid_payload_total += discard_summary.invalid_payload
         self._unsupported_type_total += discard_summary.unsupported_type
@@ -356,8 +385,12 @@ class StreamSubscriber:
                                 session=session,
                             )
                         processed += 1
-                        ack_ids.append(event_id)
-                        ack_ids.extend(coalesced_ack_ids_by_latest.get(event_id, ()))
+                        ack_ids_by_stream.setdefault(
+                            parsed_event.source_stream, []
+                        ).append(event_id)
+                        ack_ids_by_stream[parsed_event.source_stream].extend(
+                            coalesced_ack_ids_by_latest.get(event_id, ())
+                        )
                         if applied:
                             events_for_publish.append(parsed_event)
                     except Exception as e:
@@ -372,8 +405,12 @@ class StreamSubscriber:
                         workspace_id=parsed_event.workspace_id,
                     )
                     processed += 1
-                    ack_ids.append(event_id)
-                    ack_ids.extend(coalesced_ack_ids_by_latest.get(event_id, ()))
+                    ack_ids_by_stream.setdefault(parsed_event.source_stream, []).append(
+                        event_id
+                    )
+                    ack_ids_by_stream[parsed_event.source_stream].extend(
+                        coalesced_ack_ids_by_latest.get(event_id, ())
+                    )
                     if applied:
                         events_for_publish.append(parsed_event)
                 except Exception as e:
@@ -382,14 +419,14 @@ class StreamSubscriber:
 
         # ACK only successfully processed events.
         # Failed events stay pending and can be retried/reclaimed later.
-        if ack_ids:
+        for stream_name, ack_ids in ack_ids_by_stream.items():
+            if not ack_ids:
+                continue
             try:
                 unique_ack_ids = list(dict.fromkeys(ack_ids))
-                await self._redis.xack(
-                    self._config.stream, self._config.group, *unique_ack_ids
-                )
+                await self._redis.xack(stream_name, self._config.group, *unique_ack_ids)
             except Exception as e:
-                logger.warning(f"Error ACKing events: {e}")
+                logger.warning("Error ACKing events from %s: %s", stream_name, e)
 
         # SSE publish is best-effort and intentionally after ACK so ingest path
         # isn't blocked on realtime fan-out to browser subscribers.
@@ -409,8 +446,9 @@ class StreamSubscriber:
                 processed,
                 errors,
                 discard_summary.total,
-                len(ack_ids),
-                len(event_ids) - len(ack_ids),
+                sum(len(ids) for ids in ack_ids_by_stream.values()),
+                sum(len(ids) for ids in event_ids_by_stream.values())
+                - sum(len(ids) for ids in ack_ids_by_stream.values()),
             )
 
         return processed
@@ -425,7 +463,10 @@ class StreamSubscriber:
             yield
 
     def _parse_events(
-        self, events: list[tuple[str, dict[str, object]]]
+        self,
+        events: list[
+            tuple[str, str, dict[str, object]] | tuple[str, dict[str, object]]
+        ],
     ) -> tuple[list[_ParsedEvent], _ParseDiscardSummary]:
         parsed_events: list[_ParsedEvent] = []
         invalid_events: list[_InvalidEventRecord] = []
@@ -433,7 +474,12 @@ class StreamSubscriber:
         invalid_payload = 0
         unsupported_type = 0
 
-        for event_id, data in events:
+        for raw_event in events:
+            if len(raw_event) == 3:
+                source_stream, event_id, data = raw_event
+            else:
+                event_id, data = raw_event
+                source_stream = self._config.stream or status_events_stream_key()
             try:
                 stream_event = StatusStreamEvent.model_validate(data)
             except ValidationError as exc:
@@ -442,6 +488,7 @@ class StreamSubscriber:
                 )
                 invalid_events.append(
                     _InvalidEventRecord(
+                        source_stream=source_stream,
                         event_id=event_id,
                         reason="invalid_envelope",
                         raw=data,
@@ -473,6 +520,7 @@ class StreamSubscriber:
                 )
                 invalid_events.append(
                     _InvalidEventRecord(
+                        source_stream=source_stream,
                         event_id=event_id,
                         reason="invalid_payload",
                         raw=data,
@@ -493,6 +541,7 @@ class StreamSubscriber:
                 )
                 invalid_events.append(
                     _InvalidEventRecord(
+                        source_stream=source_stream,
                         event_id=event_id,
                         reason="unsupported_type",
                         raw=data,
@@ -506,6 +555,7 @@ class StreamSubscriber:
 
             parsed_events.append(
                 _ParsedEvent(
+                    source_stream=source_stream,
                     event_id=event_id,
                     workspace_id=stream_event.workspace_id,
                     event_type=stream_event.type,
@@ -527,12 +577,12 @@ class StreamSubscriber:
     async def _archive_invalid_events(
         self,
         summary: _ParseDiscardSummary,
-    ) -> list[str]:
+    ) -> list[tuple[str, str]]:
         """Write malformed events to invalid stream and ACK only successful writes."""
         if not summary.invalid_events:
             return []
 
-        ack_ids: list[str] = []
+        ack_ids: list[tuple[str, str]] = []
         for invalid in summary.invalid_events:
             payload: dict[FieldT, EncodableT] = {
                 "event_id": invalid.event_id,
@@ -549,27 +599,29 @@ class StreamSubscriber:
                 payload["event_type"] = event_type
 
             try:
+                invalid_stream = self._invalid_events_stream_for(invalid.raw)
                 if self._config.invalid_events_stream_maxlen > 0:
                     await self._redis.xadd(
-                        self._config.invalid_events_stream,
+                        invalid_stream,
                         payload,
                         maxlen=self._config.invalid_events_stream_maxlen,
                         approximate=True,
                     )
                 else:
-                    await self._redis.xadd(self._config.invalid_events_stream, payload)
-                ack_ids.append(invalid.event_id)
+                    await self._redis.xadd(invalid_stream, payload)
+                ack_ids.append((invalid.source_stream, invalid.event_id))
             except TypeError:
                 # Compatibility fallback for redis variants without approximate trim.
+                invalid_stream = self._invalid_events_stream_for(invalid.raw)
                 if self._config.invalid_events_stream_maxlen > 0:
                     await self._redis.xadd(
-                        self._config.invalid_events_stream,
+                        invalid_stream,
                         payload,
                         maxlen=self._config.invalid_events_stream_maxlen,
                     )
                 else:
-                    await self._redis.xadd(self._config.invalid_events_stream, payload)
-                ack_ids.append(invalid.event_id)
+                    await self._redis.xadd(invalid_stream, payload)
+                ack_ids.append((invalid.source_stream, invalid.event_id))
             except Exception as exc:
                 logger.warning(
                     "Failed to archive invalid stream event %s: %s",
@@ -690,28 +742,66 @@ class StreamSubscriber:
             logger.debug(f"Error publishing event: {e}")
 
     async def _ensure_consumer_group(self) -> bool:
-        """Create consumer group if it doesn't exist."""
-        if self._group_created:
-            return True
-
-        try:
-            await self._redis.xgroup_create(
-                self._config.stream,
-                self._config.group,
-                id="0",  # Start from beginning of stream
-                mkstream=True,
-            )
-            logger.debug(f"Created consumer group '{self._config.group}'")
-            self._group_created = True
-            return True
-
-        except Exception as e:
-            # BUSYGROUP means group already exists - that's fine
-            if "BUSYGROUP" in str(e):
-                self._group_created = True
-                return True
-            logger.warning(f"Consumer group creation issue: {e}")
+        streams = await self._get_active_streams()
+        if not streams:
             return False
+        return await self._ensure_consumer_groups(streams)
+
+    async def _ensure_consumer_groups(self, streams: list[str]) -> bool:
+        """Create consumer group for all active streams if it doesn't exist."""
+        if not streams:
+            return False
+
+        all_ready = True
+        for stream in streams:
+            if stream in self._group_created_streams:
+                continue
+            try:
+                await self._redis.xgroup_create(
+                    stream,
+                    self._config.group,
+                    id="0",
+                    mkstream=True,
+                )
+                logger.debug(
+                    "Created consumer group '%s' for %s",
+                    self._config.group,
+                    stream,
+                )
+                self._group_created_streams.add(stream)
+            except Exception as e:
+                if "BUSYGROUP" in str(e):
+                    self._group_created_streams.add(stream)
+                    continue
+                logger.warning("Consumer group creation issue for %s: %s", stream, e)
+                all_ready = False
+
+        self._group_created = bool(self._group_created_streams)
+        return all_ready or bool(self._group_created_streams)
+
+    async def _get_active_streams(self) -> list[str]:
+        if self._config.stream_pattern:
+            streams: set[str] = set()
+            async for raw_key in self._redis.scan_iter(
+                match=self._config.stream_pattern
+            ):
+                stream_name = (
+                    raw_key.decode() if isinstance(raw_key, bytes) else str(raw_key)
+                )
+                if stream_name.endswith(":invalid"):
+                    continue
+                streams.add(stream_name)
+            if self._config.stream:
+                streams.add(self._config.stream)
+            return sorted(streams)
+        if self._config.stream:
+            return [self._config.stream]
+        return []
+
+    def _invalid_events_stream_for(self, raw: dict[str, object]) -> str:
+        if self._config.invalid_events_stream:
+            return self._config.invalid_events_stream
+        return f"{self._source_stream_for_invalid_event(raw)}:invalid"
 
     def _decode_event_data(
         self,
@@ -727,11 +817,12 @@ class StreamSubscriber:
 
     def _add_stream_events(
         self,
+        stream_name: str,
         stream_events: list[tuple[object, dict[object, object]]],
         *,
         seen_event_ids: set[str],
-        event_ids: list[str],
-        events: list[tuple[str, dict[str, object]]],
+        event_ids_by_stream: dict[str, list[str]],
+        events: list[tuple[str, str, dict[str, object]]],
     ) -> None:
         """Decode and append unique stream events while preserving input order."""
         for raw_event_id, raw_event_data in stream_events:
@@ -743,5 +834,7 @@ class StreamSubscriber:
             if event_id in seen_event_ids:
                 continue
             seen_event_ids.add(event_id)
-            event_ids.append(event_id)
-            events.append((event_id, self._decode_event_data(raw_event_data)))
+            event_ids_by_stream.setdefault(stream_name, []).append(event_id)
+            events.append(
+                (stream_name, event_id, self._decode_event_data(raw_event_data))
+            )

@@ -52,6 +52,7 @@ from shared.keys.streams import (
     api_requests_stream_key,
     artifact_events_stream_key,
     status_events_pubsub_channel,
+    status_events_stream_pattern,
     status_events_stream_key,
 )
 from shared.keys.workers import (
@@ -116,6 +117,7 @@ __all__ = [
     "ARTIFACT_EVENTS_STREAM",
     "EVENTS_PUBSUB_CHANNEL",
     "status_events_stream_key",
+    "status_events_stream_pattern",
     "api_requests_stream_key",
     "artifact_events_stream_key",
     "status_events_pubsub_channel",

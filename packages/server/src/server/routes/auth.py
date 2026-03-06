@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
+from shared.keys import DEFAULT_WORKSPACE_ID, normalize_workspace_id
 
 from server.auth import require_api_key
 from server.config import get_settings
@@ -61,7 +62,10 @@ async def auth_verify(
 
 
 @router.post("/session/default", response_model=AuthVerifyResponse)
-async def create_default_cloud_session(response: Response) -> AuthVerifyResponse:
+async def create_default_cloud_session(
+    response: Response,
+    workspace_id: str | None = None,
+) -> AuthVerifyResponse:
     settings = get_settings()
     if not settings.is_cloud_runtime:
         raise HTTPException(status_code=404, detail="Not available in self-hosted mode")
@@ -75,6 +79,13 @@ async def create_default_cloud_session(response: Response) -> AuthVerifyResponse
             status_code=403, detail="Default runtime session is disabled"
         )
 
+    normalized_workspace_id = normalize_workspace_id(workspace_id)
+    if normalized_workspace_id == DEFAULT_WORKSPACE_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_id is required for default cloud sessions",
+        )
+
     expires_at = datetime.now(UTC) + timedelta(
         seconds=settings.runtime_session_ttl_seconds
     )
@@ -82,7 +93,7 @@ async def create_default_cloud_session(response: Response) -> AuthVerifyResponse
         "iss": settings.runtime_token_issuer,
         "aud": settings.runtime_token_audience,
         "sub": settings.runtime_default_subject,
-        "workspace_id": settings.normalized_workspace_id,
+        "workspace_id": normalized_workspace_id,
         "email": settings.runtime_default_email,
         "name": settings.runtime_default_name,
         "exp": int(expires_at.timestamp()),
@@ -101,7 +112,7 @@ async def create_default_cloud_session(response: Response) -> AuthVerifyResponse
     return AuthVerifyResponse(
         ok=True,
         scope=AuthVerifyScopeResponse(
-            workspace_id=settings.normalized_workspace_id,
+            workspace_id=normalized_workspace_id,
             mode=settings.runtime_mode.value,
             subject=settings.runtime_default_subject,
             email=settings.runtime_default_email,

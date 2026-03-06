@@ -13,7 +13,6 @@ UpNext is configured via environment variables with the `UPNEXT_` prefix. Some s
 | `UPNEXT_REDIS_URL` | — | Redis connection URL (required for workers and real-time server streams) |
 | `UPNEXT_URL` | `http://localhost:8000` | UpNext server URL (for dashboard reporting) |
 | `UPNEXT_API_KEY` | — | Static bearer token for self-hosted server authentication |
-| `UPNEXT_WORKSPACE_ID` | `local` | Workspace namespace for runtime Redis state |
 | `UPNEXT_DEBUG` | `false` | Enable debug mode |
 | `UPNEXT_ENV` | `development` | Environment name (`development`/`dev` or `production`/`prod`) |
 
@@ -28,7 +27,6 @@ Backend-first: set `UPNEXT_BACKEND` explicitly when starting the server.
 | `UPNEXT_BACKEND` | `redis` | Server persistence backend: `redis`, `sqlite`, or `postgres` |
 | `UPNEXT_DATABASE_URL` | — | SQL connection URL used only when `UPNEXT_BACKEND=sqlite` or `postgres` |
 | `UPNEXT_AUTH_ENABLED` | `false` | Enable the self-hosted bearer-token gate |
-| `UPNEXT_WORKSPACE_ID` | `local` | Workspace id used by this runtime instance |
 | `UPNEXT_CLEANUP_RETENTION_HOURS` | backend-dependent | Job/artifact cleanup retention window in hours |
 
 ### Persistence backend behavior

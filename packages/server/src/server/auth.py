@@ -4,6 +4,7 @@ import logging
 from secrets import compare_digest
 
 from fastapi import Depends, HTTPException, Request
+from shared.keys import DEFAULT_WORKSPACE_ID
 
 from server.config import get_settings
 from server.runtime_scope import AuthScope, RuntimeModes
@@ -21,16 +22,14 @@ def _self_hosted_scope(
     *,
     subject: str | None,
 ) -> AuthScope:
-    settings = get_settings()
     return AuthScope(
-        workspace_id=settings.normalized_workspace_id,
+        workspace_id=DEFAULT_WORKSPACE_ID,
         mode=RuntimeModes.SELF_HOSTED,
         subject=subject,
     )
 
 
 def _cloud_scope_from_claims(claims: dict[str, object]) -> AuthScope:
-    settings = get_settings()
     workspace_id = claims.get("workspace_id")
     subject = claims.get("sub")
     email = claims.get("email")
@@ -39,11 +38,6 @@ def _cloud_scope_from_claims(claims: dict[str, object]) -> AuthScope:
     if not isinstance(workspace_id, str) or not workspace_id:
         raise HTTPException(
             status_code=401, detail="Runtime token missing workspace_id"
-        )
-    if workspace_id != settings.normalized_workspace_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Runtime token workspace_id does not match this runtime",
         )
     if subject is not None and not isinstance(subject, str):
         raise HTTPException(status_code=401, detail="Runtime token has invalid subject")

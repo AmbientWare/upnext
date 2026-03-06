@@ -20,6 +20,10 @@ export function LoginPage({
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const defaultWorkspaceId =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("workspace_id")?.trim() || ""
+      : "";
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -42,10 +46,14 @@ export function LoginPage({
   };
 
   const handleCloudContinue = async () => {
+    if (!defaultWorkspaceId) {
+      setError("Missing workspace_id for runtime session");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await createDefaultRuntimeSession();
+      await createDefaultRuntimeSession(defaultWorkspaceId);
       await onCloudAuthenticated?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create runtime session");
@@ -90,6 +98,11 @@ export function LoginPage({
             >
               {loading ? "Connecting..." : "Continue"}
             </Button>
+            {!defaultWorkspaceId ? (
+              <p className="text-sm text-muted-foreground">
+                Open the runtime with a workspace_id query parameter.
+              </p>
+            ) : null}
             {!defaultSessionAvailable ? (
               <p className="text-sm text-muted-foreground">
                 Default runtime sessions are disabled for this environment.

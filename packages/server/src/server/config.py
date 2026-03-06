@@ -9,10 +9,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared._version import __version__
 from shared.keys import (
-    DEFAULT_WORKSPACE_ID,
-    normalize_workspace_id,
-    status_events_pubsub_channel,
-    status_events_stream_key,
+    status_events_stream_pattern,
 )
 
 from server.backends.types import PersistenceBackends
@@ -88,7 +85,6 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     api_key: str | None = None
     runtime_mode: RuntimeModes = RuntimeModes.SELF_HOSTED
-    workspace_id: str = DEFAULT_WORKSPACE_ID
     runtime_token_secret: str | None = None
     runtime_token_issuer: str = "upnext-saas"
     runtime_token_audience: str = "upnext-runtime"
@@ -222,22 +218,8 @@ class Settings(BaseSettings):
         return self.runtime_mode == RuntimeModes.SELF_HOSTED
 
     @property
-    def normalized_workspace_id(self) -> str:
-        return normalize_workspace_id(self.workspace_id)
-
-    @property
-    def status_events_stream(self) -> str:
-        return status_events_stream_key(workspace_id=self.normalized_workspace_id)
-
-    @property
-    def status_events_pubsub_channel(self) -> str:
-        return status_events_pubsub_channel(workspace_id=self.normalized_workspace_id)
-
-    @property
-    def effective_invalid_events_stream(self) -> str:
-        if self.event_subscriber_invalid_stream:
-            return self.event_subscriber_invalid_stream
-        return f"{self.status_events_stream}:invalid"
+    def status_events_stream_pattern(self) -> str:
+        return status_events_stream_pattern()
 
     @property
     def allow_runtime_default_session(self) -> bool:
@@ -250,14 +232,6 @@ class Settings(BaseSettings):
             # Redis defaults to shorter 6 hour, 7 days for SQL backends
             self.cleanup_retention_hours = (
                 6 if self.backend == PersistenceBackends.REDIS else 7 * 24
-            )
-        if (
-            self.is_cloud_runtime
-            and self.normalized_workspace_id == DEFAULT_WORKSPACE_ID
-        ):
-            raise ValueError(
-                "UPNEXT_WORKSPACE_ID must be set to a non-local value when "
-                "UPNEXT_RUNTIME_MODE=cloud_runtime"
             )
 
 
