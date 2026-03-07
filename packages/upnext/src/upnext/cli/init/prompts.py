@@ -11,9 +11,11 @@ from typing import Any
 import typer
 
 from upnext.cli._console import error, info, nl
+from upnext.cli.init.discovery import DiscoveredApi
 from upnext.cli.init.view import InitView
 
 API_CONFIG_FIELDS = (
+    "port",
     "domain",
     "replicas",
     "cpu_request",
@@ -100,8 +102,10 @@ def prompt_optional_value(label: str) -> str | None:
     return value or None
 
 
-def build_api_config() -> dict[str, str | None]:
-    return {field: None for field in API_CONFIG_FIELDS}
+def build_api_config(discovered: DiscoveredApi) -> dict[str, Any]:
+    config: dict[str, Any] = {field: None for field in API_CONFIG_FIELDS}
+    config["port"] = discovered.port
+    return config
 
 
 def build_worker_config() -> dict[str, str | None]:
@@ -109,15 +113,15 @@ def build_worker_config() -> dict[str, str | None]:
 
 
 def configure_advanced_features(
-    api_names: list[str],
+    discovered_apis: list[DiscoveredApi],
     worker_names: list[str],
     *,
     view: InitView | None = None,
-) -> tuple[dict[str, dict[str, str | None]], dict[str, dict[str, str | None]]]:
-    apis = {name: build_api_config() for name in api_names}
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str | None]]]:
+    apis = {api.name: build_api_config(api) for api in discovered_apis}
     workers = {name: build_worker_config() for name in worker_names}
 
-    if not api_names and not worker_names:
+    if not discovered_apis and not worker_names:
         return apis, workers
 
     if view is not None:
@@ -129,14 +133,14 @@ def configure_advanced_features(
 
     nl()
 
-    for name in api_names:
-        info(f"Configuring API '{name}'")
-        apis[name]["domain"] = prompt_optional_value("  Domain")
-        apis[name]["replicas"] = prompt_optional_value("  Replicas")
-        apis[name]["cpu_request"] = prompt_optional_value("  CPU request")
-        apis[name]["cpu_limit"] = prompt_optional_value("  CPU limit")
-        apis[name]["memory_request"] = prompt_optional_value("  Memory request")
-        apis[name]["memory_limit"] = prompt_optional_value("  Memory limit")
+    for api in discovered_apis:
+        info(f"Configuring API '{api.name}'")
+        apis[api.name]["domain"] = prompt_optional_value("  Domain")
+        apis[api.name]["replicas"] = prompt_optional_value("  Replicas")
+        apis[api.name]["cpu_request"] = prompt_optional_value("  CPU request")
+        apis[api.name]["cpu_limit"] = prompt_optional_value("  CPU limit")
+        apis[api.name]["memory_request"] = prompt_optional_value("  Memory request")
+        apis[api.name]["memory_limit"] = prompt_optional_value("  Memory limit")
 
     for name in worker_names:
         info(f"Configuring worker '{name}'")

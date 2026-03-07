@@ -59,6 +59,11 @@ def render_yaml_lines(value: Any, *, indent: int = 0) -> list[str]:
     return [f"{prefix}{render_scalar(value)}"]
 
 
+def _strip_none(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove keys with None values for cleaner YAML output."""
+    return {k: v for k, v in config.items() if v is not None}
+
+
 def build_config_data(
     *,
     entrypoint_path: Path,
@@ -66,8 +71,8 @@ def build_config_data(
     repo_root: Path,
     python_version: str,
     linux_packages: list[str],
-    api_configs: dict[str, dict[str, str | None]],
-    worker_configs: dict[str, dict[str, str | None]],
+    api_configs: dict[str, dict[str, Any]],
+    worker_configs: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         "version": 1,
@@ -77,8 +82,8 @@ def build_config_data(
             "python_version": python_version,
             "linux_packages": linux_packages,
         },
-        "apis": api_configs,
-        "workers": worker_configs,
+        "apis": {name: _strip_none(cfg) for name, cfg in api_configs.items()},
+        "workers": {name: _strip_none(cfg) for name, cfg in worker_configs.items()},
     }
 
 

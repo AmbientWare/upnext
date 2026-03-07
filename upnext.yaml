@@ -8,6 +8,7 @@ deploy:
   linux_packages: []
 apis:
   example-api:
+    port: 8001
     domain: null
     replicas: null
     cpu_request: null

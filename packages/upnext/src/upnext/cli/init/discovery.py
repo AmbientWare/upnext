@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -10,9 +11,15 @@ from upnext.cli._console import warning
 from upnext.cli._loader import discover_objects
 
 
-def discover_component_names(
+@dataclass(frozen=True)
+class DiscoveredApi:
+    name: str
+    port: int
+
+
+def discover_components(
     entrypoint_path: Path,
-) -> tuple[list[str], list[str], bool]:
+) -> tuple[list[DiscoveredApi], list[str], bool]:
     try:
         apis, workers = discover_objects([str(entrypoint_path)])
     except typer.Exit as exc:
@@ -28,11 +35,11 @@ def discover_component_names(
         )
         return [], [], False
 
-    api_names = [api.name for api in apis]
+    discovered_apis = [DiscoveredApi(name=api.name, port=api.port) for api in apis]
     worker_names = [worker.name for worker in workers]
-    if not api_names and not worker_names:
+    if not discovered_apis and not worker_names:
         warning(
             "No Api or Worker objects were discovered in the entrypoint. "
             "Config will still be written."
         )
-    return api_names, worker_names, True
+    return discovered_apis, worker_names, True

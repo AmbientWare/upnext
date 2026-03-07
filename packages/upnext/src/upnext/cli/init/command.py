@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from upnext.cli._console import error, error_panel, nl
-from upnext.cli.init.discovery import discover_component_names
+from upnext.cli.init.discovery import discover_components
 from upnext.cli.init.paths import (
     relative_to_root,
     resolve_pyproject,
@@ -90,9 +90,10 @@ def init(
     )
     resolved_linux_packages = resolve_linux_packages(linux_package)
     nl()
-    api_names, worker_names, discovery_succeeded = discover_component_names(
+    discovered_apis, worker_names, discovery_succeeded = discover_components(
         entrypoint_path
     )
+    api_names = [api.name for api in discovered_apis]
     view.show_build_configuration(
         python_version=resolved_python_version,
         linux_packages=resolved_linux_packages,
@@ -103,7 +104,7 @@ def init(
         discovery_succeeded=discovery_succeeded,
     )
     api_configs, worker_configs = configure_advanced_features(
-        api_names,
+        discovered_apis,
         worker_names,
         view=view,
     )
