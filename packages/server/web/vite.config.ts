@@ -4,6 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import path from "path";
 
+const apiTarget = process.env.VITE_API_TARGET ?? "http://localhost:8080";
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [tanstackRouter({ quoteStyle: "double" }), react(), tailwindcss()],
@@ -63,11 +65,11 @@ export default defineConfig({
   server: {
     proxy: {
       "/api/": {
-        target: "http://localhost:8080",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/health": {
-        target: "http://localhost:8080",
+        target: apiTarget,
         changeOrigin: true,
       },
     },

@@ -1,6 +1,10 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
-import { Activity, LayoutDashboard, Code2, Lock, Server, Globe } from "lucide-react";
+import { Activity, LayoutDashboard, Code2, Lock, Server, Globe, ArrowLeft } from "lucide-react";
+
+interface SidebarProps {
+  cloudAppUrl?: string | null;
+}
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -11,19 +15,31 @@ const navItems = [
   { label: "Secrets", href: "/secrets", icon: Lock },
 ];
 
-export function Sidebar() {
+export function Sidebar({ cloudAppUrl }: SidebarProps) {
   const router = useRouterState();
   const currentPath = router.location.pathname;
 
   return (
     <aside className="w-48 bg-background border-r border-border flex flex-col">
-      {/* Logo */}
+      {/* Logo / Back to Workspaces */}
       <div className="h-14 flex items-center gap-2 px-4 border-b border-border">
-        <img src="/upnext-logo.png" alt="UpNext" className="size-7" />
-        <span className="text-base font-bold inline-flex">
-          <span className="text-upnext">Up</span>
-          <span className="text-foreground">Next</span>
-        </span>
+        {cloudAppUrl ? (
+          <a
+            href={`${cloudAppUrl}/workspaces`}
+            className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Workspaces
+          </a>
+        ) : (
+          <>
+            <img src="/upnext-logo.png" alt="UpNext" className="size-7" />
+            <span className="text-base font-bold inline-flex">
+              <span className="text-upnext">Up</span>
+              <span className="text-foreground">Next</span>
+            </span>
+          </>
+        )}
       </div>
 
       {/* Navigation */}

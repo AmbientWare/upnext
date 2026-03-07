@@ -2,14 +2,15 @@
 
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from shared.keys import DEFAULT_WORKSPACE_ID, normalize_workspace_id
 
 from server.auth import require_api_key
 from server.config import get_settings
 from server.runtime_scope import AuthScope
-from server.runtime_tokens import encode_runtime_token
+from server.runtime_tokens import RuntimeTokenError, decode_runtime_token, encode_runtime_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -26,6 +27,7 @@ class AuthVerifyScopeResponse(BaseModel):
     subject: str | None
     email: str | None
     name: str | None
+    picture: str | None
 
 
 class AuthVerifyResponse(BaseModel):
@@ -57,6 +59,7 @@ async def auth_verify(
             subject=scope.subject,
             email=scope.email,
             name=scope.name,
+            picture=scope.picture,
         ),
     )
 
@@ -119,6 +122,45 @@ async def create_default_cloud_session(
             name=settings.runtime_default_name,
         ),
     )
+
+
+@router.get("/session/exchange")
+async def exchange_token_for_session(
+    token: str = Query(...),
+    redirect_uri: str = Query(default="/"),
+) -> RedirectResponse:
+    """Validate a JWT from the query string, set an HttpOnly cookie, and redirect."""
+    settings = get_settings()
+    if not settings.is_cloud_runtime:
+        raise HTTPException(status_code=404, detail="Not available in self-hosted mode")
+    if not settings.runtime_token_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="Cloud runtime token secret is not configured",
+        )
+
+    try:
+        decode_runtime_token(
+            token,
+            secret=settings.runtime_token_secret,
+            expected_issuer=settings.runtime_token_issuer,
+            expected_audience=settings.runtime_token_audience,
+        )
+    except RuntimeTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    response = RedirectResponse(url=redirect_uri, status_code=302)
+    response.set_cookie(
+        key=settings.runtime_session_cookie_name,
+        value=token,
+        max_age=settings.runtime_session_ttl_seconds,
+        httponly=True,
+        secure=settings.runtime_session_cookie_secure,
+        samesite=settings.runtime_session_cookie_samesite,
+        domain=settings.runtime_session_cookie_domain,
+        path="/",
+    )
+    return response
 
 
 @router.post("/session/logout")

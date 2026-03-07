@@ -5,9 +5,11 @@ import {
   type EventStreamSubscriptions,
 } from "@/components/providers/event-stream-provider";
 import { useAuth } from "@/components/providers/use-auth";
+import { clearStoredAuthToken, getStoredAuthToken } from "@/lib/auth";
 import { LoginPage } from "@/components/login-page";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { UserMenu } from "@/components/cloud/user-menu";
 import { Sidebar } from "@/components/layout";
 import { ErrorBoundary } from "@/components/shared";
 import { env } from "@/lib/env";
@@ -65,6 +67,11 @@ function RootLayout() {
   const runtimeMode = authStatus?.runtime_mode ?? "self_hosted";
   const defaultSessionAvailable = authStatus?.default_session_available ?? false;
 
+  // In cloud mode, clear any stale self-hosted localStorage token
+  if (runtimeMode === "cloud_runtime" && getStoredAuthToken()) {
+    clearStoredAuthToken();
+  }
+
   if (authLoading || (runtimeMode === "cloud_runtime" && verifyLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -78,6 +85,14 @@ function RootLayout() {
   }
 
   if (authEnabled && runtimeMode === "cloud_runtime" && verifyError) {
+    if (env.VITE_CLOUD_APP_URL) {
+      window.location.href = `${env.VITE_CLOUD_APP_URL}/sign-in`;
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+        </div>
+      );
+    }
     return (
       <LoginPage
         mode="cloud_runtime"
@@ -94,7 +109,7 @@ function RootLayout() {
   return (
     <TooltipProvider>
       <div className="app-root h-screen bg-background text-foreground flex overflow-hidden">
-        <Sidebar />
+        <Sidebar cloudAppUrl={runtimeMode === "cloud_runtime" ? env.VITE_CLOUD_APP_URL : null} />
 
         <div className="flex-1 flex flex-col overflow-hidden">
           <header className="h-14 border-b border-border flex items-center px-6 shrink-0">
@@ -109,25 +124,20 @@ function RootLayout() {
             {authEnabled &&
             runtimeMode === "cloud_runtime" &&
             verifiedSession?.scope ? (
-              <div className="ml-auto flex items-center gap-3">
-                <div className="text-right text-sm">
-                  <div className="font-medium text-foreground">
-                    {verifiedSession.scope.name ?? verifiedSession.scope.subject ?? "User"}
-                  </div>
-                  <div className="text-muted-foreground">
-                    {verifiedSession.scope.workspace_id}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={async () => {
+              <div className="ml-auto">
+                <UserMenu
+                  name={verifiedSession.scope.name ?? verifiedSession.scope.subject ?? "User"}
+                  avatarUrl={verifiedSession.scope.picture}
+                  onSignOut={async () => {
                     await clearRuntimeSession();
-                    await refetchVerify();
+                    clearStoredAuthToken();
+                    if (env.VITE_CLOUD_APP_URL) {
+                      window.location.href = `${env.VITE_CLOUD_APP_URL}/sign-out`;
+                    } else {
+                      await refetchVerify();
+                    }
                   }}
-                >
-                  Sign out
-                </Button>
+                />
               </div>
             ) : null}
           </header>

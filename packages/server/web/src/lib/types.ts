@@ -385,6 +385,7 @@ export interface AuthVerifyResponse {
     subject: string | null;
     email: string | null;
     name: string | null;
+    picture: string | null;
   };
 }
 

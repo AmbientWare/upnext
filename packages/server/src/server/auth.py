@@ -34,6 +34,7 @@ def _cloud_scope_from_claims(claims: dict[str, object]) -> AuthScope:
     subject = claims.get("sub")
     email = claims.get("email")
     name = claims.get("name")
+    picture = claims.get("picture")
 
     if not isinstance(workspace_id, str) or not workspace_id:
         raise HTTPException(
@@ -45,6 +46,8 @@ def _cloud_scope_from_claims(claims: dict[str, object]) -> AuthScope:
         raise HTTPException(status_code=401, detail="Runtime token has invalid email")
     if name is not None and not isinstance(name, str):
         raise HTTPException(status_code=401, detail="Runtime token has invalid name")
+    if picture is not None and not isinstance(picture, str):
+        picture = None
 
     return AuthScope(
         workspace_id=workspace_id,
@@ -52,6 +55,7 @@ def _cloud_scope_from_claims(claims: dict[str, object]) -> AuthScope:
         subject=subject,
         email=email,
         name=name,
+        picture=picture,
     )
 
 
