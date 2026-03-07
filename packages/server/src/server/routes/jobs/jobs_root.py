@@ -17,7 +17,7 @@ from shared.contracts import (
     JobTrendsResponse,
 )
 from shared.domain import CronSource, EventSource, Job, JobStatus, TaskSource
-from shared.keys import status_events_stream_key
+from shared.keys import status_events_stream_key, workspace_namespace_prefix
 
 from server.auth import require_auth_scope
 from server.backends.base import InvalidCursorError, Job as StoredJob, JobHourlyTrendRow
@@ -374,7 +374,8 @@ async def cancel_job_route(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    job, job_key = await load_job(redis_client, job_id)
+    key_prefix = workspace_namespace_prefix(scope.workspace_id)
+    job, job_key = await load_job(redis_client, job_id, key_prefix=key_prefix)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status.is_terminal():
@@ -388,9 +389,10 @@ async def cancel_job_route(
         redis_client,
         job,
         existing_job_key=job_key,
+        key_prefix=key_prefix,
     )
     if not cancel_result.cancelled:
-        current, _ = await load_job(redis_client, job_id)
+        current, _ = await load_job(redis_client, job_id, key_prefix=key_prefix)
         current_status = current.status.value if current else "terminal"
         raise HTTPException(
             status_code=409,
@@ -448,8 +450,9 @@ async def retry_job(
             ),
         )
 
+    key_prefix = workspace_namespace_prefix(scope.workspace_id)
     try:
-        await manual_retry(redis_client, job)
+        await manual_retry(redis_client, job, key_prefix=key_prefix)
 
     except DuplicateIdempotencyKeyError as exc:
         raise HTTPException(

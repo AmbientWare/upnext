@@ -451,6 +451,9 @@ class RedisQueue(BaseQueue):
     def _cancel_marker_key(self, job_id: str) -> str:
         return shared_job_cancelled_key(job_id, key_prefix=self._key_prefix)
 
+    def _status_channel_key(self, job_id: str) -> str:
+        return job_status_channel(job_id, key_prefix=self._key_prefix)
+
     def _function_def_key(self, function: str) -> str:
         return function_definition_key(function, workspace_id=self._workspace_id)
 
@@ -1416,7 +1419,7 @@ class RedisQueue(BaseQueue):
         job_key = self._job_key(job)
         job_index_key = self._job_index_key(job.id)
         dedup_key = self._dedup_key(job.function)
-        pubsub_channel = job_status_channel(job.id)
+        pubsub_channel = self._status_channel_key(job.id)
 
         if self._finish_sha:
             await self._evalsha_with_reload(
@@ -1583,7 +1586,7 @@ class RedisQueue(BaseQueue):
         job_index_key = self._job_index_key(job.id)
         dedup_key = self._dedup_key(job.function)
         cancel_marker_key = self._cancel_marker_key(job.id)
-        pubsub_channel = job_status_channel(job.id)
+        pubsub_channel = self._status_channel_key(job.id)
 
         # Mark cancellation immediately so workers can skip already-prefetched jobs.
         # Use NX so concurrent cancels do not clobber each other's marker lifetime.
@@ -1947,7 +1950,7 @@ class RedisQueue(BaseQueue):
             return terminal_status
 
         pubsub = client.pubsub()
-        channel = job_status_channel(job_id)
+        channel = self._status_channel_key(job_id)
         await pubsub.subscribe(channel)
 
         try:

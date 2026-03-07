@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 from shared.domain.jobs import Job, JobStatus
 from shared.keys import (
     QUEUE_CONSUMER_GROUP,
+    QUEUE_KEY_PREFIX,
     function_dedup_key,
     function_scheduled_key,
     function_stream_key,
@@ -99,10 +100,15 @@ def _queue_redis(redis_client: Redis) -> _QueueRedisClient:
     return cast(_QueueRedisClient, redis_client)
 
 
-async def find_job_key_by_id(redis_client: Redis, job_id: str) -> str | None:
+async def find_job_key_by_id(
+    redis_client: Redis,
+    job_id: str,
+    *,
+    key_prefix: str = QUEUE_KEY_PREFIX,
+) -> str | None:
     """Find the canonical job payload key for a job ID."""
     redis = _queue_redis(redis_client)
-    index_key = job_index_key(job_id)
+    index_key = job_index_key(job_id, key_prefix=key_prefix)
     indexed_job_key = await redis.get(index_key)
     if indexed_job_key:
         resolved_job_key = _decode_text(indexed_job_key)
@@ -111,7 +117,7 @@ async def find_job_key_by_id(redis_client: Redis, job_id: str) -> str | None:
         await redis.delete(index_key)
 
     cursor = 0
-    match = job_match_pattern(job_id)
+    match = job_match_pattern(job_id, key_prefix=key_prefix)
     while True:
         cursor, keys = await redis.scan(cursor=cursor, match=match, count=100)
         for key in keys:
@@ -129,10 +135,15 @@ async def find_job_key_by_id(redis_client: Redis, job_id: str) -> str | None:
     return None
 
 
-async def load_job(redis_client: Redis, job_id: str) -> tuple[Job | None, str | None]:
+async def load_job(
+    redis_client: Redis,
+    job_id: str,
+    *,
+    key_prefix: str = QUEUE_KEY_PREFIX,
+) -> tuple[Job | None, str | None]:
     """Load a job from active queue storage."""
     redis = _queue_redis(redis_client)
-    resolved_job_key = await find_job_key_by_id(redis_client, job_id)
+    resolved_job_key = await find_job_key_by_id(redis_client, job_id, key_prefix=key_prefix)
     if resolved_job_key is None:
         return None, None
 
@@ -166,16 +177,17 @@ async def cancel_job(
     job: Job,
     *,
     existing_job_key: str | None,
+    key_prefix: str = QUEUE_KEY_PREFIX,
 ) -> CancelMutationResult:
     """Cancel a queued/running job in queue storage and return deleted stream rows."""
     redis = _queue_redis(redis_client)
     settings = get_settings()
 
-    stream_key = function_stream_key(job.function)
-    scheduled_key = function_scheduled_key(job.function)
-    dedup_key = function_dedup_key(job.function)
-    index_key = job_index_key(job.id)
-    cancel_key = job_cancelled_key(job.id)
+    stream_key = function_stream_key(job.function, key_prefix=key_prefix)
+    scheduled_key = function_scheduled_key(job.function, key_prefix=key_prefix)
+    dedup_key = function_dedup_key(job.function, key_prefix=key_prefix)
+    index_key = job_index_key(job.id, key_prefix=key_prefix)
+    cancel_key = job_cancelled_key(job.id, key_prefix=key_prefix)
 
     job_ttl = max(1, settings.queue_job_ttl_seconds)
     marker_created = bool(
@@ -216,7 +228,7 @@ async def cancel_job(
     if job.key:
         await redis.srem(dedup_key, job.key)
 
-    await redis.publish(job_status_channel(job.id), JobStatus.CANCELLED.value)
+    await redis.publish(job_status_channel(job.id, key_prefix=key_prefix), JobStatus.CANCELLED.value)
     return CancelMutationResult(
         cancelled=True,
         deleted_stream_entries=deleted_from_stream,
@@ -237,7 +249,12 @@ async def _ensure_consumer_group(redis_client: Redis, stream_key: str) -> None:
             raise
 
 
-async def manual_retry(redis_client: Redis, job: Job) -> None:
+async def manual_retry(
+    redis_client: Redis,
+    job: Job,
+    *,
+    key_prefix: str = QUEUE_KEY_PREFIX,
+) -> None:
     """Requeue a failed/cancelled job for operator-initiated retry."""
     redis = _queue_redis(redis_client)
     if job.status not in {JobStatus.FAILED, JobStatus.CANCELLED}:
@@ -249,11 +266,11 @@ async def manual_retry(redis_client: Redis, job: Job) -> None:
 
     prepare_job_for_manual_retry(job)
 
-    stream_key = function_stream_key(job.function)
-    scheduled_key = function_scheduled_key(job.function)
-    dedup_key = function_dedup_key(job.function)
-    stored_job_key = job_key(job.function, job.id)
-    index_key = job_index_key(job.id)
+    stream_key = function_stream_key(job.function, key_prefix=key_prefix)
+    scheduled_key = function_scheduled_key(job.function, key_prefix=key_prefix)
+    dedup_key = function_dedup_key(job.function, key_prefix=key_prefix)
+    stored_job_key = job_key(job.function, job.id, key_prefix=key_prefix)
+    index_key = job_index_key(job.id, key_prefix=key_prefix)
 
     if job.key and await redis.sismember(dedup_key, job.key):
         raise DuplicateIdempotencyKeyError(job.key)
@@ -273,7 +290,7 @@ async def manual_retry(redis_client: Redis, job: Job) -> None:
             max(1, settings.queue_job_ttl_seconds),
             stored_job_key,
         )
-        pipe.delete(job_cancelled_key(job.id))
+        pipe.delete(job_cancelled_key(job.id, key_prefix=key_prefix))
         pipe.zrem(scheduled_key, job.id)
         if job.key:
             pipe.sadd(dedup_key, job.key)

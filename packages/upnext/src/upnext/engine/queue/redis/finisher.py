@@ -8,8 +8,6 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from shared.keys import job_status_channel
-
 from upnext.engine.queue.redis.constants import CompletedJob
 
 if TYPE_CHECKING:
@@ -130,7 +128,7 @@ class Finisher:
                         self._queue._job_key(job),
                         self._queue._job_index_key(job.id),
                         self._queue._dedup_key(job.function),
-                        job_status_channel(job.id),
+                        self._queue._status_channel_key(job.id),
                         self._queue._consumer_group,
                         msg_id or "",
                         job.to_json(),
@@ -155,7 +153,7 @@ class Finisher:
                     if job.key:
                         pipe.srem(self._queue._dedup_key(job.function), job.key)
                     pipe.publish(
-                        job_status_channel(job.id),
+                        self._queue._status_channel_key(job.id),
                         completed.status.value,
                     )
                 pipe.delete(self._queue._cancel_marker_key(job.id))
