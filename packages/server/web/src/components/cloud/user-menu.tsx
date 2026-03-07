@@ -1,4 +1,4 @@
-import { LogOut } from "lucide-react";
+import { LogOut, Settings } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -13,6 +14,7 @@ export interface UserMenuProps {
   name: string;
   avatarUrl?: string | null;
   onSignOut: () => void;
+  onSettings?: () => void;
 }
 
 function getInitials(name: string): string {
@@ -27,6 +29,7 @@ export function UserMenu({
   name,
   avatarUrl,
   onSignOut,
+  onSettings,
 }: UserMenuProps) {
   return (
     <DropdownMenu>
@@ -44,6 +47,15 @@ export function UserMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
+        {onSettings ? (
+          <>
+            <DropdownMenuItem onClick={onSettings}>
+              <Settings />
+              Settings
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         <DropdownMenuItem onClick={onSignOut}>
           <LogOut />
           Sign out

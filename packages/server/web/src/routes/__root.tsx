@@ -128,6 +128,9 @@ function RootLayout() {
                 <UserMenu
                   name={verifiedSession.scope.name ?? verifiedSession.scope.subject ?? "User"}
                   avatarUrl={verifiedSession.scope.picture}
+                  onSettings={env.VITE_CLOUD_APP_URL ? () => {
+                    window.location.href = `${env.VITE_CLOUD_APP_URL}/settings`;
+                  } : undefined}
                   onSignOut={async () => {
                     await clearRuntimeSession();
                     clearStoredAuthToken();
