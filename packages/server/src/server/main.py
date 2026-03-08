@@ -40,7 +40,6 @@ _REQUIRED_SQL_TABLES = {
     "job_history",
     "artifacts",
     "pending_artifacts",
-    "secrets",
 }
 
 

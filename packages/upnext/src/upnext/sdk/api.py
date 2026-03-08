@@ -22,9 +22,7 @@ from fastapi import APIRouter, FastAPI
 from shared.keys import API_INSTANCE_TTL, api_instance_key
 
 from upnext.config import get_settings
-from upnext.engine.backend_api import BackendAPI
 from upnext.sdk.middleware import ApiTrackingConfig, ApiTrackingMiddleware
-from upnext.sdk.secrets import fetch_and_inject_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +59,6 @@ class Api:
 
     # Redis URL for API request tracking (auto-detected from upnext_REDIS_URL)
     redis_url: str | None = field(default_factory=lambda: get_settings().redis_url)
-    secrets: list[str] = field(default_factory=list)
-
     # Signal handling (set to False when signals are handled at a higher level)
     handle_signals: bool = True
 
@@ -109,7 +105,7 @@ class Api:
         """Adopt an existing FastAPI app and manage it with UpNext.
 
         Additional keyword arguments are forwarded to ``Api`` construction
-        (for example ``host``, ``port``, ``redis_url``, ``secrets``).
+        (for example ``host``, ``port``, ``redis_url``).
         """
         api = cls(name=name or app.title or "upnext-api", **kwargs)
         api._app = app
@@ -444,14 +440,6 @@ class Api:
 
         # Include any pending routers before starting
         self._include_pending_routers()
-
-        # Fetch and inject secrets before starting the server
-        if self.secrets:
-            backend = BackendAPI()
-            try:
-                await fetch_and_inject_secrets(self.secrets, backend)
-            finally:
-                await backend.close()
 
         # Set up request tracking
         await self._setup_tracking()

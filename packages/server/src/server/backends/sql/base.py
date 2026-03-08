@@ -12,13 +12,11 @@ from server.backends.base import BaseBackend
 from server.backends.base.repositories import (
     BaseArtifactRepository,
     BaseJobRepository,
-    BaseSecretsRepository,
 )
 from server.backends.session_context import RepositorySession
 from server.backends.sql.shared.repositories import (
     PostgresArtifactRepository,
     PostgresJobRepository,
-    PostgresSecretsRepository,
 )
 from server.backends.sql.shared.session import Database as SqlDatabase
 
@@ -86,7 +84,6 @@ class BaseSqlBackend(BaseBackend):
                 raw_session=raw_session,
                 jobs=self.job_repository(raw_session),
                 artifacts=self.artifact_repository(raw_session),
-                secrets=self.secrets_repository(raw_session),
             )
 
     def job_repository(self, session: object) -> BaseJobRepository:
@@ -94,6 +91,3 @@ class BaseSqlBackend(BaseBackend):
 
     def artifact_repository(self, session: object) -> BaseArtifactRepository:
         return PostgresArtifactRepository(require_sql_session(session))
-
-    def secrets_repository(self, session: object) -> BaseSecretsRepository:
-        return PostgresSecretsRepository(require_sql_session(session))

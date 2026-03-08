@@ -458,27 +458,3 @@ export interface DashboardStats {
   stuck_active_jobs: StuckActiveJob[];
 }
 
-// =============================================================================
-// Secrets Schemas
-// =============================================================================
-
-export interface SecretInfo {
-  id: string;
-  name: string;
-  keys: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SecretDetail {
-  id: string;
-  name: string;
-  data: Record<string, string>;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SecretsListResponse {
-  secrets: SecretInfo[];
-  total: number;
-}

@@ -12,12 +12,10 @@ from server.backends.base import BaseBackend
 from server.backends.base.repositories import (
     BaseArtifactRepository,
     BaseJobRepository,
-    BaseSecretsRepository,
 )
 from server.backends.redis.repositories import (
     RedisArtifactRepository,
     RedisJobRepository,
-    RedisSecretsRepository,
 )
 from server.backends.session_context import RepositorySession
 from server.backends.types import PersistenceBackends
@@ -100,7 +98,6 @@ class RedisBackend(BaseBackend):
             raw_session=raw_session,
             jobs=self.job_repository(raw_session),
             artifacts=self.artifact_repository(raw_session),
-            secrets=self.secrets_repository(raw_session),
         )
 
     def job_repository(self, session: object) -> BaseJobRepository:
@@ -108,6 +105,3 @@ class RedisBackend(BaseBackend):
 
     def artifact_repository(self, session: object) -> BaseArtifactRepository:
         return RedisArtifactRepository(require_redis_client(session))
-
-    def secrets_repository(self, session: object) -> BaseSecretsRepository:
-        return RedisSecretsRepository(require_redis_client(session))

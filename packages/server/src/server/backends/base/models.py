@@ -69,13 +69,3 @@ class Job:
                 event_handler_name=self.event_handler_name,
             )
         return TaskJobSource()
-
-
-@dataclass
-class Secret:
-    id: str
-    workspace_id: str
-    name: str
-    encrypted_data: str
-    created_at: datetime
-    updated_at: datetime

@@ -74,7 +74,6 @@ class BackendService:
             raw_session=raw_session,
             jobs=backend.job_repository(raw_session),
             artifacts=backend.artifact_repository(raw_session),
-            secrets=backend.secrets_repository(raw_session),
         )
 
     @asynccontextmanager

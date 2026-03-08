@@ -83,14 +83,6 @@ from shared.contracts.metrics import (
     QueueMetricsResponse,
     QueueMetricsTotals,
 )
-from shared.contracts.secrets import (
-    CreateSecretRequest,
-    SecretDetailResponse,
-    SecretResponse,
-    SecretsListResponse,
-    SecretValuesResponse,
-    UpdateSecretRequest,
-)
 from shared.contracts.source import (
     CronJobSource,
     EventJobSource,
@@ -194,10 +186,4 @@ __all__ = [
     "WorkersListResponse",
     "WorkersSnapshotEvent",
     "WorkerStats",
-    "CreateSecretRequest",
-    "SecretDetailResponse",
-    "SecretResponse",
-    "SecretValuesResponse",
-    "SecretsListResponse",
-    "UpdateSecretRequest",
 ]

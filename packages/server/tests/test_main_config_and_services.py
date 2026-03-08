@@ -95,7 +95,6 @@ class _FakeDatabase:
             "job_history",
             "artifacts",
             "pending_artifacts",
-            "secrets",
         }
         return list(self.missing_tables)
 

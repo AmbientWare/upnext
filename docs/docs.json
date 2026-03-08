@@ -95,8 +95,7 @@
           {
             "group": "Server",
             "pages": [
-              "guides/authentication",
-              "guides/secrets"
+              "guides/authentication"
             ]
           }
         ]

@@ -26,7 +26,6 @@ from shared.domain import Job
 from shared.keys import worker_instance_key
 
 from upnext.config import get_settings
-from upnext.engine.backend_api import BackendAPI
 from upnext.engine.handlers import EventHandle, TaskHandle
 from upnext.engine.job_processor import JobProcessor
 from upnext.engine.queue import RedisQueue
@@ -43,7 +42,6 @@ from upnext.sdk._worker_connection import (
 )
 from upnext.sdk._worker_registration import WorkerRegistration
 from upnext.sdk.context import Context, set_current_context
-from upnext.sdk.secrets import fetch_and_inject_secrets
 from upnext.types import SyncExecutor
 
 logger = logging.getLogger(__name__)
@@ -97,7 +95,6 @@ class Worker:
     sync_executor: SyncExecutor = SyncExecutor.THREAD
     redis_url: str | None = None
     queue_config: WorkerQueueConfig | None = None
-    secrets: list[str] = field(default_factory=list)
     handle_signals: bool = True
     autodiscover_packages: list[str] = field(default_factory=list)
 
@@ -447,13 +444,6 @@ class Worker:
     async def start(self) -> None:
         """Start the worker: connect to Redis, seed crons, start processing."""
         worker_id = self.initialize(worker_id_prefix="worker")
-
-        if self.secrets:
-            backend = BackendAPI()
-            try:
-                await fetch_and_inject_secrets(self.secrets, backend)
-            finally:
-                await backend.close()
 
         catalog = self._reg.build_catalog()
 

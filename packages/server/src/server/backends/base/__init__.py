@@ -1,10 +1,9 @@
 from server.backends.base.backend import BaseBackend
 from server.backends.base.exceptions import InvalidCursorError
-from server.backends.base.models import Job, Secret
+from server.backends.base.models import Job
 from server.backends.base.repositories import (
     BaseArtifactRepository,
     BaseJobRepository,
-    BaseSecretsRepository,
 )
 from server.backends.base.repository_models import (
     ArtifactRecord,
@@ -19,11 +18,9 @@ from server.backends.base.utils import infer_artifact_metadata
 
 __all__ = [
     "Job",
-    "Secret",
     "BaseBackend",
     "BaseArtifactRepository",
     "BaseJobRepository",
-    "BaseSecretsRepository",
     "ArtifactRecord",
     "PendingArtifactRecord",
     "FunctionJobStats",

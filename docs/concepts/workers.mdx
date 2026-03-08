@@ -53,7 +53,6 @@ A worker manages:
 | `sync_executor` | `SyncExecutor` | `THREAD` | Executor for sync tasks: `THREAD` or `PROCESS` |
 | `redis_url` | `str` | `None` | Redis URL (falls back to `UPNEXT_REDIS_URL` env var) |
 | `queue_config` | `WorkerQueueConfig \| None` | `None` | Optional per-worker queue overrides (otherwise uses `UPNEXT_QUEUE_*`) |
-| `secrets` | `list[str]` | `[]` | Secret names to fetch on startup (requires server) |
 
 ## Queue tuning
 

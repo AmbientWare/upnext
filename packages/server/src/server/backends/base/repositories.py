@@ -9,7 +9,7 @@ from datetime import datetime
 from pydantic import TypeAdapter
 from shared.keys import DEFAULT_WORKSPACE_ID
 
-from server.backends.base.models import Job, Secret
+from server.backends.base.models import Job
 from server.backends.base.repository_models import (
     ArtifactRecord,
     FunctionJobStats,
@@ -21,7 +21,6 @@ from server.backends.base.repository_models import (
 )
 
 _JOB_ADAPTER: TypeAdapter[Job] = TypeAdapter(Job)
-_SECRET_ADAPTER: TypeAdapter[Secret] = TypeAdapter(Secret)
 _ARTIFACT_ADAPTER: TypeAdapter[ArtifactRecord] = TypeAdapter(ArtifactRecord)
 _PENDING_ARTIFACT_ADAPTER: TypeAdapter[PendingArtifactRecord] = TypeAdapter(
     PendingArtifactRecord
@@ -257,64 +256,3 @@ class BaseArtifactRepository(ABC):
     async def delete(
         self, artifact_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> bool: ...
-
-
-class BaseSecretsRepository(ABC):
-    @staticmethod
-    def _to_model(payload: object) -> Secret:
-        if isinstance(payload, Secret):
-            return payload
-        if not isinstance(payload, Mapping):
-            payload = {
-                "id": getattr(payload, "id"),
-                "workspace_id": getattr(payload, "workspace_id"),
-                "name": getattr(payload, "name"),
-                "encrypted_data": getattr(payload, "encrypted_data"),
-                "created_at": getattr(payload, "created_at"),
-                "updated_at": getattr(payload, "updated_at"),
-            }
-        return _SECRET_ADAPTER.validate_python(payload)
-
-    @abstractmethod
-    async def list_secrets(
-        self,
-        *,
-        workspace_id: str = DEFAULT_WORKSPACE_ID,
-    ) -> list[Secret]: ...
-
-    @abstractmethod
-    async def get_secret_by_name(
-        self, name: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
-    ) -> Secret | None: ...
-
-    @abstractmethod
-    async def get_secret_by_id(
-        self, secret_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
-    ) -> Secret | None: ...
-
-    @abstractmethod
-    async def create_secret(
-        self,
-        name: str,
-        data: dict[str, str],
-        *,
-        workspace_id: str = DEFAULT_WORKSPACE_ID,
-    ) -> Secret: ...
-
-    @abstractmethod
-    async def update_secret(
-        self,
-        secret_id: str,
-        *,
-        name: str | None = None,
-        data: dict[str, str] | None = None,
-        workspace_id: str = DEFAULT_WORKSPACE_ID,
-    ) -> Secret | None: ...
-
-    @abstractmethod
-    async def delete_secret(
-        self, secret_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
-    ) -> bool: ...
-
-    @abstractmethod
-    def decrypt_secret(self, secret: Secret) -> dict[str, str]: ...

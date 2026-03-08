@@ -137,6 +137,5 @@ describe("auth api", () => {
 describe("queryKeys", () => {
   it("produces stable runtime query keys", () => {
     expect(queryKeys.dashboard).toEqual(["dashboard"]);
-    expect(queryKeys.secret("secret-1")).toEqual(["secrets", "secret-1"]);
   });
 });

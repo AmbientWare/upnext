@@ -12,7 +12,6 @@ from server.routes.functions import router as functions_router
 from server.routes.health import router as health_router
 from server.routes.jobs import router as jobs_router
 from server.routes.metrics import router as metrics_router
-from server.routes.secrets import router as secrets_router
 from server.routes.workers import router as workers_router
 
 v1_public_router = APIRouter(prefix="/api/v1")
@@ -30,7 +29,6 @@ v1_router.include_router(functions_router)
 v1_router.include_router(dashboard_router)
 v1_router.include_router(metrics_router)
 v1_router.include_router(apis_router)
-v1_router.include_router(secrets_router)
 
 __all__ = [
     "v1_public_router",

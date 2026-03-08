@@ -4,7 +4,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from cryptography.fernet import Fernet
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared._version import __version__
@@ -18,32 +17,6 @@ from server.runtime_scope import RuntimeModes
 logger = logging.getLogger(__name__)
 
 _UPNEXT_HOME = Path.home() / ".upnext"
-_SECRET_KEY_FILE = _UPNEXT_HOME / "secret_key"
-_SECRET_KEY_FILE_MODE = 0o600
-
-
-def _get_or_create_secret_key() -> str:
-    """Read a persisted Fernet key from disk, or generate and save one."""
-    if _SECRET_KEY_FILE.exists():
-        try:
-            _SECRET_KEY_FILE.chmod(_SECRET_KEY_FILE_MODE)
-        except OSError:
-            logger.debug("Could not tighten secret key file permissions")
-        return _SECRET_KEY_FILE.read_text().strip()
-
-    _SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    key = Fernet.generate_key().decode()
-    _SECRET_KEY_FILE.write_text(key)
-    try:
-        _SECRET_KEY_FILE.chmod(_SECRET_KEY_FILE_MODE)
-    except OSError:
-        logger.debug("Could not set secret key file permissions")
-    logger.info("Generated new secret key at %s", _SECRET_KEY_FILE)
-    logger.warning(
-        "For production, set UPNEXT_SECRET_KEY to a secure random string. Fernet compatible."
-    )
-
-    return key
 
 
 class Environments(StrEnum):
@@ -97,10 +70,6 @@ class Settings(BaseSettings):
     runtime_default_subject: str = "default-user"
     runtime_default_email: str | None = "default@upnext.local"
     runtime_default_name: str | None = "Default User"
-
-    # Encryption key for secrets storage.
-    # Auto-generated and persisted to ~/.upnext/secret_key if not set via env.
-    secret_key: str = ""
 
     # Artifact storage
     artifact_max_upload_bytes: int = 256 * 1024 * 1024  # 256 MB
@@ -226,8 +195,6 @@ class Settings(BaseSettings):
         return self.runtime_default_session_enabled or self.is_development
 
     def model_post_init(self, _context: object) -> None:
-        if not self.secret_key:
-            self.secret_key = _get_or_create_secret_key()
         if self.cleanup_retention_hours is None:
             # Redis defaults to shorter 6 hour, 7 days for SQL backends
             self.cleanup_retention_hours = (

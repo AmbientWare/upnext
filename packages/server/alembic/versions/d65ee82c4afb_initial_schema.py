@@ -21,29 +21,6 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Create all tables."""
     op.create_table(
-        "secrets",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-        sa.Column("workspace_id", sa.String(255), nullable=False, server_default="local"),
-        sa.Column("name", sa.String(255), nullable=False),
-        sa.Column("encrypted_data", sa.Text, nullable=False),
-        sa.Index("ix_secrets_workspace_id", "workspace_id"),
-        sa.Index("ix_secrets_deployment_name", "workspace_id", "name", unique=True),
-    )
-
-    # Job tables
-    op.create_table(
         "job_history",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("workspace_id", sa.String(255), nullable=False, server_default="local"),
@@ -197,4 +174,3 @@ def downgrade() -> None:
     op.drop_table("pending_artifacts")
     op.drop_table("artifacts")
     op.drop_table("job_history")
-    op.drop_table("secrets")

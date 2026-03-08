@@ -8,7 +8,6 @@ from typing import Generic, TypeVar
 from server.backends.base.repositories import (
     BaseArtifactRepository,
     BaseJobRepository,
-    BaseSecretsRepository,
 )
 
 RawSessionT = TypeVar("RawSessionT")
@@ -19,7 +18,6 @@ class RepositorySession(Generic[RawSessionT]):
     raw_session: RawSessionT
     jobs: BaseJobRepository
     artifacts: BaseArtifactRepository
-    secrets: BaseSecretsRepository
 
     async def flush(self) -> None:
         flush = getattr(self.raw_session, "flush", None)

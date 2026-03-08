@@ -179,9 +179,6 @@ function getStreamSubscriptions(path: string): EventStreamSubscriptions {
   if (path.startsWith("/jobs")) {
     return { jobs: true, apis: false, apiEvents: false, workers: false };
   }
-  if (path.startsWith("/secrets")) {
-    return { jobs: false, apis: false, apiEvents: false, workers: false };
-  }
   return { jobs: false, apis: false, apiEvents: false, workers: false };
 }
 
@@ -192,6 +189,5 @@ function getPageTitle(path: string): string {
   if (path.startsWith("/apis")) return "APIs";
   if (path.startsWith("/functions")) return "Functions";
   if (path.startsWith("/jobs")) return "Jobs";
-  if (path.startsWith("/secrets")) return "Secrets";
   return "Dashboard";
 }

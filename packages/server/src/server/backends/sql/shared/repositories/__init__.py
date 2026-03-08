@@ -13,14 +13,10 @@ from server.backends.sql.shared.repositories.jobs_repository import (
     InvalidCursorError,
     PostgresJobRepository,
 )
-from server.backends.sql.shared.repositories.secrets_repository import (
-    PostgresSecretsRepository,
-)
 
 # Backward-compatible aliases for callers that used generic names.
 JobRepository = PostgresJobRepository
 ArtifactRepository = PostgresArtifactRepository
-SecretsRepository = PostgresSecretsRepository
 
 __all__ = [
     "PostgresArtifactRepository",
@@ -33,7 +29,5 @@ __all__ = [
     "JobRepository",
     "JobRecordCreate",
     "PendingArtifactRecord",
-    "PostgresSecretsRepository",
-    "SecretsRepository",
     "InvalidCursorError",
 ]

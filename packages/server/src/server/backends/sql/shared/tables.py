@@ -43,25 +43,6 @@ class Base(DeclarativeBase):
     )
 
 
-class SecretTable(Base):
-    """Named secrets containing encrypted key-value pairs."""
-
-    __tablename__ = "secrets"
-
-    workspace_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, default="local"
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    encrypted_data: Mapped[str] = mapped_column(Text, nullable=False)
-
-    __table_args__ = (
-        Index("ix_secrets_workspace_id", "workspace_id"),
-        Index("ix_secrets_deployment_name", "workspace_id", "name", unique=True),
-    )
-
-    def __repr__(self) -> str:
-        return f"<SecretTable(id={self.id!r}, name={self.name!r})>"
-
 
 class JobHistoryTable(Base):
     """
