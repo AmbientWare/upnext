@@ -10,15 +10,15 @@ apis:
   example-api:
     port: 8001
     domain: null
-    replicas: null
-    cpu_request: null
-    cpu_limit: null
-    memory_request: null
-    memory_limit: null
+    replicas: 2
+    cpu_request: null  # cores (e.g. 0.5, 1, 2)
+    cpu_limit: null    # cores
+    memory_request: null  # GB (e.g. 0.25, 1, 4)
+    memory_limit: null    # GB
 workers:
   example-worker:
-    replicas: null
-    cpu_request: null
-    cpu_limit: null
-    memory_request: null
-    memory_limit: null
+    replicas: null # default is 1
+    cpu_request: 1  # cores
+    cpu_limit: 4    # cores
+    memory_request: 1  # GB
+    memory_limit: 4    # GB
