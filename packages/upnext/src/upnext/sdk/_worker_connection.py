@@ -24,6 +24,7 @@ from shared.keys import (
     worker_events_stream_key,
     worker_definition_key,
     worker_instance_key,
+    workspace_namespace_prefix,
 )
 
 from upnext.engine.cron import calculate_next_cron_run
@@ -125,10 +126,11 @@ async def write_worker_definition(
     # Write function → component mappings so the queue can credit the right
     # pending counter when jobs are dispatched from any process.
     if registered_functions:
+        key_prefix = workspace_namespace_prefix(normalized_workspace_id)
         async with redis_client.pipeline(transaction=False) as pipe:
             for fn_key in registered_functions:
                 pipe.setex(
-                    function_component_key(fn_key),
+                    function_component_key(fn_key, key_prefix=key_prefix),
                     FUNCTION_DEF_TTL,
                     worker_name,
                 )
