@@ -87,6 +87,10 @@ class ApiTrackingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         latency_ms = (time.perf_counter() - start) * 1000
 
+        # Skip tracking for built-in runtime endpoints (health probes, etc.)
+        if request.url.path.startswith("/runtime/"):
+            return response
+
         try:
             await self._record(
                 method=request.method,

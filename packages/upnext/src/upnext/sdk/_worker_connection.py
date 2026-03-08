@@ -5,7 +5,6 @@ function definition publishing, and cron seeding from registration logic.
 """
 
 import asyncio
-import json
 import logging
 import time as time_module
 from datetime import UTC, datetime
@@ -17,7 +16,6 @@ from shared.keys import (
     DEFAULT_WORKSPACE_ID,
     FUNCTION_DEF_TTL,
     WORKER_DEF_TTL,
-    WORKER_HEARTBEAT_INTERVAL,
     WORKER_TTL,
     cron_registry_member_key,
     function_definition_key,
@@ -30,6 +28,7 @@ from shared.keys import (
 from upnext.engine.cron import calculate_next_cron_run
 from upnext.engine.queue import RedisQueue
 from upnext.engine.registry import CronDefinition
+from upnext.sdk.health import HEARTBEAT_INTERVAL_SECONDS, touch_health_file
 
 logger = logging.getLogger(__name__)
 
@@ -215,17 +214,19 @@ async def heartbeat_loop(
     workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     """Refresh worker heartbeat TTL in Redis periodically."""
+    touch_health_file()
     while True:
         try:
-            await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL)
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
             await write_worker_heartbeat(
                 redis_client,
                 worker_id,
                 get_worker_data(),
                 workspace_id=workspace_id,
             )
+            touch_health_file()
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.debug(f"Worker heartbeat error: {e}")
-            await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL)
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)

@@ -16,12 +16,14 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, TypeVar
 
+from fastapi.responses import JSONResponse
 import redis.asyncio as aioredis
 import uvicorn
 from fastapi import APIRouter, FastAPI
 from shared.keys import API_INSTANCE_TTL, api_instance_key
 
 from upnext.config import get_settings
+from upnext.sdk.health import HEARTBEAT_INTERVAL_SECONDS, touch_health_file
 from upnext.sdk.middleware import ApiTrackingConfig, ApiTrackingMiddleware
 
 logger = logging.getLogger(__name__)
@@ -357,11 +359,16 @@ class Api:
         logger.debug(f"API instance registered: {self._api_id}")
 
     def _get_endpoint_list(self) -> list[str]:
-        """Get list of registered endpoint strings (e.g. 'GET:/health')."""
+        """Get list of registered endpoint strings (e.g. 'GET:/health').
+
+        Excludes built-in /runtime/* endpoints from the reported list.
+        """
         endpoints: list[str] = []
         for route in self.app.routes:
             if hasattr(route, "methods"):
                 path = getattr(route, "path", "")
+                if path.startswith("/runtime/"):
+                    continue
                 for method in getattr(route, "methods", set()):
                     endpoints.append(f"{method}:{path}")
         return endpoints
@@ -390,15 +397,17 @@ class Api:
 
     async def _heartbeat_loop(self) -> None:
         """Refresh instance TTL in Redis periodically."""
+        touch_health_file()
         while True:
             try:
-                await asyncio.sleep(10)
+                await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
                 await self._write_instance_heartbeat()
+                touch_health_file()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.debug(f"API heartbeat error: {e}")
-                await asyncio.sleep(10)
+                await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
     async def _cleanup_tracking(self) -> None:
         """Remove instance from Redis and close connection."""
@@ -430,6 +439,28 @@ class Api:
                 pass
             self._redis = None
 
+    def _register_runtime_routes(self) -> None:
+        """Register built-in /runtime/health and /runtime/ready endpoints."""
+        runtime_router = APIRouter(prefix="/runtime", tags=["runtime"])
+
+        @runtime_router.get("/health")
+        async def runtime_health() -> dict[str, str]:
+            """Liveness probe — returns 200 if the process is alive."""
+            return {"status": "ok"}
+
+        @runtime_router.get("/ready")
+        async def runtime_ready() -> Any:
+            """Readiness probe — returns 503 if Redis is unavailable."""
+
+            if self._redis is None and self.redis_url:
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "degraded", "reason": "redis_unavailable"},
+                )
+            return {"status": "ready"}
+
+        self.app.include_router(runtime_router)
+
     async def start(self) -> None:
         """
         Start the API server.
@@ -437,6 +468,9 @@ class Api:
         This runs uvicorn to serve the FastAPI application.
         If handle_signals is True (default), SIGINT/SIGTERM will trigger graceful shutdown.
         """
+
+        # Register built-in health endpoints before user routes
+        self._register_runtime_routes()
 
         # Include any pending routers before starting
         self._include_pending_routers()
