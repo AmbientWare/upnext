@@ -31,6 +31,7 @@ from shared.keys.queue import (
     dispatch_reasons_key,
     dispatch_reasons_pattern,
     dispatch_reasons_prefix,
+    function_component_key,
     function_dedup_key,
     function_rate_limit_key,
     function_scheduled_key,
@@ -43,6 +44,7 @@ from shared.keys.queue import (
     job_match_pattern,
     job_status_channel,
     queue_key,
+    worker_pending_key,
 )
 from shared.keys.streams import (
     API_REQUESTS_STREAM,
@@ -101,6 +103,7 @@ __all__ = [
     "function_stream_pattern",
     "function_scheduled_key",
     "function_scheduled_pattern",
+    "function_component_key",
     "function_dedup_key",
     "function_rate_limit_key",
     "dispatch_reasons_key",
@@ -112,6 +115,7 @@ __all__ = [
     "job_index_key",
     "job_cancelled_key",
     "job_status_channel",
+    "worker_pending_key",
     "EVENTS_STREAM",
     "API_REQUESTS_STREAM",
     "ARTIFACT_EVENTS_STREAM",

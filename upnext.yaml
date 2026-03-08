@@ -10,15 +10,23 @@ apis:
   example-api:
     port: 8001
     domain: null
-    replicas: 2
-    cpu_request: null  # cores (e.g. 0.5, 1, 2)
-    cpu_limit: null    # cores
+    min_replicas: 0     # 0 = scale to zero when idle, 1+ = always keep warm (default: 0)
+    max_replicas: 2     # max replicas to scale up to (default: 2)
+    target_concurrency: 100  # concurrent requests per replica before scaling up (default: 100)
+    cpu_request: null   # cores (e.g. 0.5, 1, 2)
+    cpu_limit: null     # cores
     memory_request: null  # GB (e.g. 0.25, 1, 4)
     memory_limit: null    # GB
 workers:
   example-worker:
-    replicas: null # default is 1
+    min_replicas: 0    # min replicas to scale down to (default: 0)
+    max_replicas: 2    # max replicas to scale up to, or static count when no scale_target (default: 2)
     cpu_request: 1  # cores
     cpu_limit: 4    # cores
     memory_request: 1  # GB
     memory_limit: 4    # GB
+    scale_target:       # optional — omit for a static deployment
+      type: queue       # queue | cpu | memory
+      jobs_per_replica: 2  # pending jobs per replica before scaling up (default: 2 — set to match worker concurrency)
+      # type: cpu
+      # threshold: 80   # scale up when CPU/memory utilization exceeds this % (default: 80)

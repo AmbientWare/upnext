@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sys
 import tomllib
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -17,19 +18,28 @@ from upnext.cli.init.view import InitView
 API_CONFIG_FIELDS = (
     "port",
     "domain",
-    "replicas",
+    "min_replicas",
+    "max_replicas",
+    "target_concurrency",
     "cpu_request",
     "cpu_limit",
     "memory_request",
     "memory_limit",
 )
 WORKER_CONFIG_FIELDS = (
-    "replicas",
+    "min_replicas",
+    "max_replicas",
     "cpu_request",
     "cpu_limit",
     "memory_request",
     "memory_limit",
 )
+
+
+class ScaleTargetType(StrEnum):
+    QUEUE = "queue"
+    CPU = "cpu"
+    MEMORY = "memory"
 
 
 def load_pyproject_data(pyproject_path: Path) -> dict[str, Any]:
@@ -112,6 +122,33 @@ def build_worker_config() -> dict[str, str | None]:
     return {field: None for field in WORKER_CONFIG_FIELDS}
 
 
+def prompt_scale_target(worker_name: str) -> dict[str, Any] | None:
+    scale_type = typer.prompt(
+        f"  Scale target for '{worker_name}' (queue/cpu/memory, or press Enter to skip)",
+        default="",
+        show_default=False,
+    ).strip().lower()
+
+    if scale_type not in ScaleTargetType._value2member_map_:
+        return None
+
+    if scale_type == ScaleTargetType.QUEUE:
+        jobs_raw = prompt_optional_value("    Jobs per replica before scaling up (default: 2, set to match worker concurrency)")
+        result: dict[str, Any] = {"type": "queue"}
+        if jobs_raw:
+            result["jobs_per_replica"] = int(jobs_raw)
+        return result
+
+    # cpu or memory
+    threshold_raw = prompt_optional_value(
+        f"    {scale_type.upper()} utilization % threshold before scaling up (default: 80)"
+    )
+    result = {"type": scale_type}
+    if threshold_raw:
+        result["threshold"] = int(threshold_raw)
+    return result
+
+
 def configure_advanced_features(
     discovered_apis: list[DiscoveredApi],
     worker_names: list[str],
@@ -136,7 +173,9 @@ def configure_advanced_features(
     for api in discovered_apis:
         info(f"Configuring API '{api.name}'")
         apis[api.name]["domain"] = prompt_optional_value("  Domain")
-        apis[api.name]["replicas"] = prompt_optional_value("  Replicas")
+        apis[api.name]["min_replicas"] = prompt_optional_value("  Min replicas (0 = scale to zero, default: 0)")
+        apis[api.name]["max_replicas"] = prompt_optional_value("  Max replicas (default: 2)")
+        apis[api.name]["target_concurrency"] = prompt_optional_value("  Target concurrent requests per replica before scaling up (default: 100)")
         apis[api.name]["cpu_request"] = prompt_optional_value("  CPU request")
         apis[api.name]["cpu_limit"] = prompt_optional_value("  CPU limit")
         apis[api.name]["memory_request"] = prompt_optional_value("  Memory request")
@@ -144,11 +183,15 @@ def configure_advanced_features(
 
     for name in worker_names:
         info(f"Configuring worker '{name}'")
-        workers[name]["replicas"] = prompt_optional_value("  Replicas")
-        workers[name]["cpu_request"] = prompt_optional_value("  CPU request")
-        workers[name]["cpu_limit"] = prompt_optional_value("  CPU limit")
-        workers[name]["memory_request"] = prompt_optional_value("  Memory request")
-        workers[name]["memory_limit"] = prompt_optional_value("  Memory limit")
+        workers[name]["min_replicas"] = prompt_optional_value("  Min replicas (0 = scale to zero, default: 0)")
+        workers[name]["max_replicas"] = prompt_optional_value("  Max replicas (default: 2)")
+        workers[name]["cpu_request"] = prompt_optional_value("  CPU request (cores)")
+        workers[name]["cpu_limit"] = prompt_optional_value("  CPU limit (cores)")
+        workers[name]["memory_request"] = prompt_optional_value("  Memory request (GB)")
+        workers[name]["memory_limit"] = prompt_optional_value("  Memory limit (GB)")
+        scale_target = prompt_scale_target(name)
+        if scale_target:
+            workers[name]["scale_target"] = scale_target
 
     # add final newline
     nl()

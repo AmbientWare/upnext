@@ -100,6 +100,16 @@ def job_status_channel(job_id: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> st
     return queue_key("job", job_id, key_prefix=key_prefix)
 
 
+def function_component_key(function: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> str:
+    """Redis key mapping a function to its worker component name (used for autoscaling)."""
+    return queue_key("fn", function, "component", key_prefix=key_prefix)
+
+
+def worker_pending_key(worker_name: str, *, key_prefix: str = QUEUE_KEY_PREFIX) -> str:
+    """Redis list key tracking pending job count for a worker component (watched by autoscaling)."""
+    return queue_key("worker", worker_name, "pending", key_prefix=key_prefix)
+
+
 def cron_registry_member_key(function: str) -> str:
     """Canonical cron registry member key for a function."""
     return f"cron:{function}"

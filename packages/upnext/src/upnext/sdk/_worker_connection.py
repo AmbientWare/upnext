@@ -18,6 +18,7 @@ from shared.keys import (
     WORKER_DEF_TTL,
     WORKER_TTL,
     cron_registry_member_key,
+    function_component_key,
     function_definition_key,
     normalize_workspace_id,
     worker_events_stream_key,
@@ -120,6 +121,19 @@ async def write_worker_definition(
         concurrency=concurrency,
     )
     await redis_client.setex(key, WORKER_DEF_TTL, definition.model_dump_json())
+
+    # Write function → component mappings so the queue can credit the right
+    # pending counter when jobs are dispatched from any process.
+    if registered_functions:
+        async with redis_client.pipeline(transaction=False) as pipe:
+            for fn_key in registered_functions:
+                pipe.setex(
+                    function_component_key(fn_key),
+                    FUNCTION_DEF_TTL,
+                    worker_name,
+                )
+            await pipe.execute()
+
     await publish_worker_signal(
         redis_client,
         "",

@@ -39,12 +39,14 @@ from shared.keys import (
     QUEUE_KEY_PREFIX,
     cron_registry_member_key,
     cron_window_job_key,
+    function_component_key,
     function_definition_key,
     function_definition_pattern,
     job_match_pattern,
     job_status_channel,
     normalize_workspace_id,
     queue_key,
+    worker_pending_key,
 )
 from shared.keys import (
     dispatch_events_stream_key as shared_dispatch_events_stream_key,
@@ -246,6 +248,11 @@ class RedisQueue(BaseQueue):
         # Registered function names (set on start)
         self._registered_functions: list[str] = []
 
+        # function → worker component name cache for pending counter
+        # tuple is (component_name | None, cached_at)
+        self._fn_component_cache: dict[str, tuple[str | None, float]] = {}
+        self._fn_component_cache_ttl: float = 60.0
+
         # Components (created on start)
         self._fetcher = None
         self._finisher = None
@@ -327,6 +334,41 @@ class RedisQueue(BaseQueue):
             await self._load_scripts()
 
         return self._client
+
+    # =========================================================================
+    # PENDING COUNTER
+    # =========================================================================
+
+    async def _get_fn_component(self, function: str) -> str | None:
+        """Return the worker component name for a function (cached, 60 s TTL)."""
+        now = time.time()
+        cached = self._fn_component_cache.get(function)
+        if cached is not None:
+            value, cached_at = cached
+            if now - cached_at < self._fn_component_cache_ttl:
+                return value
+
+        client = await self._ensure_connected()
+        raw = await client.get(
+            function_component_key(function, key_prefix=self._key_prefix)
+        )
+        component = (raw.decode() if isinstance(raw, bytes) else raw) if raw else None
+        self._fn_component_cache[function] = (component, now)
+        return component
+
+    async def _incr_worker_pending(self, component: str) -> None:
+        """LPUSH a sentinel onto the worker's pending list (autoscaling watches LLEN)."""
+        client = await self._ensure_connected()
+        await client.lpush(
+            worker_pending_key(component, key_prefix=self._key_prefix), "1"
+        )
+
+    async def _decr_worker_pending(self, component: str) -> None:
+        """RPOP one item from the worker's pending list."""
+        client = await self._ensure_connected()
+        await client.rpop(
+            worker_pending_key(component, key_prefix=self._key_prefix)
+        )
 
     async def _load_scripts(self) -> None:
         """Load Lua scripts into Redis."""
@@ -1084,6 +1126,14 @@ class RedisQueue(BaseQueue):
                     data=job.to_json(),
                 )
 
+        # Increment pending counter for the worker that owns this function.
+        try:
+            component = await self._get_fn_component(job.function)
+            if component:
+                await self._incr_worker_pending(component)
+        except Exception:
+            pass  # best-effort; never block dispatch
+
         return job.id
 
     # =========================================================================
@@ -1387,6 +1437,15 @@ class RedisQueue(BaseQueue):
         error: str | None = None,
     ) -> None:
         """Mark job as finished."""
+        # Decrement pending counter before delegating (works for both
+        # batched finisher and direct paths).
+        try:
+            component = await self._get_fn_component(job.function)
+            if component:
+                await self._decr_worker_pending(component)
+        except Exception:
+            pass  # best-effort; never block completion
+
         if self._finisher is not None:
             await self._finisher.put(
                 CompletedJob(job=job, status=status, result=result, error=error)
