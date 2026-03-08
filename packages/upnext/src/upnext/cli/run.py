@@ -44,15 +44,19 @@ def run(
     """
     setup_logging(verbose=verbose)
 
-    apis, workers = discover_objects(files)
-    apis, workers = filter_components(apis, workers, only)
+    all_apis, all_workers = discover_objects(files)
 
+    # Initialize all workers so task/event handles have queue connections
+    # even when filtered out by --only (APIs need to submit jobs)
     try:
-        for w in workers:
+        for w in all_workers:
             w.initialize(redis_url)
     except ValueError as e:
         error_panel(str(e), title="Configuration error")
         raise typer.Exit(1)
+
+    # these are the components that will be run
+    apis, workers = filter_components(all_apis, all_workers, only)
 
     # Determine redis URL for display (from first worker that has one, or first API)
     display_redis_url = next(
