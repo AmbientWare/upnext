@@ -20,6 +20,7 @@ API_CONFIG_FIELDS = (
     "domain",
     "min_replicas",
     "max_replicas",
+    "scale_down_delay_seconds",
     "target_concurrency",
     "cpu_request",
     "cpu_limit",
@@ -29,6 +30,7 @@ API_CONFIG_FIELDS = (
 WORKER_CONFIG_FIELDS = (
     "min_replicas",
     "max_replicas",
+    "scale_down_delay_seconds",
     "cpu_request",
     "cpu_limit",
     "memory_request",
@@ -112,13 +114,37 @@ def prompt_optional_value(label: str) -> str | None:
     return value or None
 
 
+def prompt_optional_int(label: str) -> int | None:
+    value = prompt_optional_value(label)
+    if value is None:
+        return None
+
+    try:
+        return int(value)
+    except ValueError as exc:
+        error(f"{label.strip()} must be an integer")
+        raise typer.Exit(1) from exc
+
+
+def prompt_optional_float(label: str) -> float | None:
+    value = prompt_optional_value(label)
+    if value is None:
+        return None
+
+    try:
+        return float(value)
+    except ValueError as exc:
+        error(f"{label.strip()} must be a number")
+        raise typer.Exit(1) from exc
+
+
 def build_api_config(discovered: DiscoveredApi) -> dict[str, Any]:
     config: dict[str, Any] = {field: None for field in API_CONFIG_FIELDS}
     config["port"] = discovered.port
     return config
 
 
-def build_worker_config() -> dict[str, str | None]:
+def build_worker_config() -> dict[str, Any]:
     return {field: None for field in WORKER_CONFIG_FIELDS}
 
 
@@ -133,19 +159,21 @@ def prompt_scale_target(worker_name: str) -> dict[str, Any] | None:
         return None
 
     if scale_type == ScaleTargetType.QUEUE:
-        jobs_raw = prompt_optional_value("    Jobs per replica before scaling up (default: 2, set to match worker concurrency)")
+        jobs = prompt_optional_int(
+            "    Jobs per replica before scaling up (default: 2, set to match worker concurrency)"
+        )
         result: dict[str, Any] = {"type": "queue"}
-        if jobs_raw:
-            result["jobs_per_replica"] = int(jobs_raw)
+        if jobs is not None:
+            result["jobs_per_replica"] = jobs
         return result
 
     # cpu or memory
-    threshold_raw = prompt_optional_value(
+    threshold = prompt_optional_int(
         f"    {scale_type.upper()} utilization % threshold before scaling up (default: 80)"
     )
     result = {"type": scale_type}
-    if threshold_raw:
-        result["threshold"] = int(threshold_raw)
+    if threshold is not None:
+        result["threshold"] = threshold
     return result
 
 
@@ -154,7 +182,7 @@ def configure_advanced_features(
     worker_names: list[str],
     *,
     view: InitView | None = None,
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str | None]]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     apis = {api.name: build_api_config(api) for api in discovered_apis}
     workers = {name: build_worker_config() for name in worker_names}
 
@@ -173,22 +201,30 @@ def configure_advanced_features(
     for api in discovered_apis:
         info(f"Configuring API '{api.name}'")
         apis[api.name]["domain"] = prompt_optional_value("  Domain")
-        apis[api.name]["min_replicas"] = prompt_optional_value("  Min replicas (0 = scale to zero, default: 0)")
-        apis[api.name]["max_replicas"] = prompt_optional_value("  Max replicas (default: 2)")
-        apis[api.name]["target_concurrency"] = prompt_optional_value("  Target concurrent requests per replica before scaling up (default: 100)")
-        apis[api.name]["cpu_request"] = prompt_optional_value("  CPU request")
-        apis[api.name]["cpu_limit"] = prompt_optional_value("  CPU limit")
-        apis[api.name]["memory_request"] = prompt_optional_value("  Memory request")
-        apis[api.name]["memory_limit"] = prompt_optional_value("  Memory limit")
+        apis[api.name]["min_replicas"] = prompt_optional_int("  Min replicas (0 = scale to zero, default: 0)")
+        apis[api.name]["max_replicas"] = prompt_optional_int("  Max replicas (default: 2)")
+        apis[api.name]["scale_down_delay_seconds"] = prompt_optional_int(
+            "  Scale-down delay in seconds before going idle (default: 1800)"
+        )
+        apis[api.name]["target_concurrency"] = prompt_optional_int(
+            "  Target concurrent requests per replica before scaling up (default: 100)"
+        )
+        apis[api.name]["cpu_request"] = prompt_optional_float("  CPU request (cores, e.g. 0.25)")
+        apis[api.name]["cpu_limit"] = prompt_optional_float("  CPU limit (cores, e.g. 1)")
+        apis[api.name]["memory_request"] = prompt_optional_float("  Memory request (GB, e.g. 0.5)")
+        apis[api.name]["memory_limit"] = prompt_optional_float("  Memory limit (GB, e.g. 2)")
 
     for name in worker_names:
         info(f"Configuring worker '{name}'")
-        workers[name]["min_replicas"] = prompt_optional_value("  Min replicas (0 = scale to zero, default: 0)")
-        workers[name]["max_replicas"] = prompt_optional_value("  Max replicas (default: 2)")
-        workers[name]["cpu_request"] = prompt_optional_value("  CPU request (cores)")
-        workers[name]["cpu_limit"] = prompt_optional_value("  CPU limit (cores)")
-        workers[name]["memory_request"] = prompt_optional_value("  Memory request (GB)")
-        workers[name]["memory_limit"] = prompt_optional_value("  Memory limit (GB)")
+        workers[name]["min_replicas"] = prompt_optional_int("  Min replicas (0 = scale to zero, default: 0)")
+        workers[name]["max_replicas"] = prompt_optional_int("  Max replicas (default: 2)")
+        workers[name]["scale_down_delay_seconds"] = prompt_optional_int(
+            "  Scale-down delay in seconds before going idle (default: 1800)"
+        )
+        workers[name]["cpu_request"] = prompt_optional_float("  CPU request (cores, e.g. 0.25)")
+        workers[name]["cpu_limit"] = prompt_optional_float("  CPU limit (cores, e.g. 1)")
+        workers[name]["memory_request"] = prompt_optional_float("  Memory request (GB, e.g. 0.5)")
+        workers[name]["memory_limit"] = prompt_optional_float("  Memory limit (GB, e.g. 2)")
         scale_target = prompt_scale_target(name)
         if scale_target:
             workers[name]["scale_target"] = scale_target

@@ -770,12 +770,7 @@ def test_init_command_writes_upnext_yaml_with_relative_paths() -> None:
             '    - "libpq-dev"\n'
             "apis:\n"
             '  demo-api:\n'
-            '    domain: null\n'
-            '    replicas: null\n'
-            '    cpu_request: null\n'
-            '    cpu_limit: null\n'
-            '    memory_request: null\n'
-            '    memory_limit: null\n'
+            "    port: 8000\n"
             "workers: {}\n"
         )
 
@@ -1013,16 +1008,23 @@ def test_init_command_can_configure_advanced_api_and_worker_fields() -> None:
                 "\n"
                 "y\n"
                 "api.example.com\n"
+                "0\n"
                 "3\n"
-                "250m\n"
-                "500m\n"
-                "256Mi\n"
-                "512Mi\n"
+                "90\n"
+                "150\n"
+                "0.25\n"
+                "0.5\n"
+                "0.25\n"
+                "0.5\n"
+                "0\n"
                 "2\n"
-                "100m\n"
+                "45\n"
+                "0.1\n"
                 "\n"
-                "128Mi\n"
+                "0.125\n"
                 "\n"
+                "queue\n"
+                "4\n"
             ),
         )
 
@@ -1036,17 +1038,24 @@ def test_init_command_can_configure_advanced_api_and_worker_fields() -> None:
             '  linux_packages: []\n'
             "apis:\n"
             '  demo-api:\n'
+            "    port: 8000\n"
             '    domain: "api.example.com"\n'
-            '    replicas: "3"\n'
-            '    cpu_request: "250m"\n'
-            '    cpu_limit: "500m"\n'
-            '    memory_request: "256Mi"\n'
-            '    memory_limit: "512Mi"\n'
+            "    min_replicas: 0\n"
+            "    max_replicas: 3\n"
+            "    scale_down_delay_seconds: 90\n"
+            "    target_concurrency: 150\n"
+            "    cpu_request: 0.25\n"
+            "    cpu_limit: 0.5\n"
+            "    memory_request: 0.25\n"
+            "    memory_limit: 0.5\n"
             "workers:\n"
             '  demo-worker:\n'
-            '    replicas: "2"\n'
-            '    cpu_request: "100m"\n'
-            '    cpu_limit: null\n'
-            '    memory_request: "128Mi"\n'
-            '    memory_limit: null\n'
+            "    min_replicas: 0\n"
+            "    max_replicas: 2\n"
+            "    scale_down_delay_seconds: 45\n"
+            "    cpu_request: 0.1\n"
+            "    memory_request: 0.125\n"
+            "    scale_target:\n"
+            '      type: "queue"\n'
+            "      jobs_per_replica: 4\n"
         )

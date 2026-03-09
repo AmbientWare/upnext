@@ -12,19 +12,21 @@ apis:
     domain: null
     min_replicas: 0     # 0 = scale to zero when idle, 1+ = always keep warm (default: 0)
     max_replicas: 2     # max replicas to scale up to (default: 2)
+    scale_down_delay_seconds: 300  # seconds to keep an idle API warm before scaling to zero (default: 1800)
     target_concurrency: 100  # concurrent requests per replica before scaling up (default: 100)
-    cpu_request: null   # cores (e.g. 0.5, 1, 2)
-    cpu_limit: null     # cores
-    memory_request: null  # GB (e.g. 0.25, 1, 4)
-    memory_limit: null    # GB
+    cpu_request: 0.25   # cores (e.g. 0.25, 0.5, 1, 2)
+    cpu_limit: 1        # cores
+    memory_request: 0.5  # GB (e.g. 0.25, 0.5, 1, 4)
+    memory_limit: 2      # GB
 workers:
   example-worker:
     min_replicas: 0    # min replicas to scale down to (default: 0)
     max_replicas: 2    # max replicas to scale up to (default: 2)
-    cpu_request: 1  # cores
-    cpu_limit: 4    # cores
-    memory_request: 1  # GB
-    memory_limit: 4    # GB
+    scale_down_delay_seconds: 300  # seconds to keep an idle worker warm before scaling to zero (default: 1800)
+    cpu_request: 0.25  # cores
+    cpu_limit: 1       # cores
+    memory_request: 0.5  # GB
+    memory_limit: 2      # GB
     scale_target:       # optional — defaults to queue-based scaling when omitted
       type: queue       # queue | cpu | memory
       jobs_per_replica: 2  # pending jobs per replica before scaling up (default: 2 — set to match worker concurrency)
