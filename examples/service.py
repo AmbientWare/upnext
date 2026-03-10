@@ -27,6 +27,14 @@ logger = logging.getLogger(__name__)
 worker = upnext.Worker("example-worker", concurrency=100)
 api = upnext.Api("example-api", port=8001)
 
+# Serve a frontend SPA built with Vite + Bun
+api.static(
+    "/",
+    directory="./examples/frontend",
+    package_manager=upnext.PackageManager.BUN,
+    output="./examples/frontend/dist",
+)
+
 DEFAULT_IMAGE_URL = "https://httpbin.org/image/png"
 DEFAULT_PDF_URL = (
     "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"

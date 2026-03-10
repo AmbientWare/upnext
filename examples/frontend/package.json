@@ -1,0 +1,11 @@
+{
+  "name": "upnext-example-frontend",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^6"
+  }
+}

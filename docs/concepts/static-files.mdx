@@ -128,7 +128,7 @@ api.static(
 )
 ```
 
-API routes always take priority over static files, so your endpoints won't be shadowed.
+API routes always take priority over static files, so your endpoints won't be shadowed. Static mounts are applied after all routes are registered, and `path="/"` is always mounted last — you can call `api.static()` anywhere in your code without worrying about ordering.
 
 ## Static options
 
