@@ -10,6 +10,7 @@ from upnext.cli._console import console
 from upnext.cli.call import call
 from upnext.cli.health import health
 from upnext.cli.init import init
+from upnext.cli.inspect import inspect_cmd
 from upnext.cli.list import list_cmd
 from upnext.cli.run import run
 
@@ -171,6 +172,7 @@ app.command()(call)
 app.command()(init)
 app.command()(health)
 app.command("list")(list_cmd)
+app.command("inspect")(inspect_cmd)
 
 server_app = typer.Typer(
     help="Hosted UpNext server commands.",

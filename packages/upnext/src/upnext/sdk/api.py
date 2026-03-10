@@ -13,7 +13,8 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import Enum, StrEnum
+from pathlib import Path
 from typing import Any, TypeVar
 
 from fastapi.responses import JSONResponse
@@ -29,6 +30,88 @@ from upnext.sdk.middleware import ApiTrackingConfig, ApiTrackingMiddleware
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+class PackageManager(StrEnum):
+    """Package manager for building static frontend assets."""
+
+    BUN = "bun"
+    NPM = "npm"
+    YARN = "yarn"
+    PNPM = "pnpm"
+
+
+# Keep old name as alias for backward compatibility
+StaticRuntime = PackageManager
+
+_DEFAULT_BUILD_COMMANDS: dict[PackageManager, str] = {
+    PackageManager.BUN: "bun run build",
+    PackageManager.NPM: "npm run build",
+    PackageManager.YARN: "yarn build",
+    PackageManager.PNPM: "pnpm build",
+}
+
+_DEFAULT_DEV_COMMANDS: dict[PackageManager, str] = {
+    PackageManager.BUN: "bun dev",
+    PackageManager.NPM: "npm run dev",
+    PackageManager.YARN: "yarn dev",
+    PackageManager.PNPM: "pnpm dev",
+}
+
+_DEFAULT_RUNTIME_VERSIONS: dict[PackageManager, str] = {
+    PackageManager.BUN: "1",
+    PackageManager.NPM: "22",
+    PackageManager.YARN: "22",
+    PackageManager.PNPM: "22",
+}
+
+_INSTALL_COMMANDS: dict[PackageManager, str] = {
+    PackageManager.BUN: "bun install --frozen-lockfile",
+    PackageManager.NPM: "npm ci",
+    PackageManager.YARN: "yarn install --frozen-lockfile",
+    PackageManager.PNPM: "corepack enable && pnpm install --frozen-lockfile",
+}
+
+
+@dataclass
+class StaticMount:
+    """Configuration for serving static frontend assets from an Api."""
+
+    path: str
+    directory: str
+    package_manager: PackageManager | None = None
+    runtime_version: str | None = None
+    build_command: str | None = None
+    dev_command: str | None = None
+    output: str | None = None
+    spa: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.path.startswith("/"):
+            raise ValueError(f"Static mount path must start with '/': {self.path!r}")
+        if ".." in Path(self.directory).parts:
+            raise ValueError(f"Static mount directory must not contain '..': {self.directory!r}")
+        if self.package_manager:
+            if self.build_command is None:
+                self.build_command = _DEFAULT_BUILD_COMMANDS[self.package_manager]
+            if self.dev_command is None:
+                self.dev_command = _DEFAULT_DEV_COMMANDS[self.package_manager]
+            if self.runtime_version is None:
+                self.runtime_version = _DEFAULT_RUNTIME_VERSIONS[self.package_manager]
+        if self.build_command and not self.package_manager:
+            raise ValueError("package_manager is required when build_command is specified")
+        if self.build_command and not self.output:
+            raise ValueError("output is required when build_command is specified")
+
+    @property
+    def serve_directory(self) -> str:
+        """The directory to serve at runtime (output if set, else directory)."""
+        return self.output or self.directory
+
+    @property
+    def install_command(self) -> str | None:
+        """The dependency install command for this package manager."""
+        return _INSTALL_COMMANDS.get(self.package_manager) if self.package_manager else None
 
 
 @dataclass
@@ -78,11 +161,17 @@ class Api:
     _pending_routers: list[tuple["APIRouter", dict[str, Any]]] = field(
         default_factory=list, init=False
     )
+    _static_mounts: list[StaticMount] = field(default_factory=list, init=False)
 
     @property
     def api_id(self) -> str | None:
         """Get the unique instance ID (generated on start)."""
         return self._api_id
+
+    @property
+    def static_mounts(self) -> list[StaticMount]:
+        """Get registered static mounts."""
+        return list(self._static_mounts)
 
     @property
     def app(self) -> FastAPI:
@@ -315,11 +404,104 @@ class Api:
         self._pending_routers.append((router, {}))
         return router
 
+    def static(
+        self,
+        path: str,
+        *,
+        directory: str,
+        package_manager: PackageManager | None = None,
+        runtime_version: str | None = None,
+        build_command: str | None = None,
+        dev_command: str | None = None,
+        output: str | None = None,
+        spa: bool = True,
+    ) -> None:
+        """
+        Serve static frontend assets (SPA or plain files).
+
+        When ``package_manager`` is set, ``build_command``, ``dev_command``, and
+        ``runtime_version`` are derived automatically. Pass explicit values to override.
+
+        Example:
+            # React app — defaults to bun run build / bun dev
+            api.static(
+                "/",
+                directory="./frontend",
+                package_manager=PackageManager.BUN,
+                output="./frontend/dist",
+            )
+
+            # Plain static directory (no build)
+            api.static("/docs", directory="./public", spa=False)
+        """
+        mount = StaticMount(
+            path=path,
+            directory=directory,
+            package_manager=package_manager,
+            runtime_version=runtime_version,
+            build_command=build_command,
+            dev_command=dev_command,
+            output=output,
+            spa=spa,
+        )
+        if any(m.path == path for m in self._static_mounts):
+            raise ValueError(f"Static mount already registered for path: {path!r}")
+        self._static_mounts.append(mount)
+
     def _include_pending_routers(self) -> None:
         """Include all pending routers in the app (called before start)."""
         for router, kwargs in self._pending_routers:
             self.app.include_router(router, **kwargs)
         self._pending_routers.clear()
+
+    def _mount_static(self) -> None:
+        """Mount static file directories registered via static()."""
+        from starlette.responses import FileResponse
+        from starlette.staticfiles import StaticFiles
+
+        # Sort so path="/" is mounted last — API routes take priority
+        sorted_mounts = sorted(
+            self._static_mounts,
+            key=lambda m: (m.path == "/", m.path),
+        )
+
+        for mount in sorted_mounts:
+            serve_dir = Path(mount.serve_directory).resolve()
+
+            if not serve_dir.exists():
+                logger.warning(
+                    f"Static directory does not exist: {serve_dir} "
+                    f"(mount path: {mount.path})"
+                )
+                continue
+
+            if mount.spa:
+                # SPA mode: serve static files, catch-all returns index.html
+                mount_prefix = mount.path.rstrip("/")
+                index_file = serve_dir / "index.html"
+
+                # Catch-all route: serve matching files, fallback to index.html
+                @self.app.get(f"{mount_prefix}/{{full_path:path}}")
+                async def serve_spa(
+                    full_path: str,
+                    _serve_dir: Path = serve_dir,
+                    _index: Path = index_file,
+                ) -> FileResponse:
+                    from starlette.responses import Response
+
+                    file_path = (_serve_dir / full_path).resolve()
+                    if file_path.is_relative_to(_serve_dir) and file_path.is_file():
+                        return FileResponse(file_path)
+                    if _index.is_file():
+                        return FileResponse(_index)
+                    return Response(status_code=404)
+            else:
+                # Plain static directory mount
+                self.app.mount(
+                    mount.path,
+                    StaticFiles(directory=serve_dir),
+                    name=f"static-{mount.path}",
+                )
 
     async def _setup_tracking(self) -> None:
         """Set up API request tracking and instance registration via Redis."""
@@ -474,6 +656,10 @@ class Api:
 
         # Include any pending routers before starting
         self._include_pending_routers()
+
+        # Mount static file directories (after routers so API routes take priority)
+        if self._static_mounts:
+            self._mount_static()
 
         # Set up request tracking
         await self._setup_tracking()

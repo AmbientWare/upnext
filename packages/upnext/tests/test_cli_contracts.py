@@ -5,6 +5,7 @@ import builtins
 import importlib
 import logging
 import os
+import subprocess
 import sys
 import types
 from contextlib import contextmanager
@@ -38,7 +39,7 @@ from upnext.cli.server import (
     _resolve_alembic_config,
     _set_server_env,
 )
-from upnext.sdk.api import Api
+from upnext.sdk.api import Api, PackageManager, StaticMount
 from upnext.sdk.worker import Worker
 
 call_module = importlib.import_module("upnext.cli.call")
@@ -235,6 +236,84 @@ def test_run_command_exits_on_worker_configuration_error(monkeypatch) -> None:
 
     with pytest.raises(typer.Exit):
         run_module.run(files=["service.py"], redis_url=None, only=None, verbose=False)
+
+
+def test_dev_server_helpers_use_windows_safe_process_controls(monkeypatch) -> None:
+    mount = StaticMount(
+        path="/",
+        directory=".",
+        package_manager=PackageManager.BUN,
+        output="./dist",
+    )
+    popen_kwargs: dict[str, Any] = {}
+
+    class FakeProc:
+        pid = 321
+
+        def __init__(self) -> None:
+            self.signals: list[int] = []
+            self.killed = False
+
+        def poll(self) -> None:
+            return None
+
+        def send_signal(self, sig: int) -> None:
+            self.signals.append(sig)
+
+        def wait(self, timeout: float | None = None) -> None:
+            raise subprocess.TimeoutExpired(cmd="bun dev", timeout=timeout)
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def terminate(self) -> None:
+            raise AssertionError("terminate should not be used when CTRL_BREAK_EVENT exists")
+
+    proc = FakeProc()
+    monkeypatch.setattr(run_module.os, "name", "nt", raising=False)
+    monkeypatch.setattr(run_module.os.path, "isdir", lambda _path: True)
+    monkeypatch.setattr(run_module, "nl", lambda: None)
+    monkeypatch.setattr(run_module, "info", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(run_module, "success", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(run_module.console, "print", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        run_module.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False
+    )
+    monkeypatch.setattr(run_module.signal, "CTRL_BREAK_EVENT", 1, raising=False)
+    monkeypatch.setattr(
+        run_module.os,
+        "getpgid",
+        lambda _pid: (_ for _ in ()).throw(AssertionError("getpgid should not be used")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_module.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("killpg should not be used")),
+        raising=False,
+    )
+
+    def fake_popen(*_args: Any, **kwargs: Any) -> FakeProc:
+        popen_kwargs.update(kwargs)
+        return proc
+
+    monkeypatch.setattr(run_module.subprocess, "Popen", fake_popen)
+
+    processes = run_module._start_dev_servers([mount])
+
+    assert processes == [proc]
+    assert "preexec_fn" not in popen_kwargs
+    assert popen_kwargs["creationflags"] == 512
+
+    run_module._stop_dev_servers(processes)
+
+    assert proc.signals == [1]
+    assert proc.killed is True
+
+
+def test_static_mount_requires_output_when_package_manager_sets_build_command() -> None:
+    with pytest.raises(ValueError, match="output is required when build_command is specified"):
+        StaticMount(path="/", directory="./frontend", package_manager=PackageManager.BUN)
 
 
 def test_call_command_success_and_argument_parsing(monkeypatch) -> None:

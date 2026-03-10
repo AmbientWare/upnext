@@ -1,0 +1,151 @@
+---
+title: Static Files
+description: Serve frontend assets from your API.
+icon: file-code
+---
+
+```python
+import upnext
+
+api = upnext.Api("my-app")
+
+api.static(
+    "/",
+    directory="./frontend",
+    package_manager=upnext.PackageManager.BUN,
+    output="./frontend/dist",
+)
+```
+
+**`api.static()`** lets you serve frontend assets (React, Vite, TanStack, etc.) directly from your UpNext API. UpNext automatically builds your frontend and serves the output — no need to commit built assets to git.
+
+## Basic usage
+
+Mount a directory of static files at a URL path:
+
+```python
+api.static("/assets", directory="./public")
+```
+
+This serves files from `./public` at `/assets` — for example, `./public/logo.png` is served at `/assets/logo.png`.
+
+## Frontend builds
+
+When you set a `package_manager`, UpNext provides sensible defaults for `build_command` and `dev_command`:
+
+```python
+api.static(
+    "/",
+    directory="./frontend",
+    package_manager=upnext.PackageManager.BUN,
+    output="./frontend/dist",
+)
+# Defaults: build_command="bun run build", dev_command="bun dev"
+```
+
+You can override the defaults if your project uses different commands:
+
+```python
+api.static(
+    "/",
+    directory="./frontend",
+    package_manager=upnext.PackageManager.BUN,
+    build_command="bun run build:prod",
+    dev_command="bun run dev --port 3000",
+    output="./frontend/dist",
+)
+```
+
+### Supported package managers
+
+| Package Manager | Value | Default build | Default dev | Install command |
+| --- | --- | --- | --- | --- |
+| Bun | `PackageManager.BUN` | `bun run build` | `bun dev` | `bun install --frozen-lockfile` |
+| npm | `PackageManager.NPM` | `npm run build` | `npm run dev` | `npm ci` |
+| Yarn | `PackageManager.YARN` | `yarn build` | `yarn dev` | `yarn install --frozen-lockfile` |
+| pnpm | `PackageManager.PNPM` | `pnpm build` | `pnpm dev` | `corepack enable && pnpm install --frozen-lockfile` |
+
+## Running modes
+
+### Production (default)
+
+```bash
+upnext run service.py
+```
+
+Installs frontend dependencies, runs `build_command`, then serves the built output via FastAPI.
+
+### Dev mode
+
+```bash
+upnext run service.py --dev
+```
+
+Starts frontend dev servers (e.g. `bun dev`) as subprocesses alongside the Python API, giving you HMR and hot reload. Also enables FastAPI debug mode.
+
+### Skip build (Docker / cloud)
+
+```bash
+upnext run service.py --skip-build
+```
+
+Skips the install and build steps — use this when assets are already built (e.g. inside a Docker container or cloud deployment).
+
+## SPA mode
+
+By default, static mounts use SPA (Single Page Application) mode. This means any request that doesn't match a static file returns `index.html`, enabling client-side routing.
+
+```python
+# SPA mode (default) — unmatched routes serve index.html
+api.static("/", directory="./frontend/dist", spa=True)
+
+# Non-SPA mode — unmatched routes return 404
+api.static("/docs", directory="./docs/build", spa=False)
+```
+
+## Multiple mounts
+
+You can mount multiple static directories on the same API:
+
+```python
+api = upnext.Api("my-app")
+
+# Main SPA frontend
+api.static(
+    "/",
+    directory="./frontend",
+    package_manager=upnext.PackageManager.BUN,
+    output="./frontend/dist",
+)
+
+# Documentation site
+api.static(
+    "/docs",
+    directory="./docs",
+    package_manager=upnext.PackageManager.NPM,
+    output="./docs/build",
+    spa=False,
+)
+```
+
+API routes always take priority over static files, so your endpoints won't be shadowed.
+
+## Static options
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `path` | `str` | required | URL path to mount at |
+| `directory` | `str` | required | Directory containing static files (or source) |
+| `package_manager` | `PackageManager` | `None` | Package manager for build/dev |
+| `build_command` | `str` | auto from package_manager | Command to build frontend assets |
+| `dev_command` | `str` | auto from package_manager | Command to start dev server |
+| `output` | `str` | `None` | Directory containing built output |
+| `spa` | `bool` | `True` | Enable SPA fallback to index.html |
+
+<Note>
+When `package_manager` is set, `build_command` and `dev_command` are automatically derived. Override them only if your project uses non-standard commands.
+</Note>
+
+<Card title="Next: Context" icon="arrow-right" href="/concepts/context">
+  Track progress, save checkpoints, and send structured logs.
+</Card>

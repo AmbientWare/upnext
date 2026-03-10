@@ -140,6 +140,21 @@ api.include_router(some_router, prefix="/api")
 fastapi_app = api.app
 ```
 
+## Static files
+
+Serve frontend assets directly from your API with `api.static()`:
+
+```python
+api.static(
+    "/",
+    directory="./frontend",
+    package_manager=upnext.PackageManager.BUN,
+    output="./frontend/dist",
+)
+```
+
+This mounts built static assets at the given path. When deployed, UpNext automatically runs the build command and serves the output. See the [Static Files](/concepts/static-files) guide for full details.
+
 ## Scaling
 
 `upnext.Api` is a standard ASGI application powered by FastAPI. Scale it the same way you'd scale any FastAPI app — multiple processes, containers behind a load balancer, or platform-managed replicas. Each instance connects to the same Redis, so task submissions land in the shared queue regardless of which API instance handles the request.

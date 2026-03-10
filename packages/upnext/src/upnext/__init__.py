@@ -10,6 +10,8 @@ from upnext.engine import run_services
 from upnext.sdk import (
     Api,
     Context,
+    PackageManager,
+    StaticRuntime,
     TaskTimeoutError,
     Worker,
     WorkerQueueConfig,
@@ -25,6 +27,8 @@ __all__ = [
     "Context",
     "FailureReason",
     "JobStatus",
+    "PackageManager",
+    "StaticRuntime",
     "SyncExecutor",
     "TaskTimeoutError",
     "Worker",
